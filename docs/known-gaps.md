@@ -20,9 +20,13 @@ sin²(latitude) term — is too crude near the poles.
 Clausius-Clapeyron relation, which is exponential. Replacing it is cheap; it has
 not been done because the calibration currently absorbs the difference.
 
-**There are no rivers.** Drainage is the obvious next thing at layer 1, and it
-matters enormously — floodplains are where cities go. Nothing below layer 0
-generates at all yet.
+**Rivers exist but do not cross a sub-map boundary.** Flow accumulation runs
+within one sub-map, so a river reaching the rim stops there instead of
+continuing into the next. Same root cause as the adjacency gap below.
+
+**Sinks are not filled.** A basin with no outlet keeps its water, which is
+correct — that is a lake, and the Caspian is not a bug — but nothing yet marks
+it as one or lets it overflow.
 
 **No seasons.** Everything is an annual mean, with the seasonal swing inferred
 where a classification boundary needs it. A game with two-minute weeks will
@@ -43,10 +47,28 @@ fine for a click and would not be fine for a bulk query.
 
 ## Simulation
 
-**There is no economy yet.** No population, no food, no buildings, no supply.
-`anchors.ts` and `derive.ts` already carry the numbers those will need — grain
-per soldier-day, march rates, forage — from the battle-scale work that preceded
-the redesign, and they are the right numbers, but nothing consumes them.
+**Supply lines do not exist, and this is the largest gap in the project.** A
+settlement eats only what the tile it stands on grows. A ground tile is 506 m²
+and one person needs about 0.55 ha of good land, so a tile feeds roughly a
+tenth of a person — twenty settlers starve immediately, which is arithmetically
+correct and makes the game unplayable. Drawing food from surrounding tiles is
+the next system, and it is the one that makes "you can sustain whatever you can
+sustain" mean anything.
+
+**Harvest is averaged across the year.** `weeklyGrainKg` divides an annual
+yield by 52. Real grain arrives once, and the whole shape of a medieval year is
+about storing it and not running out before the next one. Averaging makes
+famine a slow slide rather than a cliff in March, which is the wrong shape. The
+first thing seasons will fix.
+
+**No buildings, no crafts, no NPC-driven development.** The design has half a
+town's growth driven by its own people choosing trades. None of it exists.
+
+**Houses are a number that colours a border.** No heads of household, no
+alliances, no representation on the map beyond the colour.
+
+**Players are identified by name.** Rejoining by name is enough to play with
+and not enough for anything else.
 
 **`derive.ts` still describes a real-time battle.** Tick rates, charge speeds,
 turn rates and formation spacing were derived for an RTS and survive because
@@ -54,14 +76,22 @@ the underlying anchors are sound and supply lines will want the march rates.
 The tick-rate derivation in particular no longer applies — a two-minute turn
 does not need 32 Hz — and should be revisited rather than deleted.
 
-**No cross-region pathing, no supply lines, no houses, no alliances.** All of
-it downstream of the economy.
-
 ## Infrastructure
 
 **No spatial index on the delta store.** "Which changed tiles are inside this
 region" is a prefix scan over string keys today. Fine at small numbers, not
 fine at a million.
 
-**Type checking is not wired into `run_all`.** `npm run typecheck` exists and
-needs `npm install` first; the suites run without it. They should not.
+**Type checking is not wired into `run_all`.** `npm run typecheck` needs an npm
+install the project otherwise does not, so nothing runs `tsc`. This is not
+free: `erasableSyntaxOnly` in `tsconfig.json` would have caught three separate
+parameter-property crashes at type-check time rather than at load.
+`verify_purity.ts` now catches that class by reading the source, which is a
+worse tool that happens to be available.
+
+**The WebSocket implementation is hand-rolled.** No compression, no
+fragmentation on send, no backpressure. Fine for a few players on a LAN;
+replace it with `ws` before it faces anything else.
+
+**No spatial index for "which settlements are near this one".** Supply lines
+will want one immediately.

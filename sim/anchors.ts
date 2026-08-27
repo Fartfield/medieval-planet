@@ -469,3 +469,48 @@ export const SOM_CHERNOZEM_REFERENCE = 614.0;
  *  Holdridge's boundary between the boreal and temperate belts. Below it the
  *  growing season is too short to mineralise what the soil holds. */
 export const BIOTEMP_AVAILABILITY_C = 10.0;
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+/**
+ * Crude birth and death rates in a pre-industrial population, per thousand per
+ * year. Parish registers across medieval and early-modern Europe cluster at
+ * 32-40 births and 30-38 deaths -- a natural increase of a few per thousand,
+ * which is why populations took centuries to double and a bad decade undid it.
+ */
+export const BIRTH_RATE_PER_1000_YR = 35.0;
+export const DEATH_RATE_PER_1000_YR = 32.0;
+
+/**
+ * How long a person can go on short rations before it kills them. Starvation
+ * studies put the limit at losing about 30% of body mass; at half rations that
+ * takes roughly ten weeks.
+ */
+export const STARVATION_WEEKS = 10.0;
+
+/**
+ * Land one person needs to feed themselves, hectares. Not an anchor in its own
+ * right -- it is here to be checked against, because it is the number every
+ * agricultural historian quotes (0.5 to 1.5 ha under a three-field rotation)
+ * and the model must land inside that range or something upstream is wrong.
+ */
+export const HISTORICAL_HA_PER_PERSON_LOW = 0.5;
+export const HISTORICAL_HA_PER_PERSON_HIGH = 1.5;
+
+/** Days in a week, and weeks in a year. One turn is one week. */
+export const DAYS_PER_TURN = 7.0;
+export const TURNS_PER_YEAR = 365.25 / 7.0;
+
+/**
+ * The share of held arable actually in crop in a given year.
+ *
+ * Under the three-field rotation that dominated medieval northern Europe, a
+ * third of the land lies fallow each year to recover; under the older
+ * two-field system it was a half. This is not a detail: it is the difference
+ * between the model saying good grassland feeds a person off 0.37 ha and
+ * saying it feeds them off 0.55, and only the second is inside the 0.5-1.5 ha
+ * that agricultural historians actually measure.
+ */
+export const CROPPED_FRACTION_THREE_FIELD = 2.0 / 3.0;

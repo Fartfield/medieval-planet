@@ -214,5 +214,9 @@ export function deriveSoil(s: SoilSample): Soil {
  */
 export function grainYieldKgPerHa(soil: Soil, npp: number): number {
   const climateCap = clamp(npp / 900, 0, 1.15);
-  return A.MEDIEVAL_GRAIN_KG_PER_HA * soil.fertility * soil.health * climateCap;
+  // Times the cropped fraction, because a third of any holding is lying fallow.
+  // Leaving it out put the best land at 0.37 ha per person against a measured
+  // historical 0.5-1.5; with it, 0.55.
+  return A.MEDIEVAL_GRAIN_KG_PER_HA * soil.fertility * soil.health
+    * climateCap * A.CROPPED_FRACTION_THREE_FIELD;
 }

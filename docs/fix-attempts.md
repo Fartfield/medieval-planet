@@ -122,6 +122,76 @@ globally. The test now walks 24 regions.
 
 ---
 
+## Every WebSocket client silently refused the server
+
+**Problem.** HTTP served fine, the upgrade returned a well-formed
+`101 Switching Protocols` with a plausible base64 `Sec-WebSocket-Accept`, and
+every client refused the connection without a word in any log.
+
+* ~~Check the response headers, the ordering, the Connection header, Nagle.~~
+  All correct. The response was byte-for-byte the shape the RFC describes.
+
+* **The magic GUID had a character transposed.** It is
+  `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`, and it had been written
+  `258EAFA5-E914-47DA-95CA-5AB0DC85B11F` -- the C moved off the front of the
+  last group and onto the end as an F. Both are 36 characters and both look
+  right.
+
+**Why it was slow to find.** A wrong GUID does not produce a malformed
+handshake. It produces a perfect handshake with the wrong answer in it, and the
+only correct response a client has is to hang up quietly. There is nothing to
+read.
+
+Found by hashing the test vector in the RFC itself -- key
+`dGhlIHNhbXBsZSBub25jZQ==` must give `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=` -- and
+then, when that failed too, by grepping the Node binary for GUID-shaped strings
+and testing each one. `verify_protocol.ts` now asserts the vector so it cannot
+drift again.
+
+---
+
+## Three files in a row crashed on TypeScript that cannot be erased
+
+**Problem.** `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX: TypeScript parameter property
+is not supported in strip-only mode`, at load, in `server/ws.ts`, then
+`server/persist.ts`, then `verify/check_app.ts`.
+
+`constructor(private readonly socket: Duplex)` reads like an annotation and is
+actually an *assignment the compiler writes for you*. Node's type stripping
+never compiles anything -- it replaces types with whitespace -- so there is
+nothing to write it.
+
+* ~~Fix each one as it crashed.~~ Three times, each a runtime failure in a file
+  that had just been written, each costing a full run to discover.
+
+* **Write a suite that reads the source.** `verify_purity.ts` now rejects
+  parameter properties, enums, namespaces and module blocks across every
+  directory, along with `Math.random` and the unpinned transcendentals under
+  `sim/`, and imports naming a `.js` file that does not exist.
+
+  It immediately found a fourth thing nobody was looking for: `corners()` in
+  `sim/geo/hexgrid.ts` used `Math.cos` and `Math.sin`. It returns the corner
+  offsets for *drawing* a hexagon and had no business in `sim/` at all. Moved
+  to `client/src/render.ts` rather than granting the rule an exception -- the
+  exception would have been harmless, and a rule that accumulates them stops
+  being a rule.
+
+**Note.** `tsconfig.json` sets `erasableSyntaxOnly`, which would have caught all
+three at type-check time. Nothing runs `tsc`, because it needs an npm install
+the project otherwise does not. Recorded in known-gaps.
+
+---
+
+## A test failed because it assumed which turn its orders would land on
+
+* ~~Send a claim, wait for one turn, expect the claim to have landed.~~
+  **0 changed.** The turn timer starts when the server does. A client
+  connecting two seconds into a three-second turn sees a turn resolve before
+  its own orders have arrived -- which is correct behaviour, and the test was
+  wrong to fail. Poll for the effect, not for a turn number.
+
+---
+
 ## Node could not resolve the module graph
 
 **Problem.** `ERR_MODULE_NOT_FOUND` on every import.

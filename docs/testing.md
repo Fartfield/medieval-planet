@@ -64,11 +64,29 @@ before trusting a world to survive a migration.
 
 ## Run the real thing
 
-A green suite has never once proved that the actual game works. Start the
-server and connect a client before believing a change landed.
+```
+node verify/check_app.ts
+```
 
-Two crashes shipped in this project's predecessor that every suite passed, both
-because nothing drove the real app.
+Starts the actual server as a child process, connects two actual WebSocket
+clients, has them build the world from the seed the way the browser does, issue
+orders and watch turns resolve — then kills the server, restarts it, and checks
+the world came back.
+
+Named `check_` rather than `verify_` so `run_all` does not pick it up: it needs
+a free port and about thirty seconds, which is the wrong shape for something
+you run before and after every edit. **Run it before every commit.**
+
+A green suite has never once proved that the actual game works. Two crashes
+shipped in this project's predecessor that every suite passed, both because
+nothing drove the real app — and the WebSocket handshake bug recorded in
+`fix-attempts.md` was invisible to all 204 in-process measurements.
+
+There is no browser here, so `verify_render.ts` stands in for one: a stub 2D
+context that records what it was asked to draw. It cannot tell you the map
+looks right. It catches NaN coordinates, which is the failure mode that
+matters — canvas silently skips a shape containing one, so a broken projection
+does not throw and does not warn, it just quietly draws nothing.
 
 ## Writing a suite
 

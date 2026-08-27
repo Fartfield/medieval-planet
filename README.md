@@ -12,14 +12,20 @@ each.
 
 ## What is here now
 
-The world exists and can be looked at. The economy does not exist yet.
+The world exists, can be looked at, and can be shared. The economy is a stub.
 
 | | |
 |---|---|
 | the globe | 10,242 regions on a true icosahedral sphere, with the twelve pentagons a sphere cannot avoid |
-| generation | plate tectonics → elevation → climate → biome, cascading top-down, reproducible forever from one seed |
-| calibration | land cover matches Earth's to within 2.6 points across forest, grassland, desert and tundra |
-| verification | 109 measurements, diffed run to run |
+| generation | plate tectonics to elevation to climate to biome, cascading top-down, reproducible forever from one seed |
+| the lower layers | realm and ground maps, rivers from flow accumulation, soil, ore, timber and game per tile |
+| calibration | land cover matches Earth to within 2.6 points across forest, grassland, desert and tundra |
+| multiplayer | a turn server, two clients sharing one world, live desync detection, persistence |
+| verification | 227 measurements diffed run to run, plus an end-to-end run of the real thing |
+
+**Not here yet:** supply lines, and that is the largest gap. A settlement eats
+only the tile it stands on, which feeds about a tenth of a person, so settlers
+starve. See [docs/known-gaps.md](docs/known-gaps.md).
 
 ## Where to start reading
 
@@ -28,6 +34,7 @@ The world exists and can be looked at. The economy does not exist yet.
 | [docs/architecture.md](docs/architecture.md) | the layers, the scale ladder, and why nothing is stored |
 | [docs/world-generation.md](docs/world-generation.md) | how a planet is built, and what it was calibrated against |
 | [docs/determinism.md](docs/determinism.md) | why there is a fixed-point layer and no `Math.sin` anywhere |
+| [docs/multiplayer.md](docs/multiplayer.md) | the turn server, the wire, and why it never sends a map |
 | [docs/testing.md](docs/testing.md) | how to run the suites and how to read a moved measurement |
 | [docs/fix-attempts.md](docs/fix-attempts.md) | what has already been tried, and the measurement that killed it |
 | [docs/known-gaps.md](docs/known-gaps.md) | what is deliberately not done yet |
@@ -38,10 +45,19 @@ Needs Node 22.18 or newer — it runs the TypeScript directly, so there is no
 build step and no `npm install` for anything but the type checker.
 
 ```
-node verify/run_all.ts          # 109 measurements, diffed against the baseline
-node verify/run_all.ts --anchor # accept the current numbers as the new baseline
-node verify/calibrate_climate.ts# sweep the climate model against Earth
+node server/main.ts              # then open http://localhost:8787
+node server/main.ts --turn-seconds 10 --seed 1234
+node server/main.ts --turns 50   # headless, no socket in sight
+
+node verify/run_all.ts           # 227 measurements, diffed against the baseline
+node verify/run_all.ts --anchor  # accept the current numbers as the new baseline
+node verify/check_app.ts         # a real server and two real clients, end to end
+node verify/calibrate_climate.ts # sweep the climate model against Earth
 ```
+
+Drag to turn the globe, click a region, double-click or press Enter to descend.
+Escape goes back up. Claim a ground tile and settle it, and watch what happens
+when 506 m² has to feed twenty people.
 
 ## The scale
 
@@ -57,3 +73,13 @@ function of the world seed and its address, computed the instant somebody
 looks at it; the database holds only the tiles a player has changed. An
 untouched tile costs zero bytes, which is the only reason a trillion of them
 is possible.
+
+## What crosses the wire
+
+A welcome message for a world of 1,007,675,157,762 tiles is **189 bytes**. The
+whole saved state of a two-player world seven turns old is **481 bytes**.
+
+The server sends a seed; the client builds the planet itself from the same
+`sim/` code. Both then hash what they generated and compare, so a disagreement
+surfaces in a second rather than a month. See
+[docs/multiplayer.md](docs/multiplayer.md).

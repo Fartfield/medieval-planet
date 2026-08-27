@@ -142,12 +142,9 @@ export function fromPixel(x: number, y: number, size: number): number {
   return indexOf(rq, rr);
 }
 
-/** Corner offsets of a pointy-top hexagon, for drawing. Render-only. */
-export function corners(size: number): { x: number; y: number }[] {
-  const out: { x: number; y: number }[] = [];
-  for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 180) * (60 * i - 30);
-    out.push({ x: size * Math.cos(a), y: size * Math.sin(a) });
-  }
-  return out;
-}
+// The corner offsets a renderer needs to draw a hexagon used to live here and
+// now live in client/src/render.ts. They needed Math.cos and Math.sin, which
+// verify_purity.ts forbids anywhere under sim/ -- and rather than grant this
+// file an exception, the function moved to where it belonged. Drawing a shape
+// is not simulating one. The exception would have been harmless and the rule
+// is only worth having if it does not accumulate them.
