@@ -21,9 +21,9 @@ import {
   COST_PORTER, COST_CART, COST_WATER,
 } from '../sim/model/supply.ts';
 import {
-  LABOUR_DAYS_PER_HA, SEED_CORN_FRACTION, GRAIN_PER_PERSON_PER_YEAR,
-  radiusForPopulation,
+  SEED_CORN_FRACTION, GRAIN_PER_PERSON_PER_YEAR, radiusForPopulation,
 } from '../sim/model/settlement.ts';
+import { HELD_HECTARE_DAYS_IRON } from '../sim/model/labour.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 const SEED = 20260826;
@@ -95,11 +95,13 @@ suite('labour and the walk', () => {
   assert('reach falls with distance',
     reachFactor(1, Transport.Cart) > reachFactor(10, Transport.Cart));
 
-  // The virgate, divided out.
-  measure('labour days per hectare', LABOUR_DAYS_PER_HA);
-  check('one family works a virgate',
-    (A.WORKERS_PER_FAMILY * A.WORKING_DAYS_PER_YEAR) / LABOUR_DAYS_PER_HA,
-    A.VIRGATE_HECTARES, 0.01);
+  // Labour per hectare now comes from the medieval task rates in labour.ts,
+  // added up job by job, rather than from dividing the virgate by a family
+  // year. See verify_trade.ts for the derivation and the virgate check that
+  // now sits on top of it.
+  measure('labour days per held hectare', HELD_HECTARE_DAYS_IRON);
+  assert('a hectare of arable is a few weeks of work',
+    HELD_HECTARE_DAYS_IRON > 15 && HELD_HECTARE_DAYS_IRON < 40);
 
   measure('seed corn fraction', SEED_CORN_FRACTION);
   check('seed corn matches the yield ratio',
@@ -197,9 +199,13 @@ suite('settlement', () => {
   measure('ration at 5 people', small.ration);
   measure('hectares worked at 5 people', small.hectaresWorked);
 
-  // Five people supply 625 person-days, which at 52 days a hectare is 12 --
-  // a virgate, which is what five people held.
-  check('five people work about a virgate', small.hectaresWorked, A.VIRGATE_HECTARES, 1);
+  // Five people supply 625 man-days. At 23 days to a held hectare that is
+  // about 27 ha -- more than a virgate, because a virgate is what a family
+  // farmed *after* its dues to the lord, and nobody here owes any.
+  measure('hectares five people work', small.hectaresWorked);
+  assert('five people work more than a virgate and less than a hide',
+    small.hectaresWorked > A.VIRGATE_HECTARES
+    && small.hectaresWorked < A.VIRGATE_HECTARES * 5);
 
   // A big settlement runs out of land instead.
   const big = w.harvestFor(addr, 6000);
@@ -288,7 +294,11 @@ suite('a settlement over time', () => {
   assert('it is heading for the carrying capacity of its land',
     final > capacity * 0.5 && final < capacity * 1.3);
 
-  // Marginal land must hold at subsistence rather than growing or dying.
+  // Poor land must support fewer people than good land. Stated as a
+  // comparison rather than an absolute: an earlier version asserted that forty
+  // people could not live on taiga, which stopped being true the moment the
+  // labour model came down to the real medieval task rates and doubled how
+  // much ground a person could work. The ordering is the durable claim.
   const w2 = new World({ seed: SEED, cacheSize: 32 });
   let poor = 0;
   for (let c = 0; c < CELL_COUNT; c++) {
@@ -300,10 +310,10 @@ suite('a settlement over time', () => {
     let pbest = 0;
     for (let c = 0; c < SUBCELL_COUNT; c++) if (pys[c] > pys[pbest]) pbest = c;
     const paddr = [poor, 4959, pbest];
-    w2.setDelta(paddr, { owner: 0, population: 40, populationHealth: 1 });
-    for (let t = 0; t < 520; t++) resolveTurn(w2, [], 1);
-    const left = w2.getDelta(paddr)?.population ?? 0;
-    measure('forty people on poor land after ten years', left);
-    assert('poor land does not support forty people', left < 40);
+    const poorCapacity = w2.harvestFor(paddr, 400).potentialPopulation;
+    measure('poor land carrying capacity', poorCapacity);
+    measure('good land carrying capacity', capacity);
+    assert('poor land carries far fewer people than good land',
+      poorCapacity < capacity * 0.6);
   }
 });

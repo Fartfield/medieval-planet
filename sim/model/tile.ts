@@ -136,6 +136,21 @@ export interface TileDelta {
   depleted?: number[];
   /** Timber cut, as a fraction of what stood. Regrows. */
   cleared?: number;
+  /** Grain in the granary, kg. A year's eating is the target. */
+  grainStock?: number;
+  /** Iron in hand, kg. A year's wear is the target. */
+  ironStock?: number;
+  /**
+   * The share of the settlement's hands on the fields rather than in a mine or
+   * the woods, 0..1.
+   *
+   * Carried between turns because it is a *decision*, adjusted from how last
+   * year went, and a settlement that recomputed it from scratch each turn would
+   * oscillate. It is the one piece of state here that is a plan rather than a
+   * quantity.
+   */
+  farmShare?: number;
+
   /** Turn number this was last written. Lets old deltas be aged out. */
   turn: number;
 }
@@ -151,5 +166,8 @@ export function deltaIsEmpty(d: TileDelta): boolean {
     && d.populationHealth === undefined
     && d.owner === undefined
     && d.depleted === undefined
-    && d.cleared === undefined;
+    && d.cleared === undefined
+    && d.grainStock === undefined
+    && d.ironStock === undefined
+    && d.farmShare === undefined;
 }

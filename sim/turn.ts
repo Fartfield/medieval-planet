@@ -16,6 +16,7 @@ import { SOLDIER_GRAIN_KG_PER_DAY } from './derive.ts';
 import { fromKey, toKey, type Address } from './geo/address.ts';
 import { clamp } from './gen/mathx.ts';
 import { Hasher } from './hash.ts';
+import { runEconomy, GRAIN_PER_PERSON_YEAR, type Report } from './economy.ts';
 import type { World } from './world.ts';
 import type { TileDelta } from './model/tile.ts';
 
@@ -33,6 +34,12 @@ export interface TurnResult {
   turn: number;
   changed: TileDelta[];
   rejected: { order: Order; reason: string }[];
+  /** What every settlement did this week. Not persisted -- recomputed from the
+   *  deltas every turn, and here for the log and the client. */
+  reports: Map<string, Report>;
+  grainShippedKg: number;
+  ironShippedKg: number;
+  tradeRoutes: number;
 }
 
 /**
@@ -59,8 +66,15 @@ export function sortOrders(orders: Order[]): Order[] {
  * famine a slow slide rather than a cliff in March, and that is the wrong
  * shape. Recorded in docs/known-gaps.md as the first thing seasons will fix.
  */
-export function weeklyGrainKg(world: World, address: Address, population: number): number {
-  return world.harvestFor(address, population).netKgPerYear / A.TURNS_PER_YEAR;
+export function weeklyGrainKg(
+  world: World,
+  address: Address,
+  population: number,
+  ironSupply = 1,
+  farmShare = 1,
+): number {
+  return world.harvestFor(address, population, ironSupply, farmShare).netKgPerYear
+    / A.TURNS_PER_YEAR;
 }
 
 /** Grain a population eats in one week, kg. */
@@ -84,13 +98,13 @@ export function resolveTurn(world: World, orders: Order[], playerCount: number):
     else touched.add(order.target);
   }
 
-  // Then everyone who lives anywhere eats. Iterating the delta list rather
-  // than the world, because the world is a trillion tiles and all but a
-  // handful of them are empty -- this is the payoff of storing only changes.
-  for (const delta of world.allDeltas()) {
-    if (!delta.population || delta.population <= 0) continue;
-    const address = fromKey(delta.key);
-    if (stepPopulation(world, address, delta)) touched.add(delta.key);
+  // Produce, trade, eat, decide. See economy.ts for why that order.
+  const economy = runEconomy(world);
+  for (const key of economy.touched) touched.add(key);
+
+  // Then people are born, die, or move in, on the ration they actually got.
+  for (const [key, report] of economy.reports) {
+    if (stepPopulation(world, report)) touched.add(key);
   }
 
   world.turn++;
@@ -102,7 +116,16 @@ export function resolveTurn(world: World, orders: Order[], playerCount: number):
     // delta any more. Send a tombstone so clients drop theirs too.
     changed.push(d ?? { key, turn: world.turn });
   }
-  return { turn: world.turn, changed, rejected };
+
+  return {
+    turn: world.turn,
+    changed,
+    rejected,
+    reports: economy.reports,
+    grainShippedKg: economy.grainFlows.reduce((n, f) => n + f.shippedKg, 0),
+    ironShippedKg: economy.ironFlows.reduce((n, f) => n + f.shippedKg, 0),
+    tradeRoutes: economy.grainFlows.length + economy.ironFlows.length,
+  };
 }
 
 function applyOrder(world: World, order: Order, playerCount: number): string | null {
@@ -138,9 +161,17 @@ function applyOrder(world: World, order: Order, playerCount: number): string | n
       // That is the game: they will starve, and the player will have to bring
       // food from somewhere. A cap here would be the population limit this
       // design does not have.
+      // Settlers arrive with provisions, and how much is not a design choice:
+      // it is what a person can carry. A porter's load is 30 kg, which at
+      // 0.87 kg a day is five weeks of food. Enough to get a roof up and a
+      // first crop in, and not enough to be lazy with.
+      const provisions = amount * A.PORTER_LOAD_KG;
+      const existing = world.getDelta(address);
       world.setDelta(address, {
         population: tile.population + amount,
         populationHealth: tile.populationHealth,
+        grainStock: (existing?.grainStock ?? 0) + provisions,
+        farmShare: existing?.farmShare ?? 1,
       });
       return null;
     }
@@ -174,12 +205,10 @@ function applyOrder(world: World, order: Order, playerCount: number): string | n
  * hands, land or food, and if it sits on a river it can keep going a long way
  * past what a landlocked one can.
  */
-function stepPopulation(world: World, address: Address, delta: TileDelta): boolean {
-  const population = delta.population ?? 0;
-  const health = delta.populationHealth ?? 1;
-
-  const gathered = world.harvestFor(address, population);
-  const ration = clamp(gathered.ration, 0, 1);
+function stepPopulation(world: World, r: Report): boolean {
+  const population = r.population;
+  const health = r.health;
+  const ration = clamp(r.ration, 0, 1);
 
   const rate = 1 / A.STARVATION_WEEKS;
   const nextHealth = clamp(health + (ration - health) * rate, 0, 1);
@@ -188,11 +217,16 @@ function stepPopulation(world: World, address: Address, delta: TileDelta): boole
   // subsistence stays put, which is what pre-industrial populations did for
   // centuries at a time.
   //
+  // The surplus that counts is what is in the granary beyond a year's eating,
+  // not this week's harvest. A town lives off its store, and a good week in a
+  // bad year does not make anybody feel safe enough to marry.
+  const annualNeed = r.grainNeed * A.TURNS_PER_YEAR;
+  const surplus = annualNeed <= 0 ? 0 : clamp(r.grainStock / annualNeed, 0, 1);
+
   // The multiplier at full surplus is solved, not chosen: colonial America is
   // the fastest a pre-industrial population ever grew from births alone, at 3%
   // a year, and reaching that against a 32-per-thousand death rate needs
   // births at 62 per thousand -- 1.77 times the baseline.
-  const surplus = clamp(gathered.ration - 1, 0, 1);
   const maxMultiplier =
     (A.MAX_NATURAL_INCREASE_PER_YEAR * 1000 + A.DEATH_RATE_PER_1000_YR)
     / A.BIRTH_RATE_PER_1000_YR;
@@ -204,21 +238,25 @@ function stepPopulation(world: World, address: Address, delta: TileDelta): boole
   const deaths = (population * A.DEATH_RATE_PER_1000_YR) / 1000 / A.TURNS_PER_YEAR
     + population * (1 - nextHealth) * rate;
 
-  // And people move to where there is food. This is how a settlement actually
-  // grows -- medieval towns grew by immigration, not by birth, because urban
-  // death rates ran ahead of urban birth rates almost everywhere.
-  const headroom = Math.max(0, gathered.potentialPopulation - population);
-  const migrants = gathered.ration >= A.MIGRATION_MIN_RATION
+  // And people move to where there is food.
+  //
+  // Headroom is measured against what the town can *feed*, which now includes
+  // what it imports. A mining town with a grain contract is as attractive as a
+  // farming town with fields of its own, and that is the whole point of the
+  // trade system: it makes a site viable that the land alone would not.
+  const fedCapacity = r.grainNeed <= 0 ? 0
+    : ((r.grainGrown + r.grainIn - r.grainOut) * A.TURNS_PER_YEAR) / GRAIN_PER_PERSON_YEAR;
+  const headroom = Math.max(0, fedCapacity - population);
+  const migrants = surplus > 0.15 && ration >= 0.98
     ? (headroom * A.MIGRATION_RATE_PER_YEAR) / A.TURNS_PER_YEAR
     : 0;
 
   // Population is carried as a fraction, not an integer.
   //
   // Rounding it every turn silently destroyed all growth below one person per
-  // turn: a settlement of five with an ample surplus gains 0.003 people a week,
-  // and rounding that away left it at exactly five for ten game-years. The
-  // fractional part IS the growth at this scale, and it has to survive the
-  // turn boundary. Same reasoning as the movement remainder in derive.ts.
+  // turn: five people with an ample surplus gain 0.003 a week, and rounding
+  // that away left them at exactly five for a decade. The fractional part IS
+  // the growth at this scale. Same reasoning as the movement remainder.
   const next = Math.max(0, population + births - deaths + migrants);
   const nextPopulation = Math.round(next * 1000) / 1000;
 
@@ -226,9 +264,12 @@ function stepPopulation(world: World, address: Address, delta: TileDelta): boole
 
   // Under half a person is nobody. A settlement does not linger at 0.4 people.
   if (nextPopulation < 0.5) {
-    world.setDelta(address, { population: undefined, populationHealth: undefined });
+    world.setDelta(r.address, {
+      population: undefined, populationHealth: undefined,
+      grainStock: undefined, ironStock: undefined, farmShare: undefined,
+    });
   } else {
-    world.setDelta(address, {
+    world.setDelta(r.address, {
       population: nextPopulation,
       populationHealth: Math.round(nextHealth * 1000) / 1000,
     });

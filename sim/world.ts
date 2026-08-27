@@ -30,7 +30,7 @@ import {
 import { classifyLandform, type GroundTile, type TileDelta, deltaIsEmpty } from './model/tile.ts';
 import {
   buildCatchment, harvest, radiusForPopulation,
-  type Catchment, type Harvest,
+  type Catchment, type Harvest, type Competitor,
 } from './model/settlement.ts';
 import { clamp, dlog } from './gen/mathx.ts';
 
@@ -290,9 +290,24 @@ export class World {
     return built;
   }
 
-  /** What that land actually delivers, for a population of this size. */
-  harvestFor(address: Address, population: number): Harvest {
-    return harvest(this.catchmentFor(address, population), population);
+  /**
+   * What that land actually delivers.
+   *
+   * `ironSupply` is how much of the iron the settlement wants it actually has,
+   * 0..1 -- iron tools take about a third off the farming year. `labourShare`
+   * is how much of its hands are farming rather than mining or logging, which
+   * is what lets a town specialise.
+   */
+  harvestFor(
+    address: Address,
+    population: number,
+    ironSupply = 1,
+    labourShare = 1,
+    competitors: readonly Competitor[] = [],
+  ): Harvest {
+    return harvest(
+      this.catchmentFor(address, population),
+      population, ironSupply, labourShare, competitors);
   }
 
   /** Which region a direction on the sphere falls in. */
@@ -355,4 +370,4 @@ export class World {
 }
 
 export { toKey, fromKey, layerName, type Address, type GroundTile, type TileDelta };
-export type { Catchment, Harvest };
+export type { Catchment, Harvest, Competitor };

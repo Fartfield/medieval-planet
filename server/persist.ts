@@ -123,7 +123,10 @@ function isTombstone(d: TileDelta): boolean {
     && d.populationHealth === undefined
     && d.owner === undefined
     && d.depleted === undefined
-    && d.cleared === undefined;
+    && d.cleared === undefined
+    && d.grainStock === undefined
+    && d.ironStock === undefined
+    && d.farmShare === undefined;
 }
 
 export { dirname };

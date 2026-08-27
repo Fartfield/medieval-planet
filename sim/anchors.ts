@@ -674,3 +674,149 @@ export const MIGRATION_RATE_PER_YEAR = 0.08;
 /** Nobody moves to a place that cannot feed them. Migrants need to see a
  *  surplus, not merely subsistence. */
 export const MIGRATION_MIN_RATION = 1.05;
+
+// ---------------------------------------------------------------------------
+// Iron
+// ---------------------------------------------------------------------------
+//
+// The second thing a settlement can make, and the reason specialisation pays.
+// Iron is chosen over any other craft because its whole chain is already on
+// the map: ore comes from the geology model, charcoal from the timber model,
+// and what it buys -- less labour per hectare -- feeds straight back into the
+// supply model. Nothing new had to be invented to close the loop.
+
+/**
+ * Iron consumed per person per year, kg. Estimates of European output in the
+ * fourteenth century divided by population land near one kilogramme a head --
+ * a ploughshare, a coulter, a scythe, an axe, nails and horseshoes, all of it
+ * wearing out and being replaced over a few years.
+ */
+export const IRON_PER_PERSON_KG_PER_YEAR = 1.0;
+
+/**
+ * A bloomery, which is what iron came out of before the blast furnace.
+ *
+ * A run yields about 15 kg of iron from roughly three times its weight in ore,
+ * and needs about four kilogrammes of charcoal for every kilogramme of iron.
+ * Charcoal in turn takes about five kilogrammes of wood per kilogramme made,
+ * so a kilogramme of iron consumes twenty kilogrammes of standing timber. That
+ * is why ironworking moved when the woods ran out, not when the ore did.
+ */
+export const BLOOM_YIELD_KG = 15.0;
+export const ORE_PER_IRON_KG = 3.0;
+export const CHARCOAL_PER_IRON_KG = 4.0;
+export const WOOD_PER_CHARCOAL_KG = 5.0;
+
+/** Person-days for each stage of making a kilogramme of iron. Digging, felling,
+ *  burning, smelting and smithing, from what each trade got through in a day. */
+export const ORE_DUG_KG_PER_DAY = 200.0;
+export const WOOD_FELLED_KG_PER_DAY = 1000.0;
+export const WOOD_CHARRED_KG_PER_DAY = 500.0;
+export const BLOOM_CREW_DAYS = 5.0;
+export const SMITHING_DAYS_PER_KG = 0.5;
+
+/**
+ * What iron buys: a scythe mows three to four times as fast as a sickle, and
+ * an iron-shod mouldboard plough opens ground a wooden ard cannot. Cutting and
+ * ploughing are about half of farm labour.
+ *
+ * FREE PARAMETER: that half. The scythe figure is measured and repeatedly
+ * documented; the share of the farming year it applies to is our estimate.
+ */
+export const SCYTHE_SPEEDUP = 3.0;
+export const TOOL_DEPENDENT_LABOUR_SHARE = 0.5;
+
+/**
+ * How much grain a settlement tries to keep in hand, in years of eating.
+ *
+ * Medieval granaries aimed at a year's supply plus next year's seed, because
+ * the gap between harvests is the whole problem and a failed harvest has to be
+ * survivable. It is also what makes trade *stabilising* rather than merely
+ * useful -- a town with a full granary can lose a supplier for a season.
+ */
+export const GRAIN_STOCK_TARGET_YEARS = 1.0;
+
+/** Grain spoils. Even well kept, a granary loses a few per cent a year to
+ *  damp, rats and weevils; 5% is the usual figure for good storage. */
+export const GRAIN_SPOILAGE_PER_YEAR = 0.05;
+
+// ---------------------------------------------------------------------------
+// The farming year, task by task
+// ---------------------------------------------------------------------------
+//
+// Manorial accounts and the thirteenth-century husbandry treatises -- Walter of
+// Henley above all -- record how much ground each job covered in a day, because
+// that is exactly what a reeve had to know to plan a year. So the labour cost
+// of arable is not estimated here, it is added up.
+//
+// Rates are in acres per man-day, the unit the sources use. An acre is 0.4047
+// hectares.
+//
+// This replaced a figure derived from the virgate -- 12 hectares to a family of
+// two and a half workers giving 250 days each, so 52 man-days a hectare. That
+// reasoning assumed a family spent all its labour on its own arable, and a
+// villein family did nothing of the kind: week-work on the lord's demesne ran
+// to two or three days in seven, and beyond that there were livestock, the
+// croft, woodland rights, building and spinning. The virgate is now a *check*
+// on the total rather than the source of it, and it passes: a family's own
+// arable comes out at about half its available days, which leaves the right
+// amount for everything else it owed and did.
+
+export const ACRE_HECTARES = 0.4046856;
+
+/**
+ * A plough team covers an acre in a day -- Walter of Henley states it plainly
+ * and manorial accounts bear it out -- but only with an iron share and coulter
+ * to cut the furrow slice. A wooden ard scratches rather than turns, needs
+ * cross-ploughing, and manages about half as much.
+ *
+ * The team is a ploughman and a driver, so an acre costs two man-days.
+ */
+export const PLOUGH_ACRES_PER_TEAM_DAY_IRON = 1.0;
+export const PLOUGH_ACRES_PER_TEAM_DAY_WOOD = 0.5;
+export const PLOUGH_TEAM_MEN = 2;
+
+/** Ploughings a year: sown land twice, and fallow once or twice more, because
+ *  the fallow is ploughed to kill weeds and that is half of why it works. */
+export const PLOUGHINGS_PER_SOWN_ACRE = 2.0;
+export const PLOUGHINGS_PER_FALLOW_ACRE = 1.5;
+
+/** Harrowing to break the clods and cover the seed. */
+export const HARROW_ACRES_PER_DAY = 1.5;
+
+/** Sowing broadcast from a seed-lip. Fast, and the one job nobody rushed. */
+export const SOW_ACRES_PER_DAY = 2.5;
+
+/** Weeding, with a hook and a forked stick. Medieval fields were weedy and
+ *  this was real work, done twice in a bad year. */
+export const WEED_ACRES_PER_DAY = 0.5;
+
+/**
+ * Reaping wheat with a sickle: a quarter to a third of an acre a day. Slow on
+ * purpose -- the sickle cuts high and holds the ear steady, losing far less
+ * grain to shattering than a scythe, and leaving the long straw that thatched
+ * the roof. It is why the scythe did not take over the wheat harvest for
+ * centuries after it was mowing everything else.
+ */
+export const REAP_ACRES_PER_DAY_SICKLE = 0.28;
+
+/** Mowing with a scythe: an acre a day, three to four times a sickle. Used for
+ *  hay and for the spring grains, and it needs a large iron blade. */
+export const MOW_ACRES_PER_DAY_SCYTHE = 1.0;
+
+/** The share of the sown area under spring grains, which can be scythed.
+ *  Under a three-field rotation, half the sown land is the spring field. */
+export const SPRING_GRAIN_SHARE = 0.5;
+
+/** Binding into sheaves and stooking them to dry. */
+export const BIND_ACRES_PER_DAY = 0.5;
+
+/** Carting the sheaves to the barn. */
+export const CART_ACRES_PER_DAY = 1.0;
+
+/**
+ * Threshing with a flail and winnowing: about a quarter a day, which is
+ * roughly 200 kg of grain. Unlike every other task this scales with the
+ * harvest rather than with the acreage, so good land costs more to thresh.
+ */
+export const THRESH_KG_PER_DAY = 200.0;

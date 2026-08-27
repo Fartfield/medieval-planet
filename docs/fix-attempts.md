@@ -122,6 +122,81 @@ globally. The test now walks 24 regions.
 
 ---
 
+## The farming year was derived from the wrong end and came out double
+
+**Problem.** Labour was 52 man-days per held hectare, derived from the virgate:
+twelve hectares to a family with two and a half workers giving 250 days each.
+
+* ~~Divide the virgate by a family year.~~ **Roughly 2x too high.** The
+  arithmetic is fine and the premise is wrong: it assumes a villein family
+  spent all its labour on its own arable. It spent nothing like all of it.
+  Week-work on the lord's demesne ran to two or three days in seven, and past
+  that there were the beasts, the croft, the woods, building and spinning. The
+  virgate tells you what a family *held*, not what holding it cost them.
+
+* **Add it up from the measured task rates instead.** Manorial accounts and
+  Walter of Henley record how much ground each job covered in a day, because a
+  reeve had to know that to plan a year. Ploughing an acre a day with a team of
+  two, harrowing 1.5, sowing 2.5, weeding 0.5, reaping 0.28 with a sickle,
+  binding 0.5, carting 1.
+
+  **12.4 man-days to a sown acre with iron, 17.6 with a wooden ard** — against
+  the 10-15 historians give. Per held hectare, with the fallow third still
+  being ploughed: 22.8 and 34.0.
+
+**And the virgate becomes a check that passes.** 12 ha now costs 274 man-days,
+44% of a family's 625, leaving 351 for week-work and everything else. That it
+fits is what makes the rest of it trustworthy.
+
+**Knock-on, found immediately.** `radiusForPopulation` floored the search at 64
+tiles — about 3 hectares. With labour halved, five people could work
+twenty-seven, so every small settlement came out land-limited on an empty
+continent. The radius is now derived from what the hands can work rather than
+from what the mouths need.
+
+---
+
+## Two towns two kilometres apart each farmed the whole valley
+
+**Problem.** A farming town and a mining town were placed 2.14 km apart to test
+trade. Neither was ever short of anything, no grain moved, and the mining town
+never specialised.
+
+* ~~Assume the market clearing was broken and look there.~~ It was fine.
+
+* **Both settlements were farming the same land.** Each built its catchment as
+  though it were alone on the continent, so the same 35 km² was counted twice
+  and both had food to spare. Trade had nothing to do because nobody was short.
+
+* **A tile goes to whichever settlement is nearest it.** A Voronoi partition,
+  which is also exactly what village territories were — the boundary ran where
+  the walk from one village became longer than the walk from the other, and the
+  parish map of almost anywhere still shows it.
+
+---
+
+## A mining town accumulated 1.65 million kg of iron nobody wanted
+
+**Problem.** It specialised forever. A thousand people needing a thousand
+kilogrammes a year had built a pile of 1,653,151.
+
+* **There is no price, so it could not see iron getting cheaper.** The
+  specialisation rule only asked whether the land was full, never whether
+  anybody wanted the output.
+
+* **Unsold stock is the signal.** A town cannot watch a price but it can watch
+  the pile in the yard grow while nobody comes for it. A market signal does not
+  have to be a price; it has to be a fact the producer can observe.
+
+**Second attempt overshot.** The first version of the glut rule pushed the farm
+share up whenever the yard was full and the specialisation rule pushed it down
+whenever the land was full, so it flipped between 90% and 100% farming *every
+single turn* and settled at neither. Fixed by requiring a demand signal —
+either the town wants iron itself or somebody bought some — before it
+specialises at all.
+
+---
+
 ## Median farmland yielded 41 kg/ha where medieval reality is 330-450
 
 **Problem.** With supply built, settlements starved everywhere. Median grain

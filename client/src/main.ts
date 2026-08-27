@@ -19,6 +19,10 @@ import { BIOME_NAMES, BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import { LANDFORM_NAMES } from '../../sim/model/tile.ts';
 import { MINERAL_NAMES } from '../../sim/model/resources.ts';
 import { workedCells } from '../../sim/model/settlement.ts';
+import { Mineral } from '../../sim/model/resources.ts';
+import { ironOutputKgPerYear, IRON_LABOUR_SAVING } from '../../sim/model/labour.ts';
+import { GRAIN_PER_PERSON_YEAR } from '../../sim/economy.ts';
+import { IRON_PER_PERSON_KG_PER_YEAR } from '../../sim/anchors.ts';
 import type { TileDelta } from '../../sim/model/tile.ts';
 import type { ServerMessage, PlayerInfo } from '../../server/protocol.ts';
 import {
@@ -218,7 +222,13 @@ function workedOverlay(w: World): Map<number, number> | null {
   const address = [...path, selected];
   const tile = w.tile(address);
   if (tile.population <= 0) return null;
-  return workedCells(w.catchmentFor(address, tile.population), tile.population, 0);
+  const delta = w.getDelta(address);
+  const farmShare = delta?.farmShare ?? 1;
+  const yearIron = tile.population * IRON_PER_PERSON_KG_PER_YEAR;
+  const ironSupply = yearIron <= 0 ? 1 : Math.min(1, (delta?.ironStock ?? 0) / yearIron);
+  return workedCells(
+    w.catchmentFor(address, tile.population), tile.population, 0,
+    ironSupply, farmShare, neighboursOf(w, address));
 }
 
 // --- drawing ----------------------------------------------------------------
@@ -519,25 +529,77 @@ function drawInspector(): void {
  * has to spread out or move.
  */
 function supplyPanel(w: World, address: number[], population: number): string {
-  const h = w.harvestFor(address, population);
+  const delta = w.getDelta(address);
+  const farmShare = delta?.farmShare ?? 1;
+  const grainStock = delta?.grainStock ?? 0;
+  const ironStock = delta?.ironStock ?? 0;
+
+  const yearGrain = population * GRAIN_PER_PERSON_YEAR;
+  const yearIron = population * IRON_PER_PERSON_KG_PER_YEAR;
+  const ironSupply = yearIron <= 0 ? 1 : Math.min(1, ironStock / yearIron);
+  const months = yearGrain <= 0 ? 0 : (grainStock / yearGrain) * 12;
+
+  const h = w.harvestFor(address, population, ironSupply, farmShare, neighboursOf(w, address));
   const surplus = h.netKgPerYear - h.needKgPerYear;
-  const state = h.ration >= 1.05 ? 'growing'
-    : h.ration >= 0.98 ? 'at subsistence'
-    : h.ration >= 0.8 ? 'short of food' : 'starving';
+
+  const state = months >= 9 ? 'well provisioned'
+    : months >= 3 ? 'getting by'
+    : months >= 1 ? 'short of food' : 'starving';
+  const trade = farmShare < 0.4 ? 'ironworks &mdash; lives on imported grain'
+    : farmShare < 0.85 ? 'farms and mines'
+    : surplus > 0 ? 'farms, with grain to sell' : 'farms for itself';
+
+  const ore = w.tile(address).deposits.find((d) => d.kind === Mineral.Iron);
+  const catchment = w.catchmentFor(address, population);
+  const idleDays = (population * 2.5) / 5 * 250 * (1 - farmShare);
+  const ironMade = ironOutputKgPerYear(idleDays, ore?.richness ?? 0, catchment.timberKgPerYear);
 
   return `<div class="group">WHAT IT LIVES ON</div><table>
-    ${row('condition', `<b style="color:${h.ration >= 0.98 ? '#7ba05b' : '#d0563a'}">${state}</b>`)}
-    ${row('ration', `${(h.ration * 100).toFixed(0)}% of need`)}
+    ${row('condition', `<b style="color:${months >= 3 ? '#7ba05b' : '#d0563a'}">${state}</b>`)}
+    ${row('granary', `${Math.round(grainStock).toLocaleString('en')} kg &mdash; ${months.toFixed(1)} months`)}
+    ${row('trade', trade)}
+    ${row('hands farming', `${(farmShare * 100).toFixed(0)}%`)}
     ${row('limited by', h.limitedBy === 'labour'
       ? 'hands &mdash; more people would help'
       : h.limitedBy === 'land' ? 'land &mdash; it must spread out' : 'nothing')}
     ${row('fields worked', `${h.hectaresWorked.toFixed(0)} ha`)}
     ${row('furthest field', `${(h.furthestWorkedM / 1000).toFixed(2)} km`)}
+    ${row('lost to neighbours', h.tilesLostToNeighbours > 0
+      ? `${h.tilesLostToNeighbours.toLocaleString('en')} tiles`
+      : '<span class="none">none</span>')}
     ${row('haulage', h.usedWater ? 'river &mdash; 43x cheaper' : 'cart')}
     ${row('harvest', `${Math.round(h.netKgPerYear).toLocaleString('en')} kg/yr net`)}
     ${row('surplus', `${surplus >= 0 ? '+' : ''}${Math.round(surplus).toLocaleString('en')} kg/yr`)}
     ${row('land could feed', `${Math.round(h.potentialPopulation).toLocaleString('en')} people`)}
+    </table>
+    <div class="group">IRON</div><table>
+    ${row('ore here', ore !== undefined
+      ? `richness ${(ore.richness * 100).toFixed(0)}%`
+      : '<span class="none">none</span>')}
+    ${row('tools in hand', `${Math.round(ironStock).toLocaleString('en')} kg &mdash; ${(ironSupply * 100).toFixed(0)}% shod`)}
+    ${row('making', ironMade > 0.5
+      ? `${Math.round(ironMade).toLocaleString('en')} kg/yr`
+      : '<span class="none">nothing</span>')}
+    ${row('woods grow', `${Math.round(catchment.timberKgPerYear / 1000).toLocaleString('en')} t/yr`)}
+    ${row('iron saves', `${(IRON_LABOUR_SAVING * 100).toFixed(0)}% of the farming year`)}
     </table>`;
+}
+
+/**
+ * Every other settlement, as competitors for land.
+ *
+ * A tile goes to whoever is nearest it, so the inspector has to know about the
+ * neighbours or it will report fields the settlement does not actually have.
+ */
+function neighboursOf(w: World, address: number[]): { x: number; y: number; z: number }[] {
+  const me = toKey(address);
+  const out: { x: number; y: number; z: number }[] = [];
+  for (const d of w.allDeltas()) {
+    if (d.key === me || !d.population) continue;
+    const dir = w.tile(fromKey(d.key)).dir;
+    out.push({ x: dir[0], y: dir[1], z: dir[2] });
+  }
+  return out;
 }
 
 function drawLegend(): void {

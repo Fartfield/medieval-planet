@@ -246,10 +246,15 @@ function runTurn(): void {
   let people = 0;
   for (const d of world.allDeltas()) people += d.population ?? 0;
 
+  const trade = result.tradeRoutes > 0
+    ? `, ${Math.round(result.grainShippedKg).toLocaleString('en')} kg grain and `
+      + `${Math.round(result.ironShippedKg).toLocaleString('en')} kg iron over `
+      + `${result.tradeRoutes} route(s)`
+    : '';
   console.log(
     `  turn ${world.turn}: ${orders.length} order(s), `
     + `${result.rejected.length} rejected, ${result.changed.length} tile(s) changed, `
-    + `${world.deltaCount} live, ${people} people`,
+    + `${world.deltaCount} live, ${Math.round(people).toLocaleString('en')} people${trade}`,
   );
   for (const r of result.rejected.slice(0, 5)) {
     console.log(`      rejected ${r.order.action} ${r.order.target}: ${r.reason}`);

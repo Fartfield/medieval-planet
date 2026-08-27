@@ -10,13 +10,12 @@
 // Two limits, with very different shapes, and the difference between them is
 // most of what a player will feel.
 //
-//   LABOUR is the near limit. Every hectare of arable needs about 52
-//   person-days a year -- that is the virgate divided out, 12 hectares to a
-//   family with two and a half workers giving 250 days each -- and a worker
-//   walking to a distant field spends the day walking. So a settlement can only
-//   farm as much land as it has hands for, and the further out it reaches the
-//   fewer hours each hand gives. This falls off fast, and it is why settlements
-//   are compact.
+//   LABOUR is the near limit. A hectare of held arable costs 23 man-days a
+//   year with iron tools and 34 without -- added up task by task from measured
+//   medieval rates in model/labour.ts -- and a worker walking to a distant
+//   field spends the day walking. So a settlement can only farm as much land as
+//   it has hands for, and the further out it reaches the fewer hours each hand
+//   gives. This falls off fast, and it is why settlements are compact.
 //
 //   TRANSPORT is the far limit. Hauling the crop home eats some of the crop.
 //   This falls off slowly -- at two kilometres a cart loses under half a
@@ -37,15 +36,13 @@ import type { Address } from '../geo/address.ts';
 import { SUBCELL_COUNT, subNeighbours } from '../geo/hexgrid.ts';
 import { clamp } from '../gen/mathx.ts';
 import { yieldsFor, type SubMap } from '../gen/submap.ts';
+import { hectareDays, threshDays, HELD_HECTARE_DAYS_IRON } from './labour.ts';
+import { WOODY_FRACTION } from './resources.ts';
 
 import {
   Transport, TRANSPORT_NAMES, modeFor, reachFactor, labourEfficiency, delivered,
   type TransportId,
 } from './supply.ts';
-
-/** Person-days to work one hectare of arable for a year. From the virgate. */
-export const LABOUR_DAYS_PER_HA =
-  (A.WORKERS_PER_FAMILY * A.WORKING_DAYS_PER_YEAR) / A.VIRGATE_HECTARES;
 
 /** The share of a harvest held back for next year's sowing. */
 export const SEED_CORN_FRACTION = 1 / A.MEDIEVAL_YIELD_RATIO;
@@ -62,10 +59,32 @@ export interface WorkedTile {
   mode: TransportId;
   /** Grain reaching the settlement per year, after the walk and the haul. */
   deliveredKgPerYear: number;
-  /** Person-days a year to work it. */
+  /**
+   * Hectares of *effective* field work: the real area, divided by how much of
+   * a day survives the walk to it. Multiplied by the current cost of a hectare
+   * to get days, so that a change in iron supply does not require rebuilding
+   * the catchment.
+   */
+  fieldHa: number;
+  /** Days to thresh what this tile yields. Scales with grain, not with area. */
+  threshDays: number;
+  /** Days at full iron supply. What the ranking is built on. */
   labourDays: number;
   /** Delivered grain per person-day. The number that decides what gets farmed. */
   returnPerDay: number;
+}
+
+/**
+ * Days to work a tile at a given iron supply.
+ *
+ * The ranking in a catchment is built once at full iron and not rebuilt when
+ * supply changes. That is an approximation and a small one: field work scales
+ * with iron and threshing does not, but threshing is under a tenth of the
+ * total, so the order two tiles come in is almost never affected. The absolute
+ * labour is always current, which is what the harvest actually spends.
+ */
+export function daysFor(tile: WorkedTile, ironSupply: number): number {
+  return tile.fieldHa * hectareDays(ironSupply) + tile.threshDays;
 }
 
 export interface Catchment {
@@ -78,6 +97,16 @@ export interface Catchment {
   radiusM: number;
   /** Hectares in one cell, so the harvest can report area worked. */
   cellHa: number;
+  /**
+   * Wood the catchment grows in a year, kg.
+   *
+   * Not the standing timber -- the annual increment, because a settlement that
+   * cuts more than that is deforesting rather than harvesting. It is the real
+   * limit on ironworking: a kilogramme of iron eats twenty kilogrammes of
+   * timber as charcoal, and ironworks historically moved when the woods gave
+   * out rather than when the ore did.
+   */
+  timberKgPerYear: number;
 }
 
 export interface Harvest {
@@ -87,6 +116,8 @@ export interface Harvest {
   labourUsed: number;
   /** Tiles actually farmed. */
   tilesWorked: number;
+  /** Tiles inside the search radius that are nearer to somebody else. */
+  tilesLostToNeighbours: number;
   /** Hectares actually farmed. */
   hectaresWorked: number;
   /** Grain arriving at the settlement, before seed corn. */
@@ -135,6 +166,7 @@ export function buildCatchment(
   const radiusRad = radiusM / A.EARTH_RADIUS_M;
 
   const candidates: WorkedTile[] = [];
+  let timberKgPerYear = 0;
 
   for (let m = 0; m < maps.length; m++) {
     const map = maps[m];
@@ -154,6 +186,11 @@ export function buildCatchment(
       const distanceM = chord * A.EARTH_RADIUS_M;
       const km = distanceM / 1000;
 
+      // Wood grows on every tile in reach, farmed or not -- the woods are not
+      // in competition with the fields for this, they are what is left over.
+      // g/m2/yr to kg/ha/yr is a factor of ten exactly.
+      timberKgPerYear += map.nppGm2[c] * 10 * WOODY_FRACTION[map.biome[c]] * areaHa;
+
       const labourFactor = labourEfficiency(km);
       if (labourFactor <= 0) continue;
 
@@ -166,7 +203,9 @@ export function buildCatchment(
       const deliveredKgPerYear = yieldKgPerHa * areaHa * survives;
       // Working a distant field costs more days for the same hectare, because
       // the walk comes out of the working day.
-      const labourDays = (LABOUR_DAYS_PER_HA * areaHa) / labourFactor;
+      const fieldHa = areaHa / labourFactor;
+      const thresh = threshDays(yieldKgPerHa * areaHa);
+      const labourDays = fieldHa * HELD_HECTARE_DAYS_IRON + thresh;
       if (labourDays <= 0) continue;
 
       candidates.push({
@@ -175,6 +214,8 @@ export function buildCatchment(
         distanceM,
         mode,
         deliveredKgPerYear,
+        fieldHa,
+        threshDays: thresh,
         labourDays,
         returnPerDay: deliveredKgPerYear / labourDays,
       });
@@ -189,7 +230,7 @@ export function buildCatchment(
     || a.map - b.map
     || a.cell - b.cell);
 
-  return { maps, mapAddresses, candidates, radiusM, cellHa: areaHa };
+  return { maps, mapAddresses, candidates, radiusM, cellHa: areaHa, timberKgPerYear };
 }
 
 /**
@@ -200,8 +241,37 @@ export function buildCatchment(
  * cannot be beaten. That would stop being true the moment two tiles compete
  * for the same ox or the same road, which is a problem for later.
  */
-export function harvest(catchment: Catchment, population: number): Harvest {
-  const labourAvailable = population * A.WORKERS_PER_FAMILY / 5 * A.WORKING_DAYS_PER_YEAR;
+/**
+ * Where a neighbour's fields begin.
+ *
+ * Two settlements a mile apart cannot both farm the same field, and until this
+ * existed they both did -- each built its catchment as though it were alone on
+ * the continent, so a farming town and a mining town two kilometres apart each
+ * counted the whole valley and neither ever needed the other. Trade had
+ * nothing to do, because nobody was ever short.
+ *
+ * A tile goes to whichever settlement is nearest it. That is a Voronoi
+ * partition, and it is also just what village territories were: the boundary
+ * between two villages ran where the walk from one became longer than the walk
+ * from the other, and the parish map of almost anywhere still shows it.
+ */
+export interface Competitor {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export function harvest(
+  catchment: Catchment,
+  population: number,
+  ironSupply = 1,
+  labourShare = 1,
+  competitors: readonly Competitor[] = [],
+): Harvest {
+  // Only the share of the settlement's hands that is farming. The rest is
+  // down a mine or in the woods, and is why a town can specialise at all.
+  const labourAvailable =
+    (population * A.WORKERS_PER_FAMILY) / 5 * A.WORKING_DAYS_PER_YEAR * clamp(labourShare, 0, 1);
 
   let labourUsed = 0;
   let gross = 0;
@@ -209,13 +279,22 @@ export function harvest(catchment: Catchment, population: number): Harvest {
   let hectares = 0;
   let usedWater = false;
   let furthest = 0;
+  let potentialGross = 0;
+  let contested = 0;
 
   for (const tile of catchment.candidates) {
-    if (labourUsed + tile.labourDays > labourAvailable) {
+    if (competitors.length > 0 && belongsToNeighbour(catchment, tile, competitors)) {
+      contested++;
+      continue;
+    }
+    potentialGross += tile.deliveredKgPerYear;
+
+    const cost = daysFor(tile, ironSupply);
+    if (labourUsed + cost > labourAvailable) {
       // Part of a tile can still be worked -- a field is not indivisible.
       const remaining = labourAvailable - labourUsed;
       if (remaining > 0) {
-        const share = remaining / tile.labourDays;
+        const share = remaining / cost;
         gross += tile.deliveredKgPerYear * share;
         labourUsed = labourAvailable;
         hectares += catchment.cellHa * share;
@@ -224,7 +303,7 @@ export function harvest(catchment: Catchment, population: number): Harvest {
       }
       break;
     }
-    labourUsed += tile.labourDays;
+    labourUsed += cost;
     gross += tile.deliveredKgPerYear;
     tilesWorked++;
     hectares += catchment.cellHa;
@@ -236,8 +315,8 @@ export function harvest(catchment: Catchment, population: number): Harvest {
   const need = population * GRAIN_PER_PERSON_PER_YEAR;
 
   // What this land could feed if there were hands enough to work all of it.
-  let potentialGross = 0;
-  for (const tile of catchment.candidates) potentialGross += tile.deliveredKgPerYear;
+  // Accumulated in the loop above so that land which belongs to a neighbour
+  // is not counted twice across two settlements.
   const potentialPopulation =
     (potentialGross * (1 - SEED_CORN_FRACTION)) / GRAIN_PER_PERSON_PER_YEAR;
 
@@ -250,6 +329,7 @@ export function harvest(catchment: Catchment, population: number): Harvest {
     labourAvailable,
     labourUsed,
     tilesWorked,
+    tilesLostToNeighbours: contested,
     hectaresWorked: hectares,
     grossKgPerYear: gross,
     netKgPerYear: net,
@@ -272,12 +352,55 @@ export function harvest(catchment: Catchment, population: number): Harvest {
  * expressed in whatever radius the maps already fetched can support.
  */
 export function radiusForPopulation(population: number, cellAreaM2: number): number {
-  // Land needed, in square metres, at the reference yield -- deliberately
-  // generous so the search does not clip the good tiles off the edge.
-  const haNeeded = (population * GRAIN_PER_PERSON_PER_YEAR)
-    / (A.MEDIEVAL_GRAIN_KG_PER_HA * A.CROPPED_FRACTION_THREE_FIELD * 0.35);
-  const areaM2 = Math.max(cellAreaM2 * 64, haNeeded * 10000 * 2.5);
+  // How much ground these hands could actually work in a year, which is the
+  // binding physical quantity -- not how much they need to eat.
+  //
+  // The first version floored the search at sixty-four tiles, about 3 hectares,
+  // and derived the rest from calories. Once labour came down to the real
+  // medieval task rates, five people could work twenty-seven hectares and were
+  // being handed three: every small settlement came out land-limited on an
+  // empty continent, which is nonsense. A search radius has to cover what the
+  // settlement could plausibly reach, and then the harvest decides how much of
+  // it is worth having.
+  const workableHa =
+    ((population * A.WORKERS_PER_FAMILY) / 5 * A.WORKING_DAYS_PER_YEAR)
+    / HELD_HECTARE_DAYS_IRON;
+
+  // Times a margin, because the best land inside the radius is what gets
+  // farmed and clipping the search at exactly the area needed would leave the
+  // settlement working whatever happened to fall inside a circle.
+  const areaM2 = Math.max(cellAreaM2 * 64, workableHa * 10000 * 2.5);
   return Math.sqrt(areaM2 / Math.PI);
+}
+
+/**
+ * Is this tile nearer to some other settlement than to ours?
+ *
+ * Chord distance, squared, so there is no square root and no trigonometry in
+ * the inner loop -- this runs over every candidate tile for every settlement
+ * every turn, and it is the hottest code in the economy.
+ */
+function belongsToNeighbour(
+  catchment: Catchment,
+  tile: WorkedTile,
+  competitors: readonly Competitor[],
+): boolean {
+  const map = catchment.maps[tile.map];
+  const tx = map.dirs[tile.cell * 3];
+  const ty = map.dirs[tile.cell * 3 + 1];
+  const tz = map.dirs[tile.cell * 3 + 2];
+
+  // Ours, as a squared chord, from the distance already stored on the tile.
+  const oursChord = tile.distanceM / A.EARTH_RADIUS_M;
+  const ours = oursChord * oursChord;
+
+  for (const c of competitors) {
+    const dx = tx - c.x;
+    const dy = ty - c.y;
+    const dz = tz - c.z;
+    if (dx * dx + dy * dy + dz * dz < ours) return true;
+  }
+  return false;
 }
 
 /** Neighbouring cells of a sub-map cell, for expanding a catchment outward. */
@@ -303,17 +426,22 @@ export function workedCells(
   catchment: Catchment,
   population: number,
   mapIndex: number,
+  ironSupply = 1,
+  labourShare = 1,
+  competitors: readonly Competitor[] = [],
 ): Map<number, number> {
   const labourAvailable =
-    (population * A.WORKERS_PER_FAMILY) / 5 * A.WORKING_DAYS_PER_YEAR;
+    (population * A.WORKERS_PER_FAMILY) / 5 * A.WORKING_DAYS_PER_YEAR * clamp(labourShare, 0, 1);
   const out = new Map<number, number>();
   let used = 0;
 
   for (const tile of catchment.candidates) {
     if (used >= labourAvailable) break;
-    const share = Math.min(1, (labourAvailable - used) / tile.labourDays);
+    if (competitors.length > 0 && belongsToNeighbour(catchment, tile, competitors)) continue;
+    const cost = daysFor(tile, ironSupply);
+    const share = Math.min(1, (labourAvailable - used) / cost);
     if (tile.map === mapIndex) out.set(tile.cell, share);
-    used += tile.labourDays;
+    used += cost;
   }
   return out;
 }

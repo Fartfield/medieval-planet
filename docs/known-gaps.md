@@ -64,15 +64,28 @@ cart on an established route carries something back rather than returning
 empty. The round-trip figure is right for a settlement fetching its own crop
 and pessimistic for trade.
 
-**Nothing is traded between settlements.** Each feeds itself off its own
-catchment. Grain moving from a surplus settlement to a deficit one is the
-obvious next economic system, and it is what makes the water advantage matter
-at the scale it historically did.
+**No river topology.** Water haulage is used when both ends can take a boat,
+which lets two settlements on *different* rivers barge to each other. Generous
+in the same direction as the missing roads. The fix needs the cross-boundary
+work first.
+
+**Only two goods move.** Grain and iron. Timber, stone, salt, clay and cloth
+are all already generated on the map and none of them are traded.
+
+**No prices and no money.** Deliberate so far — transport cost is denominated
+in the cargo itself, so none was needed. It will be needed the moment a third
+good competes with a second for the same hands.
+
+**Everybody trades with everybody.** No alliances, no embargoes, no refusing to
+sell to an enemy. That arrives with Houses.
 
 **Migration comes from nowhere.** People arrive at a settlement with a surplus
 at 8% of its unfilled capacity per year, from an unmodelled elsewhere. That
 rate is a free parameter and should be replaced by migration between real
 settlements the moment there are several.
+
+**Nothing consumes timber but ironworking.** No building, no fuel for heating,
+no shipbuilding. A town's woods are therefore larger than they should be.
 
 **Harvest is averaged across the year.** `weeklyGrainKg` divides an annual
 yield by 52. Real grain arrives once, and the whole shape of a medieval year is
