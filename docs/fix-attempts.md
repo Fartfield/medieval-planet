@@ -49,6 +49,79 @@ amplitude model is too crude near the poles.
 
 ---
 
+## A rainforest was more fertile than a prairie
+
+**Problem.** The first soil model derived fertility from productivity, less
+what leaching carried away. It produced tropical rainforest 0.280 against
+temperate grassland 0.275 -- backwards, and enough to make "settle in the
+jungle" the correct opening move forever.
+
+* ~~Fertility from net primary productivity, penalised by leaching.~~
+  **Rainforest 0.280, grassland 0.275.** Leaching is real and necessary, but on
+  its own it cannot overcome the raw productivity gap: a rainforest fixes three
+  times what a prairie does, and a leaching penalty of 0.31 against 1.00 leaves
+  it still ahead. Raising the leaching exponent to compensate drove taiga to
+  0.002, which is not poor soil, it is no soil.
+
+* **Add the two mechanisms that were missing.** **Worked.** Grassland 0.972,
+  savanna 0.541, temperate forest 0.403, taiga 0.146, rainforest 0.128, tundra
+  0.078, desert 0.031 -- Earth's ordering exactly, with the rainforest holding
+  the *highest* productivity in the set at 2,466 g/m2/yr.
+
+  * *Where the production goes.* Grasses put three quarters of what they make
+    into roots that die back annually and become humus in place. A tree puts it
+    into a trunk that stands two centuries. Root-to-shoot allocation is
+    measured, and it is the dominant term.
+  * *How fast it rots.* Q10 of 2 -- decomposition doubles per 10 degC. This is
+    why boreal soils hold a third of the soil carbon on the planet.
+
+**Also fixed here.** `leachingFraction` returned 1.0 on permanently frozen
+ground, because potential evapotranspiration is zero there and the formula read
+zero PET as infinite surplus -- declaring the Arctic the most heavily leached
+soil on Earth. Frozen ground has no liquid water moving through it and leaches
+nothing. Guarded.
+
+**Also fixed here.** A short growing season cannot mineralise what the soil
+holds, however much it holds -- tundra peat is nutrient-rich and useless.
+Fertility now scales with biotemperature.
+
+---
+
+## Tin was commoner than copper
+
+**Problem.** Tin is deliberately clustered into provinces, because on Earth it
+comes out of granite intrusions and those come in provinces -- which is what
+made the tin trade worth crossing Europe for. The multiplier was written as
+`1 + 6 * province`.
+
+* ~~Multiply tin's frequency by `1 + 6 * province`.~~ **Tin 0.32% against
+  copper 0.30% worldwide**, where crustal abundance says copper should be about
+  three times commoner. A term that is always at least 1 does not cluster a
+  metal, it creates more of it.
+
+* **Centre the multiplier on 1 rather than adding to it**: `0.10 + 2.70 *
+  province`. Same 28-fold contrast between a province and the ground around it,
+  global frequency back where abundance put it. Same correction applied to the
+  placer-gold term, which had the same shape.
+
+**Note for later.** The first version of the test that caught this sampled a
+single ground map and was *wrong to fail* -- a map inside a tin province should
+show more tin than copper. Metal rarity is a global claim and has to be sampled
+globally. The test now walks 24 regions.
+
+---
+
+## A sub-map spacing test failed against correct code
+
+* ~~Assert realm cell spacing is 2,780 m.~~ **Got 2,408 m.** The code was
+  right. A hexagon has two widths: vertex-to-vertex is 2r, and flat-to-flat --
+  which is also the centre-to-centre distance between neighbours -- is
+  sqrt(3)*r, about 13% less. The docs quote "2.8 km across", meaning vertex to
+  vertex; `spacingM` is the centre-to-centre figure the slope calculation
+  needs. Both are now measured, and the test says which is which.
+
+---
+
 ## Node could not resolve the module graph
 
 **Problem.** `ERR_MODULE_NOT_FOUND` on every import.

@@ -99,6 +99,17 @@ export function addressSeed(worldSeed: number, a: Address, salt: number): number
   return (h ^ (h >>> 13)) >>> 0;
 }
 
+/**
+ * Salts, so that two different questions about the same address draw from
+ * different streams. Named rather than written inline because a stray digit in
+ * a hex literal is silent -- it just produces a different world.
+ */
+export const SALT = {
+  submap: 0x5b1,
+  ore: 0x02e,
+  settlement: 0x53e,
+} as const;
+
 /** How many cells a layer holds, for bounds checks and for the UI. */
 export function capacityAt(depth: number, regionCount: number, subCount: number): number {
   return depth === 0 ? regionCount : subCount;

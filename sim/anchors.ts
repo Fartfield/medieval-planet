@@ -348,3 +348,124 @@ export const MONTH_PHASE: readonly number[] = [
   1.0, 0.866025403784439, 0.5, 0.0, -0.5, -0.866025403784439,
   -1.0, -0.866025403784439, -0.5, 0.0, 0.5, 0.866025403784439,
 ];
+
+// ---------------------------------------------------------------------------
+// Soil
+// ---------------------------------------------------------------------------
+
+/** Soil forms at roughly 0.05 mm/yr from weathering parent rock -- and erodes
+ *  far faster than that on a slope, which is why mountains have none. */
+export const SOIL_FORMATION_MM_PER_YR = 0.05;
+
+/**
+ * Depth of topsoil, cm. A mollisol under temperate grassland -- chernozem, the
+ * black earth of the steppe and the prairie -- is the deepest soil on Earth at
+ * 60-100 cm. A typical temperate forest soil is 20-30. Mountain and desert
+ * soils are under 10.
+ */
+export const TOPSOIL_DEEPEST_CM = 90.0;
+export const TOPSOIL_TYPICAL_CM = 25.0;
+export const TOPSOIL_THIN_CM = 6.0;
+
+/**
+ * Slope at which soil stops accumulating, as a gradient (rise over run).
+ * Above about 0.30 -- roughly 17 degrees -- erosion outpaces formation and the
+ * hillside is bare rock and scree. Below about 0.02 it is flat enough to
+ * waterlog. Both from soil-survey practice rather than from feel.
+ */
+export const SLOPE_EROSION_LIMIT = 0.30;
+export const SLOPE_WATERLOGGING_LIMIT = 0.02;
+
+/**
+ * The reference yield of good land: about 1,000 kg of grain per hectare per
+ * year on unfertilised medieval three-field arable. Records from English manor
+ * accounts put wheat at 7-10 bushels an acre, which is 470-670 kg/ha; the
+ * higher figure allows for the better land and the better years.
+ */
+export const MEDIEVAL_GRAIN_KG_PER_HA = 1000.0;
+
+// ---------------------------------------------------------------------------
+// What is in the ground
+// ---------------------------------------------------------------------------
+
+/**
+ * Crustal abundance, parts per million by mass. These set how common a deposit
+ * is relative to the others -- iron is not rare and tin genuinely is, and the
+ * whole bronze-then-iron shape of a metal age falls out of that ratio rather
+ * than from anyone deciding it should.
+ */
+export const CRUST_PPM_IRON = 56300.0;
+export const CRUST_PPM_COPPER = 60.0;
+export const CRUST_PPM_LEAD = 14.0;
+export const CRUST_PPM_TIN = 2.3;
+export const CRUST_PPM_SILVER = 0.075;
+export const CRUST_PPM_GOLD = 0.004;
+
+/** A worked ore body is enriched far above crustal average before it is worth
+ *  digging. Iron ore is about 30% Fe against 5.6% in ordinary rock; copper ore
+ *  is 0.5-2% against 0.006%. Enrichment is what a deposit *is*. */
+export const ORE_ENRICHMENT_IRON = 5.0;
+export const ORE_ENRICHMENT_COPPER = 150.0;
+export const ORE_ENRICHMENT_TIN = 400.0;
+export const ORE_ENRICHMENT_PRECIOUS = 1000.0;
+
+/** Standing timber in a mature temperate forest, tonnes of dry wood per
+ *  hectare. Boreal is thinner, tropical much heavier. */
+export const TIMBER_TEMPERATE_T_PER_HA = 150.0;
+
+/** Large game: a temperate forest carries roughly 5-15 deer per square
+ *  kilometre, savanna far more ungulate biomass, tundra almost none. Expressed
+ *  as a share of net primary productivity reaching large herbivores. */
+export const HERBIVORE_SHARE_OF_NPP = 0.02;
+export const DEER_MASS_KG = 70.0;
+
+/**
+ * Standing biomass of large herbivores in savanna, kg per km2. Africa's
+ * savannas carry 3,000-10,000; this is the middle. It is the single measured
+ * point the whole game-animal model is scaled from -- every other biome is
+ * derived from it by how much of its productivity a grazing animal can
+ * actually reach.
+ */
+export const SAVANNA_HERBIVORE_KG_PER_KM2 = 5000.0;
+
+/** Standing timber in mature forest, tonnes of dry wood per hectare, by how
+ *  much wood the climate builds. Temperate 150, boreal 80, tropical 300. */
+export const TIMBER_TEMPERATE_REFERENCE_NPP = 1000.0;
+
+/**
+ * Q10 for soil decomposition: organic matter rots about twice as fast for
+ * every 10 degC. One of the better-established numbers in soil science, and the
+ * reason boreal soils store a third of the soil carbon on the planet while
+ * tropical ones store almost none despite growing far more.
+ */
+export const SOIL_Q10 = 2.0;
+export const SOIL_DECOMP_REFERENCE_C = 10.0;
+
+/**
+ * The share of a plant's yearly production that goes below ground, by biome.
+ *
+ * This is the mechanism that decides which soils are worth farming, and it is
+ * easy to miss. Grasses put 60-80% of everything they make into roots, which
+ * die back each year and become humus exactly where the next crop needs it. A
+ * tree puts its production into a trunk that stands for two centuries and then
+ * rots on the surface. So a rainforest can out-produce a prairie threefold and
+ * still build almost no soil.
+ *
+ * Root-to-shoot allocation is measured, and these follow the published ranges.
+ */
+export const BELOWGROUND_FRACTION: readonly number[] = [
+  0.00, 0.00, 0.60, 0.30, 0.75, 0.25, 0.20, 0.60, 0.65, 0.20, 0.15, 0.50, 0.55,
+];
+
+/**
+ * Soil organic matter under undisturbed temperate grassland, in the units
+ * soilOrganicMatter returns, used as the top of the fertility scale. Chernozem
+ * runs 8-12% organic matter against 1-2% for a tropical ferralsol, and that
+ * ratio is what the model has to reproduce.
+ */
+export const SOM_CHERNOZEM_REFERENCE = 614.0;
+
+/** Biotemperature at which soil nutrients are fully available, degC. Near
+ *  Holdridge's boundary between the boreal and temperate belts. Below it the
+ *  growing season is too short to mineralise what the soil holds. */
+export const BIOTEMP_AVAILABILITY_C = 10.0;
