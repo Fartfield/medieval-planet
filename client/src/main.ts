@@ -25,6 +25,8 @@ import { GRAIN_PER_PERSON_YEAR } from '../../sim/economy.ts';
 import { IRON_PER_PERSON_KG_PER_YEAR } from '../../sim/anchors.ts';
 import type { TileDelta } from '../../sim/model/tile.ts';
 import type { ServerMessage, PlayerInfo } from '../../server/protocol.ts';
+import type { Polity } from '../../sim/model/polity.ts';
+import { AUTHORITY_REACH_KM } from '../../sim/model/polity.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
   pickGlobe, pickSubMap, houseColour, type Camera,
@@ -35,6 +37,7 @@ import {
 let world: World | null = null;
 let playerId = -1;
 let players: PlayerInfo[] = [];
+let polities: Polity[] = [];
 let turn = 0;
 let turnSeconds = 120;
 let nextTurnAt = 0;
@@ -93,6 +96,7 @@ function handle(msg: ServerMessage): void {
     case 'welcome': {
       playerId = msg.playerId;
       players = msg.players;
+      polities = msg.polities ?? [];
       turn = msg.turn;
       turnSeconds = msg.turnSeconds;
       nextTurnAt = performance.now() + turnSeconds * 1000;
@@ -116,6 +120,7 @@ function handle(msg: ServerMessage): void {
     case 'turn':
       turn = msg.turn;
       players = msg.players;
+      polities = msg.polities ?? polities;
       nextTurnAt = performance.now() + msg.nextIn * 1000;
       if (world !== null) {
         world.turn = msg.turn;
@@ -201,7 +206,10 @@ function visibleOverlays(w: World): { owned: Map<number, number>; populated: Map
 
     const cell = address[depth];
     if (d.owner !== undefined && d.owner >= 0) {
-      const house = players.find((p) => p.id === d.owner)?.house ?? d.owner;
+      // Owner is a polity now, not a player. An NPC kingdom draws its border
+      // exactly the way a player's does, because to every rule in the
+      // simulation they are the same kind of thing.
+      const house = polities.find((p) => p.id === d.owner)?.house ?? d.owner;
       owned.set(cell, house);
     }
     if (d.population) populated.set(cell, (populated.get(cell) ?? 0) + d.population);
@@ -374,8 +382,19 @@ function refresh(): void {
       people += d.population ?? 0;
       if (d.owner !== undefined && d.owner >= 0) settled++;
     }
-    (document.getElementById('people') as HTMLElement).textContent = people.toLocaleString('en');
+    (document.getElementById('people') as HTMLElement).textContent =
+      Math.round(people).toLocaleString('en');
     (document.getElementById('tiles') as HTMLElement).textContent = String(settled);
+    const mine = polities.find((p) => p.player === playerId);
+    const el = document.getElementById('realm');
+    if (el !== null) {
+      el.textContent = mine !== undefined
+        ? `${mine.name} (${world!.settlementsOf(mine.id).length} towns)`
+        : 'none';
+      el.style.color = mine !== undefined ? houseColour(mine.house) : '';
+    }
+    const k = document.getElementById('kingdoms');
+    if (k !== null) k.textContent = String(polities.length);
   }
 }
 
@@ -453,10 +472,15 @@ function drawInspector(): void {
     ? '<span class="none">none</span>'
     : tile.deposits.map((d) => `${MINERAL_NAMES[d.kind]} ${(d.richness * 100).toFixed(0)}%`).join('<br>');
 
+  const crown = polities.find((p) => p.id === tile.owner);
+  const steeredBy = crown?.player !== null && crown?.player !== undefined
+    ? players.find((p) => p.id === crown.player)?.name ?? `player ${crown.player}`
+    : null;
   const owner = tile.owner < 0
     ? '<span class="none">unclaimed</span>'
-    : `<span style="color:${houseColour(players.find((p) => p.id === tile.owner)?.house ?? tile.owner)}">`
-      + `${players.find((p) => p.id === tile.owner)?.name ?? `player ${tile.owner}`}</span>`;
+    : `<span style="color:${houseColour(crown?.house ?? tile.owner)}">`
+      + `${crown?.name ?? `polity ${tile.owner}`}</span>`
+      + (steeredBy !== null ? `<br><span class="none">${steeredBy}</span>` : '');
 
   const areaHa = world.cellAreaAt(address.length) / 10000;
 
@@ -489,7 +513,7 @@ function drawInspector(): void {
     ${row('deposits', ore)}
     </table>
     <div class="group">WHO</div><table>
-    ${row('owner', owner)}
+    ${row('kingdom', owner)}
     ${row('people', tile.population > 0 ? Math.round(tile.population).toLocaleString('en') : '<span class="none">nobody</span>')}
     ${tile.population > 0 ? row('condition', tile.populationHealth.toFixed(2)) : ''}
     </table>

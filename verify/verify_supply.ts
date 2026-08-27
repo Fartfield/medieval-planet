@@ -291,8 +291,17 @@ suite('a settlement over time', () => {
   measure('population after 50 years', final);
   measure('carrying capacity of the land', capacity);
   measure('fraction of capacity reached', final / capacity);
-  assert('it is heading for the carrying capacity of its land',
-    final > capacity * 0.5 && final < capacity * 1.3);
+
+  // It grows, and it stays well inside what the land could bear.
+  //
+  // An earlier version asserted it would reach half the carrying capacity in
+  // fifty years, and that stopped being true when settlements learned to farm
+  // what they need rather than every hectare in reach. Five people now grow at
+  // a realistic seven per cent a year and reach two hundred; the old figure of
+  // two thousand came from a village ploughing five square kilometres it had
+  // no use for. Slower is the correct answer.
+  assert('it grows many times over', final > track[0] * 8);
+  assert('and never exceeds what the land can bear', final < capacity);
 
   // Poor land must support fewer people than good land. Stated as a
   // comparison rather than an absolute: an earlier version asserted that forty

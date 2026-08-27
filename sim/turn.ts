@@ -17,6 +17,7 @@ import { fromKey, toKey, type Address } from './geo/address.ts';
 import { clamp } from './gen/mathx.ts';
 import { Hasher } from './hash.ts';
 import { runEconomy, GRAIN_PER_PERSON_YEAR, type Report } from './economy.ts';
+import { planExpansion, applyExpansion, type Founding } from './expansion.ts';
 import type { World } from './world.ts';
 import type { TileDelta } from './model/tile.ts';
 
@@ -40,6 +41,10 @@ export interface TurnResult {
   grainShippedKg: number;
   ironShippedKg: number;
   tradeRoutes: number;
+  /** Daughter settlements founded this week. */
+  foundings: Founding[];
+  /** Settlements that wanted to spread and had nowhere left. A frontier. */
+  blocked: string[];
 }
 
 /**
@@ -102,9 +107,19 @@ export function resolveTurn(world: World, orders: Order[], playerCount: number):
   const economy = runEconomy(world);
   for (const key of economy.touched) touched.add(key);
 
-  // Then people are born, die, or move in, on the ration they actually got.
+  // A settlement whose land cannot feed it sends a party out to found another.
+  // This is where kingdoms come from; see expansion.ts. It runs before the
+  // population step so that step knows who tried to spread and could not --
+  // those are the ones people walk away from.
+  const expansion = planExpansion(
+    world, economy.reports, world.polities, world.nextPolityId);
+  for (const p of expansion.newPolities) world.loadPolities([p]);
+  for (const key of applyExpansion(world, expansion)) touched.add(key);
+  const blocked = new Set(expansion.blocked);
+
+  // Then people are born, die, arrive or leave, on the ration they got.
   for (const [key, report] of economy.reports) {
-    if (stepPopulation(world, report)) touched.add(key);
+    if (stepPopulation(world, report, blocked.has(key))) touched.add(key);
   }
 
   world.turn++;
@@ -125,6 +140,8 @@ export function resolveTurn(world: World, orders: Order[], playerCount: number):
     grainShippedKg: economy.grainFlows.reduce((n, f) => n + f.shippedKg, 0),
     ironShippedKg: economy.ironFlows.reduce((n, f) => n + f.shippedKg, 0),
     tradeRoutes: economy.grainFlows.length + economy.ironFlows.length,
+    foundings: expansion.foundings,
+    blocked: expansion.blocked,
   };
 }
 
@@ -146,15 +163,22 @@ function applyOrder(world: World, order: Order, playerCount: number): string | n
     return (err as Error).message;
   }
 
+  // A player acts through their polity, and founds one on their first claim.
+  // Ownership is a kingdom's, not a person's -- which is what lets an NPC
+  // kingdom and a player's be the same kind of thing to every other rule.
+  let polity = world.polityOf(order.player);
+
   switch (order.action) {
-    case 'claim':
+    case 'claim': {
       if (tile.elevationM < 0) return 'that is open water';
-      if (tile.owner >= 0 && tile.owner !== order.player) return 'already claimed';
-      world.setDelta(address, { owner: order.player });
+      if (tile.owner >= 0 && tile.owner !== polity?.id) return 'already claimed';
+      if (polity === undefined) polity = world.foundPolity(order.target, order.player);
+      world.setDelta(address, { owner: polity.id });
       return null;
+    }
 
     case 'settle': {
-      if (tile.owner !== order.player) return 'claim it first';
+      if (polity === undefined || tile.owner !== polity.id) return 'claim it first';
       const amount = order.amount ?? 0;
       if (amount <= 0) return 'settle needs people';
       // Nothing stops a player settling more people than the tile can feed.
@@ -177,7 +201,7 @@ function applyOrder(world: World, order: Order, playerCount: number): string | n
     }
 
     case 'abandon':
-      if (tile.owner !== order.player) return 'not yours';
+      if (polity === undefined || tile.owner !== polity.id) return 'not yours';
       world.setDelta(address, {
         owner: undefined, population: undefined, populationHealth: undefined,
       });
@@ -205,7 +229,7 @@ function applyOrder(world: World, order: Order, playerCount: number): string | n
  * hands, land or food, and if it sits on a river it can keep going a long way
  * past what a landlocked one can.
  */
-function stepPopulation(world: World, r: Report): boolean {
+function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
   const population = r.population;
   const health = r.health;
   const ration = clamp(r.ration, 0, 1);
@@ -238,17 +262,30 @@ function stepPopulation(world: World, r: Report): boolean {
   const deaths = (population * A.DEATH_RATE_PER_1000_YR) / 1000 / A.TURNS_PER_YEAR
     + population * (1 - nextHealth) * rate;
 
-  // And people move to where there is food.
+  // And people move.
   //
-  // Headroom is measured against what the town can *feed*, which now includes
-  // what it imports. A mining town with a grain contract is as attractive as a
-  // farming town with fields of its own, and that is the whole point of the
-  // trade system: it makes a site viable that the land alone would not.
+  // Both directions, which the first version got only half of. Headroom is
+  // measured against what the town can *feed*, and that now includes what it
+  // imports -- a mining town with a grain contract is as attractive as a
+  // farming town with fields of its own.
   const fedCapacity = r.grainNeed <= 0 ? 0
     : ((r.grainGrown + r.grainIn - r.grainOut) * A.TURNS_PER_YEAR) / GRAIN_PER_PERSON_YEAR;
   const headroom = Math.max(0, fedCapacity - population);
   const migrants = surplus > 0.15 && ration >= 0.98
     ? (headroom * A.MIGRATION_RATE_PER_YEAR) / A.TURNS_PER_YEAR
+    : 0;
+
+  // And people leave a place that is full and has nowhere to expand to.
+  //
+  // This is the third outcome of land pressure, after growing and spreading.
+  // A settlement whose ground cannot feed it and which has no free land within
+  // reach does not simply starve -- some of it walks away. Historically that
+  // is most of what population pressure looked like: not famine, emigration.
+  //
+  // Only fires when the settlement was actually blocked this turn, so a town
+  // with somewhere to send a founding party sends one instead of bleeding.
+  const leavers = blocked && r.harvest.limitedBy === 'land'
+    ? (population * A.MIGRATION_RATE_PER_YEAR) / A.TURNS_PER_YEAR
     : 0;
 
   // Population is carried as a fraction, not an integer.
@@ -257,7 +294,7 @@ function stepPopulation(world: World, r: Report): boolean {
   // turn: five people with an ample surplus gain 0.003 a week, and rounding
   // that away left them at exactly five for a decade. The fractional part IS
   // the growth at this scale. Same reasoning as the movement remainder.
-  const next = Math.max(0, population + births - deaths + migrants);
+  const next = Math.max(0, population + births - deaths + migrants - leavers);
   const nextPopulation = Math.round(next * 1000) / 1000;
 
   if (nextPopulation === population && Math.abs(nextHealth - health) < 0.001) return false;

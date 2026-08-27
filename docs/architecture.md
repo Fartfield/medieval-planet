@@ -115,8 +115,10 @@ sim/          the world. no DOM, no clock, no randomness that is not seeded.
   hash.ts       state fingerprints.
   geo/          sphere, sub-map grid, addressing.
   gen/          noise, deterministic transcendentals, the planet generator.
-  model/        biome, soil, resources, labour, supply, settlements, trade.
+  model/        biome, soil, resources, labour, supply, settlements, trade,
+                polity.
   economy.ts    one week: produce, trade, consume, decide.
+  expansion.ts  who spreads where, and where kingdoms come from.
 server/       the turn loop, persistence, the wire protocol.
 client/       canvas, input, the zoom through the layers.
 verify/       suites and the measurement baseline.

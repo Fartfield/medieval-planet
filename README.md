@@ -12,7 +12,7 @@ each.
 
 ## What is here now
 
-A world you can look at, share, settle, and trade across.
+A world you can look at, share, settle, trade across, and watch fill up.
 
 | | |
 |---|---|
@@ -22,9 +22,10 @@ A world you can look at, share, settle, and trade across.
 | supply | settlements work the land they can reach; hauling food costs food, and water is 42.7× cheaper than road |
 | trade | grain and iron move between towns, so a town that cannot feed itself can live on somebody else's surplus |
 | specialisation | a town on barren ore stays a hamlet alone and becomes an ironworks with a neighbour — same tile, same seed |
-| growth | no population cap — a settlement grows until it runs out of hands, land or food |
+| spreading | a town that fills its land throws off daughters, and stops where it meets somebody. Borders are residue |
+| kingdoms | bounded at 393 km, which is what forty days of feudal service and a walking pace multiply out to |
 | multiplayer | a turn server, two clients sharing one world, live desync detection, persistence |
-| verification | 357 measurements diffed run to run, plus an end-to-end run of the real thing |
+| verification | 399 measurements diffed run to run, plus an end-to-end run of the real thing |
 
 Calibration, none of it tuned to hit its target: land cover within 2.6 points of
 Earth's; water:road transport cost 42.7 against Diocletian's 40; best farmland
@@ -32,8 +33,9 @@ at 0.89–1.03 ha per person against a measured historical 0.5–1.5; 12.4 man-d
 to a sown acre against a historical 10–15; one ironworker keeping 285 people in
 tools against a manorial record of a smith per few hundred.
 
-**Not here yet:** roads, crafts beyond iron, Houses, and the frontiersman
-himself. See [docs/known-gaps.md](docs/known-gaps.md).
+**Not here yet:** conflict between kingdoms, NPC kingdoms that exist before you
+arrive, roads, crafts beyond iron, and the frontiersman himself. See
+[docs/known-gaps.md](docs/known-gaps.md).
 
 ## Where to start reading
 
@@ -44,6 +46,7 @@ himself. See [docs/known-gaps.md](docs/known-gaps.md).
 | [docs/determinism.md](docs/determinism.md) | why there is a fixed-point layer and no `Math.sin` anywhere |
 | [docs/supply.md](docs/supply.md) | how food gets from where it grows to where it is eaten |
 | [docs/trade.md](docs/trade.md) | how towns specialise, and the medieval farming year task by task |
+| [docs/kingdoms.md](docs/kingdoms.md) | how towns spread, and why nobody designs a border |
 | [docs/multiplayer.md](docs/multiplayer.md) | the turn server, the wire, and why it never sends a map |
 | [docs/testing.md](docs/testing.md) | how to run the suites and how to read a moved measurement |
 | [docs/fix-attempts.md](docs/fix-attempts.md) | what has already been tried, and the measurement that killed it |
@@ -59,7 +62,7 @@ node server/main.ts              # then open http://localhost:8787
 node server/main.ts --turn-seconds 10 --seed 1234
 node server/main.ts --turns 50   # headless, no socket in sight
 
-node verify/run_all.ts           # 357 measurements, diffed against the baseline
+node verify/run_all.ts           # 399 measurements, diffed against the baseline
 node verify/run_all.ts --anchor  # accept the current numbers as the new baseline
 node verify/check_app.ts         # a real server and two real clients, end to end
 node verify/calibrate_climate.ts # sweep the climate model against Earth
@@ -71,7 +74,8 @@ drawn in gold — the ring pattern is von Thünen's, and nothing in the code
 mentions a ring.
 
 Then settle a second town on bad ground with ore under it, and watch it stop
-farming.
+farming. Leave the first one running and it will fill its land, throw off
+daughter villages, and stop when it runs into the second.
 
 ## The scale
 

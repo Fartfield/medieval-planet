@@ -35,6 +35,7 @@ import { clamp } from './gen/mathx.ts';
 import { Mineral } from './model/resources.ts';
 import { ironOutputKgPerYear, ironLimit, hectareDays } from './model/labour.ts';
 import { clear, stockTarget, spoil, type Trader, type Flow } from './model/trade.ts';
+import { idleShare } from './expansion.ts';
 import type { Harvest, Competitor } from './model/settlement.ts';
 import type { World } from './world.ts';
 import type { TileDelta } from './model/tile.ts';
@@ -77,6 +78,9 @@ export interface Report {
 
   /** Fraction of what people needed that they actually got. */
   ration: number;
+  /** Share of the settlement's hands with nothing to do. Drives spreading
+   *  and, when there is nowhere to spread to, emigration. */
+  idleShare: number;
   harvest: Harvest;
   trade: 'exporter' | 'importer' | 'self-sufficient';
   speciality: 'farming' | 'ironworking' | 'mixed';
@@ -145,7 +149,24 @@ export function runEconomy(world: World): EconomyResult {
     // iron put by has all its ploughs shod; one with none is scratching.
     const ironSupply = ironNeed <= 0 ? 1 : clamp(ironStock / ironNeed, 0, 1);
 
-    const harvest = world.harvestFor(address, population, ironSupply, farmShare, neighbours);
+    // What it is trying to grow.
+    //
+    // Not a year's eating -- a bad year's eating. Medieval yields swung 30-50%
+    // about their mean, so a village that sowed for an average year starved
+    // every time the weather turned. Sowing for the bad year is why there is a
+    // surplus in a good one, and that surplus is what feeds a town, fills a
+    // granary and pays a tax.
+    //
+    // Plus whatever the granary is still short, plus what it sold last year.
+    // That last term is what keeps a supplier supplying: without it a farming
+    // town grows exactly what it needs, its population rises until it eats
+    // that, and the grain feeding its neighbour's miners simply stops.
+    const sold = (delta.soldKg ?? 0) * A.TURNS_PER_YEAR;
+    const target = grainNeed / A.BAD_YEAR_YIELD_FRACTION
+      + Math.max(0, stockTarget(grainNeed) - grainStock)
+      + sold;
+    const harvest = world.harvestFor(
+      address, population, ironSupply, farmShare, neighbours, target);
     const grainGrown = harvest.netKgPerYear * perTurn;
 
     // Whatever hands are not farming go to the ore, if there is any.
@@ -178,6 +199,7 @@ export function runEconomy(world: World): EconomyResult {
       oreRichness,
       timberKgPerYear: catchment.timberKgPerYear,
       ration: 0,
+      idleShare: 0,
       harvest,
       trade: 'self-sufficient',
       speciality: farmShare > 0.8 ? 'farming' : farmShare < 0.35 ? 'ironworking' : 'mixed',
@@ -205,6 +227,7 @@ export function runEconomy(world: World): EconomyResult {
 
     report.trade = report.grainOut > report.grainIn ? 'exporter'
       : report.grainIn > 0 ? 'importer' : 'self-sufficient';
+    report.idleShare = idleShare(report);
 
     const nextShare = decideFarmShare(report);
     report.speciality = nextShare > 0.8 ? 'farming'
@@ -214,6 +237,7 @@ export function runEconomy(world: World): EconomyResult {
       grainStock: round(report.grainStock),
       ironStock: round(report.ironStock),
       farmShare: Math.round(nextShare * 100) / 100,
+      soldKg: report.grainOut > 0 ? round(report.grainOut) : undefined,
     });
     touched.add(delta.key);
   }
@@ -239,12 +263,29 @@ function decideFarmShare(r: Report): number {
 
   // Hungry, or nearly. This overrides everything.
   if (r.ration < 0.98 || monthsOfFood < 3) {
-    // More hands help only if there is unworked land left. If the land is
-    // already all in use, hands are not the problem -- and the way out is to
-    // make something worth trading for grain, not to stare harder at a field.
-    return r.harvest.limitedBy === 'labour'
-      ? clamp(share + SHARE_STEP, MIN_FARM_SHARE, 1)
-      : clamp(share - SHARE_STEP, MIN_FARM_SHARE, 1);
+    // Would farming harder actually fix it?
+    //
+    // Not if the land is full -- that is the obvious case. But also not if the
+    // ground is simply bad: a town on 69 kg/ha runs out of *hands* long before
+    // it runs out of ground, so it reads as labour-limited, and an earlier
+    // version of this rule therefore told it to farm harder every single week
+    // for ever. It never specialised and never could have.
+    //
+    // The honest test is whether full effort would be enough, and the harvest
+    // already answers that: if what the fields yield is well short of what the
+    // people need, more hands on them is not the answer.
+    const farmingCannotFix = r.harvest.limitedBy === 'land'
+      || r.harvest.ration < 0.8;
+
+    // And it is only an answer if somebody is actually delivering grain. A
+    // town alone in the wilderness must farm, however poor the ground, because
+    // there is nothing else to eat. Grain arriving is the observable fact that
+    // says a different trade is survivable.
+    const someoneFeedsUs = r.grainIn > 0;
+
+    return farmingCannotFix && someoneFeedsUs
+      ? clamp(share - SHARE_STEP, MIN_FARM_SHARE, 1)
+      : clamp(share + SHARE_STEP, MIN_FARM_SHARE, 1);
   }
 
   // Fed. Now: is anybody actually going to take the iron?

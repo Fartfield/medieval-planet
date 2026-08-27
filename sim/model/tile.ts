@@ -151,6 +151,18 @@ export interface TileDelta {
    */
   farmShare?: number;
 
+  /**
+   * Grain sold last turn, kg.
+   *
+   * Carried so that a settlement can plant for its buyers. Without it a
+   * farming town grows exactly what it and its granary need, its population
+   * rises until it eats that, and the surplus feeding a mining town simply
+   * stops -- measured at year twelve, with the miners going back to farming
+   * poor ground. A farmer plants for last year's buyer, and that is the whole
+   * of the mechanism.
+   */
+  soldKg?: number;
+
   /** Turn number this was last written. Lets old deltas be aged out. */
   turn: number;
 }
@@ -169,5 +181,6 @@ export function deltaIsEmpty(d: TileDelta): boolean {
     && d.cleared === undefined
     && d.grainStock === undefined
     && d.ironStock === undefined
-    && d.farmShare === undefined;
+    && d.farmShare === undefined
+    && d.soldKg === undefined;
 }

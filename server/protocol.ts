@@ -20,6 +20,7 @@
 // later. `verifyHash` below is the cheapest insurance in the project.
 
 import type { TileDelta } from '../sim/model/tile.ts';
+import type { Polity } from '../sim/model/polity.ts';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -69,6 +70,8 @@ export interface WelcomeMessage {
   /** Every tile anybody has changed. Small, because almost nobody has. */
   deltas: TileDelta[];
   players: PlayerInfo[];
+  /** Kingdoms. The only thing about the world that is not in the seed. */
+  polities: Polity[];
 }
 
 export interface PlayerInfo {
@@ -87,6 +90,7 @@ export interface TurnMessage {
   nextIn: number;
   changed: TileDelta[];
   players: PlayerInfo[];
+  polities: Polity[];
 }
 
 export interface AckMessage {

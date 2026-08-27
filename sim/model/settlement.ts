@@ -130,7 +130,13 @@ export interface Harvest {
   ration: number;
   /** How many people this land could feed if fully worked. */
   potentialPopulation: number;
-  /** Whether hands or land ran out first. The interesting diagnostic. */
+  /**
+   * What stopped the ploughing. The most useful number on this record.
+   *
+   *   'fed'    it grew what it set out to grow and stopped. Hands to spare.
+   *   'labour' it ran out of people before it ran out of ground.
+   *   'land'   it ran out of ground. More people would not help.
+   */
   limitedBy: 'labour' | 'land' | 'fed';
   usedWater: boolean;
   furthestWorkedM: number;
@@ -267,11 +273,25 @@ export function harvest(
   ironSupply = 1,
   labourShare = 1,
   competitors: readonly Competitor[] = [],
+  targetKgPerYear = Infinity,
 ): Harvest {
   // Only the share of the settlement's hands that is farming. The rest is
   // down a mine or in the woods, and is why a town can specialise at all.
   const labourAvailable =
     (population * A.WORKERS_PER_FAMILY) / 5 * A.WORKING_DAYS_PER_YEAR * clamp(labourShare, 0, 1);
+
+  // What it is trying to grow. A village farms what it can use, not every
+  // hectare it can walk to.
+  //
+  // Without this a hundred people with land to spare ploughed five and a half
+  // square kilometres and grew five times what they ate, because nothing ever
+  // told them to stop. That drove a population explosion -- migration is
+  // pulled by headroom, and headroom was four times the population -- and it
+  // made every harvest scan seventy thousand tiles whether it needed them or
+  // not. Stopping when the barn is full fixes the economics and the speed at
+  // the same time, which is usually a sign the model was wrong rather than
+  // merely slow.
+  const target = targetKgPerYear;
 
   let labourUsed = 0;
   let gross = 0;
@@ -281,6 +301,8 @@ export function harvest(
   let furthest = 0;
   let potentialGross = 0;
   let contested = 0;
+  let ranOutOfLand = true;
+  let enough = false;
 
   for (const tile of catchment.candidates) {
     if (competitors.length > 0 && belongsToNeighbour(catchment, tile, competitors)) {
@@ -288,6 +310,15 @@ export function harvest(
       continue;
     }
     potentialGross += tile.deliveredKgPerYear;
+
+    if (enough) continue;
+
+    // Grown enough. Stop ploughing; the rest of the hands are free.
+    if (gross * (1 - SEED_CORN_FRACTION) >= target) {
+      enough = true;
+      ranOutOfLand = false;
+      continue;
+    }
 
     const cost = daysFor(tile, ironSupply);
     if (labourUsed + cost > labourAvailable) {
@@ -301,7 +332,9 @@ export function harvest(
         if (tile.mode === Transport.Water) usedWater = true;
         furthest = Math.max(furthest, tile.distanceM);
       }
-      break;
+      ranOutOfLand = false;
+      enough = true;
+      continue;
     }
     labourUsed += cost;
     gross += tile.deliveredKgPerYear;
@@ -314,16 +347,13 @@ export function harvest(
   const net = gross * (1 - SEED_CORN_FRACTION);
   const need = population * GRAIN_PER_PERSON_PER_YEAR;
 
-  // What this land could feed if there were hands enough to work all of it.
-  // Accumulated in the loop above so that land which belongs to a neighbour
-  // is not counted twice across two settlements.
   const potentialPopulation =
     (potentialGross * (1 - SEED_CORN_FRACTION)) / GRAIN_PER_PERSON_PER_YEAR;
 
-  const ranOutOfLand = labourUsed < labourAvailable - 1;
   const limitedBy: Harvest['limitedBy'] = need <= 0
     ? 'fed'
-    : ranOutOfLand ? 'land' : 'labour';
+    : ranOutOfLand ? 'land'
+      : labourUsed >= labourAvailable - 1 ? 'labour' : 'fed';
 
   return {
     labourAvailable,

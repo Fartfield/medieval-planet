@@ -12,6 +12,7 @@
 import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { TileDelta } from '../sim/model/tile.ts';
+import type { Polity } from '../sim/model/polity.ts';
 
 export interface SavedPlayer {
   id: number;
@@ -25,6 +26,13 @@ export interface WorldMeta {
   radiusM: number;
   turn: number;
   players: SavedPlayer[];
+  /**
+   * Kingdoms. Unlike everything else about the world these cannot be
+   * regenerated from the seed -- a polity is a thing that happened -- so they
+   * are saved alongside the deltas. There are a handful of them, so they live
+   * in the meta file rather than in a log of their own.
+   */
+  polities: Polity[];
   createdAt: string;
 }
 
@@ -126,7 +134,8 @@ function isTombstone(d: TileDelta): boolean {
     && d.cleared === undefined
     && d.grainStock === undefined
     && d.ironStock === undefined
-    && d.farmShare === undefined;
+    && d.farmShare === undefined
+    && d.soldKg === undefined;
 }
 
 export { dirname };

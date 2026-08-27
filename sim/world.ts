@@ -20,7 +20,7 @@ import {
 import { generatePlanet, type Planet } from './gen/planet.ts';
 import {
   generateSubMap, basisAt, samplePlanet, sampleSubMap, soilAt, aridityAt,
-  type SubMap,
+  cellRadiusRad, type SubMap,
 } from './gen/submap.ts';
 import { classify } from './model/biome.ts';
 import { grainYieldKgPerHa, cropSuitability } from './model/soil.ts';
@@ -28,6 +28,7 @@ import {
   deposits, gameHeadPerKm2, timberTPerHa, freshWater, GRAZEABLE_FRACTION,
 } from './model/resources.ts';
 import { classifyLandform, type GroundTile, type TileDelta, deltaIsEmpty } from './model/tile.ts';
+import { createPolity, type Polity } from './model/polity.ts';
 import {
   buildCatchment, harvest, radiusForPopulation,
   type Catchment, type Harvest, type Competitor,
@@ -53,6 +54,16 @@ export class World {
   private readonly cacheSize: number;
   private readonly deltas = new Map<string, TileDelta>();
   private readonly catchments = new Map<string, Catchment>();
+
+  /**
+   * Kingdoms. Not derivable from the seed -- a polity is a thing that happened
+   * -- so these are persisted alongside the deltas.
+   *
+   * A tile's `owner` is a polity id, not a player id. Players own a polity;
+   * so does every NPC kingdom, and the rules do not distinguish them.
+   */
+  readonly polities = new Map<number, Polity>();
+  private nextPolity = 0;
 
   constructor(opts: WorldOptions) {
     this.seed = opts.seed;
@@ -298,21 +309,142 @@ export class World {
    * is how much of its hands are farming rather than mining or logging, which
    * is what lets a town specialise.
    */
+  /**
+   * Every ground map within `radiusM` of a settlement, generated as needed.
+   *
+   * A catchment stops at seven maps because that is as far as anybody walks to
+   * a field twice a day. A founding party is not going to a field -- it is
+   * leaving -- and it will walk further than the fields reach. Without this a
+   * town that had filled its whole catchment could never place a daughter,
+   * because the only ground it could see was already its own, and expansion
+   * stopped dead at exactly the moment population pressure was highest.
+   *
+   * Rings of realm cells, so the cost is 1, 7, 19 or 37 maps. Capped at three
+   * rings, beyond which a founding party is walking further than it would.
+   */
+  mapsWithin(address: Address, radiusM: number): { maps: SubMap[]; addresses: Address[] } {
+    const region = address[0];
+    const home = address[1];
+
+    // Realm cells are 2.4 km centre to centre, so this is how many rings out
+    // the radius actually reaches.
+    const realmSpacingM = Math.sqrt(3) * cellRadiusRad(1) * this.radiusM;
+    const rings = Math.max(1, Math.min(3, Math.ceil(radiusM / realmSpacingM)));
+
+    const seen = new Set<number>([home]);
+    let frontier = [home];
+    for (let r = 0; r < rings; r++) {
+      const next: number[] = [];
+      for (const cell of frontier) {
+        for (let d = 0; d < 6; d++) {
+          const n = subNeighbours[cell * 6 + d];
+          if (n < 0 || seen.has(n)) continue;
+          seen.add(n);
+          next.push(n);
+        }
+      }
+      frontier = next;
+    }
+
+    const cells = [...seen].sort((a, b) => a - b);
+    const maps: SubMap[] = [];
+    const addresses: Address[] = [];
+    for (const cell of cells) {
+      maps.push(this.subMap([region, cell]));
+      addresses.push([region, cell]);
+    }
+    return { maps, addresses };
+  }
+
   harvestFor(
     address: Address,
     population: number,
     ironSupply = 1,
     labourShare = 1,
     competitors: readonly Competitor[] = [],
+    targetKgPerYear = Infinity,
   ): Harvest {
+    const catchment = this.catchmentFor(address, population);
     return harvest(
-      this.catchmentFor(address, population),
-      population, ironSupply, labourShare, competitors);
+      catchment, population, ironSupply, labourShare,
+      this.nearbyCompetitors(address, catchment.radiusM, competitors),
+      targetKgPerYear);
+  }
+
+  /**
+   * Competitors close enough to actually take a tile from this catchment.
+   *
+   * Exact rather than a heuristic: a rival at distance D can only claim tiles
+   * that are nearer to it than to us, and every such tile is at least D/2 away
+   * from us. So a rival further than twice our search radius cannot touch a
+   * single tile we can see, and dropping it changes no answer.
+   *
+   * Worth doing because the check inside the harvest runs per tile per rival.
+   * With sixty settlements on one continent that was three hundred million
+   * distance tests a turn and the economy stopped being able to keep up; this
+   * takes it to a handful of rivals each.
+   */
+  private nearbyCompetitors(
+    address: Address,
+    radiusM: number,
+    all: readonly Competitor[],
+  ): readonly Competitor[] {
+    if (all.length === 0) return all;
+    const me = this.tile(address).dir;
+    const limit = (2 * radiusM) / A.EARTH_RADIUS_M;
+    const limitSq = limit * limit;
+
+    const near: Competitor[] = [];
+    for (const c of all) {
+      const dx = me[0] - c.x;
+      const dy = me[1] - c.y;
+      const dz = me[2] - c.z;
+      if (dx * dx + dy * dy + dz * dz <= limitSq) near.push(c);
+    }
+    return near;
   }
 
   /** Which region a direction on the sphere falls in. */
   regionAt(x: number, y: number, z: number): number {
     return cellAt(x, y, z);
+  }
+
+  // --- kingdoms -------------------------------------------------------------
+
+  /** Found a kingdom. Returns the new polity. */
+  foundPolity(capital: string, player: number | null = null): Polity {
+    const polity = createPolity(this.nextPolity++, capital, this.turn, this.seed, player);
+    this.polities.set(polity.id, polity);
+    return polity;
+  }
+
+  /** The polity a player is steering, or undefined if they have none yet. */
+  polityOf(player: number): Polity | undefined {
+    for (const p of this.polities.values()) if (p.player === player) return p;
+    return undefined;
+  }
+
+  /** The id the next polity will take. Expansion needs it to pre-allocate. */
+  get nextPolityId(): number { return this.nextPolity; }
+
+  loadPolities(list: Polity[]): void {
+    for (const p of list) {
+      this.polities.set(p.id, p);
+      if (p.id >= this.nextPolity) this.nextPolity = p.id + 1;
+    }
+  }
+
+  allPolities(): Polity[] {
+    return [...this.polities.values()].sort((a, b) => a.id - b.id);
+  }
+
+  /** Settlements belonging to a polity, by address key. */
+  settlementsOf(polity: number): string[] {
+    const out: string[] = [];
+    for (const [key, d] of this.deltas) {
+      if (d.owner === polity && (d.population ?? 0) > 0) out.push(key);
+    }
+    return out.sort();
   }
 
   // --- the only mutable state -----------------------------------------------
@@ -364,10 +496,11 @@ export class World {
       `world ${this.seed}`,
       `${CELL_COUNT} regions, ${ground.toLocaleString('en')} ground tiles`,
       `${Math.round(this.cellAreaAt(2))} m2 each`,
-      `turn ${this.turn}, ${this.deltas.size} deltas, ${this.cache.size} maps cached`,
+      `turn ${this.turn}, ${this.deltas.size} deltas, `
+        + `${this.polities.size} polities, ${this.cache.size} maps cached`,
     ].join(' | ');
   }
 }
 
 export { toKey, fromKey, layerName, type Address, type GroundTile, type TileDelta };
-export type { Catchment, Harvest, Competitor };
+export type { Catchment, Harvest, Competitor, Polity };

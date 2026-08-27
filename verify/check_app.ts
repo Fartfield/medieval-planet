@@ -265,11 +265,19 @@ bob.close();
 server.kill('SIGINT');
 await sleep(1500);
 
+// A claim founds a kingdom, and a kingdom is the one thing about this world
+// that cannot be regenerated from the seed -- so it has to survive a restart
+// on its own merits rather than by being recomputed.
+const claimant = aliceOwns;
+check('claiming founded a kingdom', claimant >= 0, `polity ${claimant}`);
+
 check('a world file was written', existsSync(join(DATA, 'world.json')));
 const meta = JSON.parse(readFileSync(join(DATA, 'world.json'), 'utf8'));
 check('the seed was saved', meta.seed === SEED);
 check('the turn counter was saved', meta.turn >= 5, `turn ${meta.turn}`);
 check('the players were saved', meta.players.length === 2);
+check('the kingdoms were saved', Array.isArray(meta.polities) && meta.polities.length >= 1,
+  `${meta.polities?.length ?? 0} saved`);
 
 const savedBytes = existsSync(join(DATA, 'deltas.jsonl'))
   ? readFileSync(join(DATA, 'deltas.jsonl')).length : 0;
@@ -285,6 +293,9 @@ if (carol.welcome !== null) {
   check('the turn counter survived', carol.welcome.turn >= 5, `turn ${carol.welcome.turn}`);
   check('the settlement survived the restart', carol.welcome.deltas.length > 0,
     `${carol.welcome.deltas.length} deltas restored`);
+  check('and so did the kingdom',
+    (carol.welcome.polities ?? []).some((p) => p.id === claimant),
+    `${(carol.welcome.polities ?? []).map((p) => p.name).join(', ')}`);
   const restored = carol.world!.tile(aliceTile);
   check('the claimed tile is still claimed', restored.owner >= 0, `owner ${restored.owner}`);
   // And the terrain under it is the same terrain, rebuilt rather than stored.

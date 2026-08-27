@@ -122,6 +122,102 @@ globally. The test now walks 24 regions.
 
 ---
 
+## Four wrong answers to where a daughter village goes
+
+**Problem.** Settlements had to spread when their land filled, and every
+version of the spacing rule broke something.
+
+* ~~Twice the parent's potential reach.~~ **6.2 km of clearance around a town
+  of two thousand** -- wider than the whole area the search could see, so
+  expansion was blocked every turn for ninety game-years.
+
+* ~~The founding party's own needs, 1.2 km.~~ **The parent lost seven eighths
+  of its production in a single year.** The daughter got its ground and left
+  its mother a circle 600 m across. Land goes to whoever is nearest, and a ring
+  of children nearest to everything takes everything.
+
+* ~~Parent radius plus daughter radius.~~ Still short. The border between two
+  settlements sits at the *midpoint*, so a daughter at the edge of its
+  mother's fields takes half of them.
+
+* **Twice the parent radius.** Both keep their land.
+
+**What actually made it workable was not the formula.** It was settlements
+learning to farm what they need rather than every hectare they can reach, which
+cut the parent's worked area fivefold -- so the rule that had demanded 6.2 km
+now asked for 2.6.
+
+**Also fixed here.** `findSite` searched the parent's catchment, which
+deadlocked: a town that had filled its seven maps could see no ground but its
+own, so it could never place a daughter, and expansion stopped dead at exactly
+the moment population pressure was highest. A founding party is not going to a
+field -- it is leaving -- so it now searches rings of realm cells out to 37 maps.
+
+---
+
+## A village ploughed five square kilometres it had no use for
+
+**Problem.** A hundred people with land to spare farmed 5.5 km² and grew five
+times what they ate, because nothing ever told them to stop. Three separate
+symptoms, one cause.
+
+* Population exploded at about 30% a year. Migration is pulled by headroom, and
+  headroom was four times the population.
+* Every harvest scanned all 69,433 candidate tiles whether it needed them or
+  not, and with sixty settlements the economy could not keep up.
+* Idle labour was meaningless, so the spreading trigger had nothing to read.
+
+* **Stop when the barn is full.** A settlement now farms toward a target and
+  stops. Fixing the economics fixed the speed at the same time, which is
+  usually the sign that a model was wrong rather than merely slow.
+
+**The target then had to be right, and took two goes.** A year's eating left no
+surplus at all, so nothing was ever traded and no town could feed another. It
+is a *bad* year's eating -- medieval yields swung 30-50% about their mean, and a
+village that sowed for the average starved every time the weather turned -- plus
+the granary shortfall, plus **what it sold last year**. Without that last term a
+farming town's population rises until it eats its own surplus and the grain
+feeding its neighbour's miners stops dead. Measured at year twelve.
+
+---
+
+## Three wrong triggers for spreading
+
+* ~~Idle hands.~~ **Every village wanted to spread from its first week.** Only
+  farming is modelled, so a perfectly healthy settlement reads 30-60% "idle"
+  when in truth those hands are building, weaving and carting.
+
+* ~~Land-limited, plus a guard that the town be comfortably fed.~~ **Never
+  fired.** The guard was patching the strangled-parent symptom, and it is also
+  backwards historically: population pressure is exactly when people leave, and
+  a hungry town is better off by twenty mouths the moment the party walks out.
+  Colonisation is what hunger looks like when there is somewhere to go.
+
+* **Land-limited, full stop.** The ground would not grow what they set out to
+  grow, however many hands they put on it.
+
+**Emigration is the third outcome**, after growing and spreading, and it only
+fires when a settlement tried to send a party and had nowhere to send it.
+Before it existed, a town whose daughters had taken its land sat at 98% idle
+for ever, trying to throw off another party every single week and failing.
+
+---
+
+## A town on poor ground would never specialise
+
+**Problem.** The specialisation rule said: short of food and limited by hands →
+farm harder. A town on 69 kg/ha runs out of *hands* long before it runs out of
+ground, so it read as labour-limited and was told to farm harder every week
+for ever. It never specialised and never could have.
+
+* **Ask whether farming could ever fix it.** If what the fields yield is well
+  short of what the people need, more hands on them is not the answer -- and
+  the harvest already computes that. Plus a second condition: somebody must
+  actually be delivering grain. A town alone in the wilderness must farm,
+  however poor the ground, because there is nothing else to eat.
+
+---
+
 ## The farming year was derived from the wrong end and came out double
 
 **Problem.** Labour was 52 man-days per held hectare, derived from the virgate:

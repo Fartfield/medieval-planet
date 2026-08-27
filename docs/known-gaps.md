@@ -79,10 +79,11 @@ good competes with a second for the same hands.
 **Everybody trades with everybody.** No alliances, no embargoes, no refusing to
 sell to an enemy. That arrives with Houses.
 
-**Migration comes from nowhere.** People arrive at a settlement with a surplus
-at 8% of its unfilled capacity per year, from an unmodelled elsewhere. That
-rate is a free parameter and should be replaced by migration between real
-settlements the moment there are several.
+**Migration comes from nowhere, and emigration goes nowhere.** People arrive
+at a settlement with a surplus and leave one with no work, both at 8% a year,
+both to and from an unmodelled elsewhere. The two are symmetric so the world
+neither invents nor destroys people on average, but it does not conserve them
+exactly, and it should. Replace both with migration between real settlements.
 
 **Nothing consumes timber but ironworking.** No building, no fuel for heating,
 no shipbuilding. A town's woods are therefore larger than they should be.
@@ -97,9 +98,28 @@ first thing seasons will fix.
 town's growth driven by its own people choosing trades. None of it exists —
 population is a single number with no occupations in it.
 
-**No frontiersman and no attendants.** The player is an owner id on a tile.
+**No frontiersman and no attendants.** The player is a polity that owns tiles.
 The character with four assignable attendants that the design opens with is not
 built.
+
+**No conflict.** Two kingdoms that meet simply stop expanding.
+`Polity.tributaryTo` exists and nothing ever sets it. Invasion, conquest,
+concession and tribute are the next system, and the pieces are already here:
+fighting men spared from the fields, iron for their equipment, and grain to
+keep them in the field.
+
+**No NPC kingdoms before you arrive.** The world starts empty and fills only
+from where a player plants. Kingdoms that already exist need settlements
+generated at their equilibrium for a realm nobody has visited -- the same
+generate-don't-store trick one layer up. See [kingdoms.md](kingdoms.md).
+
+**Expansion is unfair by construction.** Settlements are considered in key
+order, so two wanting the same valley in the same week are resolved by whoever
+sorts first. A real race would have both parties set out and one arrive second.
+
+**Nothing ever has a bad year.** The insurance a village plants against one is
+therefore never spent, so granaries fill to the spoilage ceiling and sit there.
+Same root as the missing seasons.
 
 **Houses are a number that colours a border.** No heads of household, no
 alliances, no representation on the map beyond the colour.

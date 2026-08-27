@@ -820,3 +820,66 @@ export const CART_ACRES_PER_DAY = 1.0;
  * harvest rather than with the acreage, so good land costs more to thresh.
  */
 export const THRESH_KG_PER_DAY = 200.0;
+
+// ---------------------------------------------------------------------------
+// Spreading, and why kingdoms are the size they are
+// ---------------------------------------------------------------------------
+
+/**
+ * The forty days.
+ *
+ * A feudal levy owed its lord forty days of service in the year, and that
+ * number is the most important constraint on the size of a medieval kingdom
+ * that nobody thinks of as a constraint. An army marching at a column's pace
+ * has to get out, do something, and get home inside it. Split the forty days
+ * roughly evenly between marching out, campaigning and marching back, and the
+ * radius of effective authority falls straight out of the marching rate the
+ * supply model already derived.
+ *
+ * It is why kingdoms were the size they were, and it is why holding land
+ * across a sea was a different proposition from holding land up a road.
+ */
+export const FEUDAL_SERVICE_DAYS = 40.0;
+
+/** How the forty days divide. Marching out, doing the thing, marching back. */
+export const CAMPAIGN_MARCH_SHARE = 0.375;
+
+/** Hours a column is actually on the road in a day. The rest is breaking camp,
+ *  making camp, foraging and waiting for the baggage. */
+export const MARCH_HOURS_PER_DAY = 8.0;
+
+/**
+ * A founding party.
+ *
+ * FREE PARAMETER. Four families is our figure. The lower bound is not really
+ * economic -- one family can work land and feed itself, and the model would
+ * let it -- it is that a household alone on a frontier is one bad winter or
+ * one raiding party from gone. Assarts and daughter villages in the record are
+ * founded by a handful of households at a time, not by one.
+ */
+export const FOUNDING_PARTY_FAMILIES = 4.0;
+export const PEOPLE_PER_FAMILY = 5.0;
+
+/**
+ * How idle a settlement has to be before people leave.
+ *
+ * FREE PARAMETER, and a mild one: some slack is normal, and a village does not
+ * split because two men had a quiet fortnight. A fifth of the workforce with
+ * nothing to do is a real surplus and is roughly when the record shows assarts
+ * and daughter settlements appearing.
+ */
+export const IDLE_SHARE_TO_SPREAD = 0.20;
+
+/**
+ * What a bad year yields, against an average one.
+ *
+ * Medieval harvests varied enormously -- a poor year could come in at half a
+ * good one, and two poor years running was a famine. Manorial yield series
+ * swing by 30-50% about their mean.
+ *
+ * This is why a village plants more than it eats. Not greed and not trade:
+ * you sow for the bad year, because if you sow for the average one you starve
+ * every time the weather turns. It is also, incidentally, where the surplus
+ * that feeds a town and pays a tax comes from in a good year.
+ */
+export const BAD_YEAR_YIELD_FRACTION = 0.65;

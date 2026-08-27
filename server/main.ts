@@ -53,6 +53,7 @@ world.turn = existing?.turn ?? 0;
 
 const savedDeltas = store.loadDeltas();
 world.loadDeltas(savedDeltas);
+world.loadPolities(existing?.polities ?? []);
 
 const players: SavedPlayer[] = existing?.players ?? [];
 const pending = new Map<number, Order[]>();
@@ -172,6 +173,7 @@ http.on('upgrade', (req, socket) => {
             gameDaysPerTurn: 7,
             deltas: world.allDeltas(),
             players: publicPlayers(),
+            polities: world.allPolities(),
           });
           console.log(`  + ${player.name} joined as player ${playerId}`);
           break;
@@ -232,6 +234,7 @@ function runTurn(): void {
     radiusM: world.radiusM,
     turn: world.turn,
     players,
+    polities: world.allPolities(),
     createdAt: existing?.createdAt ?? new Date().toISOString(),
   });
 
@@ -246,6 +249,11 @@ function runTurn(): void {
   let people = 0;
   for (const d of world.allDeltas()) people += d.population ?? 0;
 
+  const grew = result.foundings.length > 0
+    ? `, ${result.foundings.length} village(s) founded`
+      + (result.foundings.some((f) => f.broke)
+        ? ` (${result.foundings.filter((f) => f.broke).length} beyond reach, now independent)` : '')
+    : '';
   const trade = result.tradeRoutes > 0
     ? `, ${Math.round(result.grainShippedKg).toLocaleString('en')} kg grain and `
       + `${Math.round(result.ironShippedKg).toLocaleString('en')} kg iron over `
@@ -254,7 +262,8 @@ function runTurn(): void {
   console.log(
     `  turn ${world.turn}: ${orders.length} order(s), `
     + `${result.rejected.length} rejected, ${result.changed.length} tile(s) changed, `
-    + `${world.deltaCount} live, ${Math.round(people).toLocaleString('en')} people${trade}`,
+    + `${world.deltaCount} live, ${Math.round(people).toLocaleString('en')} people`
+    + `, ${world.polities.size} kingdom(s)${grew}${trade}`,
   );
   for (const r of result.rejected.slice(0, 5)) {
     console.log(`      rejected ${r.order.action} ${r.order.target}: ${r.reason}`);
@@ -266,6 +275,7 @@ function runTurn(): void {
     nextIn: TURN_SECONDS,
     changed: result.changed,
     players: publicPlayers(),
+    polities: world.allPolities(),
   });
 }
 
@@ -294,6 +304,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
       radiusM: world.radiusM,
       turn: world.turn,
       players,
+      polities: world.allPolities(),
       createdAt: existing?.createdAt ?? new Date().toISOString(),
     });
     store.compact(world.allDeltas());
