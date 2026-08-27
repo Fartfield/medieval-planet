@@ -23,12 +23,16 @@ import {
   type SubMap,
 } from './gen/submap.ts';
 import { classify } from './model/biome.ts';
-import { grainYieldKgPerHa } from './model/soil.ts';
+import { grainYieldKgPerHa, cropSuitability } from './model/soil.ts';
 import {
   deposits, gameHeadPerKm2, timberTPerHa, freshWater, GRAZEABLE_FRACTION,
 } from './model/resources.ts';
 import { classifyLandform, type GroundTile, type TileDelta, deltaIsEmpty } from './model/tile.ts';
-import { clamp } from './gen/mathx.ts';
+import {
+  buildCatchment, harvest, radiusForPopulation,
+  type Catchment, type Harvest,
+} from './model/settlement.ts';
+import { clamp, dlog } from './gen/mathx.ts';
 
 export interface WorldOptions {
   seed: number;
@@ -48,6 +52,7 @@ export class World {
   private readonly cache = new Map<string, SubMap>();
   private readonly cacheSize: number;
   private readonly deltas = new Map<string, TileDelta>();
+  private readonly catchments = new Map<string, Catchment>();
 
   constructor(opts: WorldOptions) {
     this.seed = opts.seed;
@@ -157,6 +162,8 @@ export class World {
 
     const soil = soilAt(map, c);
     if (delta?.soilHealth !== undefined) soil.health = delta.soilHealth;
+    const suitability = cropSuitability(
+      map.precipMm[c], map.temperatureC[c], map.dirs[c * 3 + 1]);
 
     const aridity = aridityAt(map, c);
     const tileSeed = addressSeed(this.seed, address, SALT.ore);
@@ -195,7 +202,7 @@ export class World {
       soil,
       flora: {
         timberTPerHa: standing,
-        grainKgPerHa: grainYieldKgPerHa(soil, npp),
+        grainKgPerHa: grainYieldKgPerHa(soil, npp, suitability),
         forage: GRAZEABLE_FRACTION[biome] * clamp(npp / A.MIAMI_MAX_NPP, 0, 1),
       },
       fauna: {
@@ -210,6 +217,82 @@ export class World {
       owner: delta?.owner ?? -1,
       modified: delta !== undefined,
     };
+  }
+
+  // --- what a settlement can reach ------------------------------------------
+
+  /**
+   * How far a catchment search may spread, in sub-maps.
+   *
+   * The home ground map plus its six neighbours: seven maps, 35 km2, enough to
+   * feed roughly three thousand people. Going further is not a code change but
+   * a cost one -- each map is 75 ms to generate and 400 kB to hold, and a
+   * radius covering the full 25 km commute limit would want three hundred of
+   * them. A settlement that outgrows seven maps is the signal to build the
+   * incremental version, and it is in docs/known-gaps.md.
+   */
+  static readonly CATCHMENT_MAPS = 7;
+
+  /**
+   * The land a settlement at `address` can reach, with the maps it needs
+   * generated and the result cached.
+   *
+   * The cache key buckets the radius, because a settlement growing by one
+   * person a week would otherwise rebuild a 69,000-tile catchment every turn
+   * to get the same answer. A bucket is a factor of 1.25 in radius, so the
+   * rebuild happens when the reachable area has changed by half.
+   */
+  catchmentFor(address: Address, population: number): Catchment {
+    if (address.length !== 3) throw new RangeError('settlements stand on ground tiles');
+    const areaM2 = this.cellAreaAt(2);
+
+    // The radius is quantised, and then the quantised value is what gets used.
+    //
+    // Bucketing only the cache *key* while building with the raw radius made
+    // the catchment depend on call history: two populations landing in the same
+    // bucket shared whichever catchment the first one happened to build, so the
+    // same world could give different answers depending on the order it was
+    // asked. That is exactly the class of bug docs/determinism.md exists to
+    // prevent, and it is invisible until two machines disagree.
+    //
+    // dlog rather than Math.log for the same reason -- see determinism.md.
+    const wanted = radiusForPopulation(population, areaM2);
+    const bucket = Math.round(dlog(Math.max(1, wanted)) / dlog(1.25));
+    const radiusM = 1.25 ** bucket;
+    const key = `${toKey(address)}@${bucket}`;
+    const hit = this.catchments.get(key);
+    if (hit !== undefined) return hit;
+
+    const region = address[0];
+    const realmCell = address[1];
+    const maps: SubMap[] = [this.subMap([region, realmCell])];
+    const addresses: Address[] = [[region, realmCell]];
+
+    // Outward through the realm map's own adjacency. A settlement on the rim
+    // of a realm map gets fewer neighbours than one in the middle, which is
+    // the cross-boundary gap showing through -- it under-feeds rim
+    // settlements rather than crashing, which is the right way to be wrong.
+    for (let d = 0; d < 6 && maps.length < World.CATCHMENT_MAPS; d++) {
+      const n = subNeighbours[realmCell * 6 + d];
+      if (n < 0) continue;
+      maps.push(this.subMap([region, n]));
+      addresses.push([region, n]);
+    }
+
+    const built = buildCatchment(
+      maps, addresses, 0, address[2], radiusM, areaM2);
+
+    this.catchments.set(key, built);
+    if (this.catchments.size > 64) {
+      const oldest = this.catchments.keys().next().value;
+      if (oldest !== undefined) this.catchments.delete(oldest);
+    }
+    return built;
+  }
+
+  /** What that land actually delivers, for a population of this size. */
+  harvestFor(address: Address, population: number): Harvest {
+    return harvest(this.catchmentFor(address, population), population);
   }
 
   /** Which region a direction on the sphere falls in. */
@@ -272,3 +355,4 @@ export class World {
 }
 
 export { toKey, fromKey, layerName, type Address, type GroundTile, type TileDelta };
+export type { Catchment, Harvest };

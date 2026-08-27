@@ -514,3 +514,163 @@ export const TURNS_PER_YEAR = 365.25 / 7.0;
  * that agricultural historians actually measure.
  */
 export const CROPPED_FRACTION_THREE_FIELD = 2.0 / 3.0;
+
+// ---------------------------------------------------------------------------
+// Moving things
+// ---------------------------------------------------------------------------
+//
+// The whole pre-industrial economy turns on one fact: hauling food costs food.
+// The driver eats, the oxen eat, and what they eat has to be grown on land
+// that could have grown something else. Work that through and the cost of
+// transport falls out in the same units as the cargo -- no price, no currency,
+// just what fraction of a load is consumed getting it there.
+//
+// Two independent measurements check the result, and derive.ts asserts both:
+//
+//   Diocletian's Price Edict (301 AD) implies sea transport cost roughly a
+//   fortieth of road transport over the same distance.
+//
+//   Duncan-Jones, from Roman evidence: a wagon-load of wheat about doubled in
+//   price over 300 miles, near 480 km.
+//
+// Nothing below was chosen to hit either figure.
+
+/** Ox cart: payload kg, and the pace a team of oxen actually walks, km/h. */
+export const OX_CART_PAYLOAD_KG = 500.0;
+export const OX_CART_SPEED_KMH = 3.0;
+export const OXEN_PER_CART = 2;
+
+/** A working ox, kg, and the dry fodder it eats as a share of body mass. An
+ *  ox at work eats more than one at rest; 2.5% is the working figure. */
+export const OX_MASS_KG = 600.0;
+export const OX_FODDER_FRACTION = 0.025;
+
+/** Hours a cart is actually on the road in a day. Loading, unloading, and
+ *  resting the team take the rest. */
+export const CART_HOURS_PER_DAY = 8.0;
+
+/** A porter carries what a person can carry all day: soldiers' load studies
+ *  and portering records both land near 30 kg. */
+export const PORTER_LOAD_KG = 30.0;
+export const PORTER_KM_PER_DAY = 25.0;
+
+/** Hard physical labour raises daily energy need by about 40% over the
+ *  campaign figure already anchored above. */
+export const HARD_LABOUR_MULTIPLIER = 1.4;
+
+/**
+ * A river barge and the horse that tows it. The measured fact behind water
+ * transport is that one horse drags about 1.5 t on a road and thirty to fifty
+ * on water -- the same animal, the same day, twenty times the cargo. It is why
+ * every great pre-industrial city is on water and none are not.
+ */
+export const BARGE_PAYLOAD_KG = 15000.0;
+export const BARGE_CREW = 2;
+export const BARGE_KM_PER_DAY = 25.0;
+
+/** Meadow hay, kg per hectare per year. Fodder competes with grain for land,
+ *  so the cost of feeding an ox is ultimately measured in acres of grain. */
+export const HAY_YIELD_KG_PER_HA = 3000.0;
+
+/** Length of a working day, dawn to dusk less meals. Medieval labour statutes
+ *  specify exactly this and were fought over at length. */
+export const WORKING_DAY_HOURS = 10.0;
+
+// --- the two historical checks ---------------------------------------------
+
+/** Duncan-Jones: a wagon-load of wheat roughly doubled in price over 300 miles. */
+export const WHEAT_DOUBLING_DISTANCE_KM = 480.0;
+
+/** Diocletian's Edict, as usually reduced: water is about a fortieth of road. */
+export const WATER_ROAD_COST_RATIO = 40.0;
+
+// ---------------------------------------------------------------------------
+// Working the land
+// ---------------------------------------------------------------------------
+
+/**
+ * The virgate, and what it implies about labour.
+ *
+ * A virgate -- a yardland -- was about 30 acres, or 12 hectares, and it was the
+ * holding that supported one peasant family. That is a measured institution
+ * repeated across thousands of English manorial surveys, and it pins the labour
+ * cost of arable from the other end: a family of five has about two and a half
+ * working adults, each giving roughly 250 days a year once holy days are taken
+ * out, and between them they worked twelve hectares.
+ *
+ * 625 person-days over 12 ha is 52 days per hectare per year. Nobody had to
+ * decide that; it is what the surveys say, divided out.
+ */
+export const VIRGATE_HECTARES = 12.0;
+export const WORKERS_PER_FAMILY = 2.5;
+export const WORKING_DAYS_PER_YEAR = 250.0;
+
+/**
+ * Seed corn: the share of a harvest that cannot be eaten because next year
+ * depends on it.
+ *
+ * Medieval yield ratios ran about 3.5 grains harvested per grain sown, which
+ * is catastrophically low by modern standards and is the single most
+ * constraining number in a pre-industrial economy. It means over a quarter of
+ * every harvest goes straight back into the ground, and it is why a bad year
+ * did not merely cause hunger -- it ate the following year as well.
+ */
+export const MEDIEVAL_YIELD_RATIO = 3.5;
+
+/**
+ * How much flow a channel needs to float a barge, as normalised catchment.
+ * The same threshold the renderer draws a river at, because a river you can
+ * see and a river you can move grain on should be the same river.
+ */
+export const NAVIGABLE_DRAINAGE = 0.55;
+
+/**
+ * What wheat needs, as opposed to what a landscape grows.
+ *
+ * Net primary productivity says how much vegetation a place builds. It does
+ * not say whether that place can carry a *crop*, and the two come apart badly:
+ * a wet tropical hillside out-produces the Beauce several times over and will
+ * not ripen wheat. So the crop has its own requirements, measured for the crop.
+ *
+ * Wheat needs 450-650 mm of water across a season and about 120 days above its
+ * base temperature of 5 degC, below which it does not develop at all. All three
+ * are standard agronomic figures.
+ */
+export const WHEAT_WATER_REQUIREMENT_MM = 500.0;
+export const WHEAT_GROWING_DAYS = 120.0;
+export const WHEAT_BASE_TEMP_C = 5.0;
+
+/**
+ * The fastest a pre-industrial population ever grew from births alone.
+ *
+ * Colonial America: roughly 3% a year sustained, doubling every 25 years, on
+ * abundant land with early marriage and low urban density. Franklin noticed it
+ * in 1751 and Malthus built a book on it. It is the ceiling, and it is what a
+ * settlement with all the food it wants should approach -- not exceed.
+ *
+ * The birth multiplier that produces it is solved rather than chosen: to reach
+ * a 30-per-thousand net increase against a 32-per-thousand death rate, births
+ * must run at 62 per thousand, which is 1.77 times the baseline.
+ */
+export const MAX_NATURAL_INCREASE_PER_YEAR = 0.03;
+
+/**
+ * How fast people move to somewhere with food.
+ *
+ * FREE PARAMETER, and an important one to be honest about. Medieval towns grew
+ * mostly by immigration rather than by birth -- urban death rates exceeded
+ * urban birth rates almost everywhere, the "urban graveyard" effect -- and
+ * successful ones sustained 1-3% a year that way, with bursts far higher after
+ * a plague or a charter.
+ *
+ * What is not measurable is where the migrants come from in a world that has
+ * barely been settled. Until there are other settlements to move *from*, this
+ * stands in for the rest of the world, and 8% of the unfilled capacity per
+ * year is ours. It is the number to revisit the moment migration between real
+ * settlements exists.
+ */
+export const MIGRATION_RATE_PER_YEAR = 0.08;
+
+/** Nobody moves to a place that cannot feed them. Migrants need to see a
+ *  surplus, not merely subsistence. */
+export const MIGRATION_MIN_RATION = 1.05;

@@ -122,6 +122,107 @@ globally. The test now walks 24 regions.
 
 ---
 
+## Median farmland yielded 41 kg/ha where medieval reality is 330-450
+
+**Problem.** With supply built, settlements starved everywhere. Median grain
+yield across a temperate grassland region came out at 41 kg per hectare, eight
+to ten times below what medieval evidence records, and one worker on median
+land fed 0.4 people while having to feed 2.
+
+Two separate double-counts, both of which looked entirely reasonable in place.
+
+* **`health` started at `fertility`.** The yield formula multiplies both, so
+  fertility was squared: 0.35 became 0.12. Health is meant to be what farming
+  has taken *out* of a soil, and virgin ground has taken nothing — it starts at
+  1. Two plausible numbers multiplied into one wrong one, which is the failure
+  mode hardest to see by reading.
+
+* **Net primary productivity appeared twice.** Fertility already carries NPP
+  through the organic matter it builds, and the yield formula multiplied by
+  `npp/900` again under the name `climateCap`.
+
+  Worse, it was the wrong quantity even once. NPP says what a *landscape*
+  grows; it says nothing about whether a *crop* will ripen, and the two come
+  apart exactly where it matters — a rainforest hillside has enormous NPP and
+  will not make a wheat field. Replaced with `cropSuitability`, from wheat's
+  own measured requirements: 500 mm of water and 120 days above 5 degC.
+
+**After both:** median 114, best tiles 447-639 on the good regions, and the
+best land at 0.89-1.03 hectares per person against a measured historical
+0.5-1.5. Seven of 24 sampled regions have properly arable ground, which is
+about the right share for a planet.
+
+**Also fixed here.** The season term was linear, so sub-Arctic tundra with a
+three-month summer scored 0.76 on a crop needing 120 days. A season shorter
+than the crop needs yields *nothing* — the crop does not ripen — so it is a
+threshold, not a proportion.
+
+---
+
+## A settlement with an ample surplus sat at exactly five people for a decade
+
+**Problem.** Good land, ration 2.81, health 1.00, and the population did not
+move for 520 turns.
+
+* ~~Assume the growth model was too weak and raise the birth multiplier.~~
+  Would have been wrong twice over. The multiplier was already too *high* —
+  4x baseline implies 10.8% annual natural increase, where colonial America,
+  the fastest a pre-industrial population ever grew from births alone, managed
+  3%.
+
+* **Population was an integer and the fraction was rounded away every turn.**
+  Five people with a full surplus gain 0.003 people a week. Rounded each turn,
+  that is zero forever. *The fractional part is the entire growth at this
+  scale* and has to survive the turn boundary — the same reasoning as the
+  movement remainder in `derive.ts`, and it should have been applied here from
+  the start.
+
+* **And the birth multiplier was then solved rather than chosen**: to reach a
+  30-per-thousand net increase against a 32-per-thousand death rate, births
+  must run at 62 per thousand, so 1.77x baseline.
+
+Migration was added at the same time, because it is what actually grew medieval
+towns — urban death rates exceeded urban birth rates almost everywhere.
+
+---
+
+## A catchment depended on the order it was asked for
+
+**Problem.** Found by a test that was looking for something else.
+
+The catchment cache bucketed the search radius to build a key, then built the
+catchment with the *unbucketed* radius. Two populations landing in the same
+bucket therefore shared whichever catchment the first one happened to build —
+so the same world gave different answers depending on the order it was queried.
+
+* **Quantise the radius itself and use the quantised value.** The catchment is
+  then a pure function of the bucket.
+
+This is precisely the class of bug `docs/determinism.md` exists to prevent, and
+it is invisible until two machines disagree. Related: `verify_purity.ts` caught
+`Math.log` in the same cache-key line. That also sounds harmless and is not — a
+bucket computed differently on two machines gives a different radius, a
+different catchment, a different harvest and a different population.
+
+---
+
+## Two tests failed against entirely correct behaviour
+
+Recorded because both cost a run and both were the test, not the code.
+
+* ~~`growth decelerates: track[4]-track[3] < track[1]-track[0]`~~ An S-curve's
+  *absolute* growth is still rising through its inflection, so years 40-50
+  legitimately exceed years 10-20. Self-limitation is now tested through the
+  ration instead — feeding more people off the same land must get harder —
+  which is true at every point on the curve rather than only after the turn.
+
+* ~~Overload a settlement with `potentialPopulation * 8`.~~ That capacity is
+  measured at the *small* settlement's search radius. A larger settlement looks
+  further, finds more land, and is fine — the adaptive radius working exactly
+  as designed. The overload figure has to be an absolute one.
+
+---
+
 ## Every WebSocket client silently refused the server
 
 **Problem.** HTTP served fine, the upgrade returned a well-formed

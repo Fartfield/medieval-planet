@@ -30,7 +30,10 @@ import { addressSeed, SALT, type Address } from '../geo/address.ts';
 import { fbm3, ridged3 } from './noise.ts';
 import { clamp, smoothstep, dlog } from './mathx.ts';
 import { classify, miamiNPP, aridityIndex, type BiomeId } from '../model/biome.ts';
-import { deriveSoil, waterlogging as calcWaterlogging, type Soil } from '../model/soil.ts';
+import {
+  deriveSoil, waterlogging as calcWaterlogging, grainYieldKgPerHa, cropSuitability,
+  type Soil,
+} from '../model/soil.ts';
 import type { Planet } from './planet.ts';
 
 /** A local frame: origin on the sphere, plus east and north in its tangent plane. */
@@ -63,6 +66,20 @@ export interface SubMap {
   biome: Uint8Array;
   /** Tectonic uplift inherited from the region, for the geology model. */
   upliftM: Float32Array;
+
+  /**
+   * Grain a hectare of each cell would yield, kg/yr, on virgin soil.
+   *
+   * Built on first use and then kept, because a catchment reads it for every
+   * one of 69,000 candidate tiles and deriving it involves the exponentials in
+   * the soil model. Computing it lazily rather than during generation means a
+   * map nobody farms never pays for it.
+   *
+   * Virgin soil: a delta that has worn a tile down is applied on top, by
+   * whoever is asking. Baking a player's soil health into a generated array
+   * would put mutable state inside the pure layer.
+   */
+  yieldKgPerHa: Float32Array | null;
 }
 
 /** The context a sub-map needs from whatever is above it. */
@@ -305,6 +322,7 @@ export function generateSubMap(
     parent: parentAddress, depth, basis, cellRadiusRad: cellRad, spacingM,
     dirs, elevationM, slope, temperatureC, precipMm, drainage,
     waterlogging, nppGm2, biome, upliftM,
+    yieldKgPerHa: null,
   };
 }
 
@@ -364,6 +382,27 @@ export function soilAt(map: SubMap, cell: number): Soil {
     drainage: map.drainage[cell],
     biome: map.biome[cell] as BiomeId,
   });
+}
+
+/**
+ * Grain yield per hectare for every cell, built once and kept.
+ *
+ * The first call costs about as much as generating the map did; every call
+ * after it is an array read. A settlement's catchment consults tens of
+ * thousands of tiles a turn, so this is the difference between a turn that
+ * resolves instantly and one that does not.
+ */
+export function yieldsFor(map: SubMap): Float32Array {
+  if (map.yieldKgPerHa !== null) return map.yieldKgPerHa;
+  const out = new Float32Array(SUBCELL_COUNT);
+  for (let c = 0; c < SUBCELL_COUNT; c++) {
+    if (map.elevationM[c] < 0) continue;
+    const suitability = cropSuitability(
+      map.precipMm[c], map.temperatureC[c], map.dirs[c * 3 + 1]);
+    out[c] = grainYieldKgPerHa(soilAt(map, c), map.nppGm2[c], suitability);
+  }
+  map.yieldKgPerHa = out;
+  return out;
 }
 
 /** Aridity for one cell, which several of the resource models want. */

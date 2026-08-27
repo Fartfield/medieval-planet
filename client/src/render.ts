@@ -211,6 +211,7 @@ export function drawSubMap(
   highlight: number,
   owned: Map<number, number>,
   populated: Map<number, number>,
+  worked: Map<number, number> | null = null,
 ): void {
   const { cx, cy, size } = view;
   const shape = corners(size);
@@ -256,6 +257,25 @@ export function drawSubMap(
     ctx.beginPath();
     ctx.arc(x, y, size * (0.30 + 0.55 * strength), 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // The fields a settlement is actually working, hatched over the ground.
+  // Drawn before claims so a border still reads on top of its own fields.
+  if (worked !== null) {
+    for (const [cell, share] of worked) {
+      const p = toPixel(cell, size);
+      const x = cx + p.x;
+      const y = cy + p.y;
+      if (x < -size * 2 || y < -size * 2 || x > ctx.canvas.width + size * 2 || y > ctx.canvas.height + size * 2) {
+        continue;
+      }
+      ctx.fillStyle = `rgba(201,162,39,${0.20 + 0.45 * share})`;
+      ctx.beginPath();
+      ctx.moveTo(x + shape[0].x, y + shape[0].y);
+      for (let i = 1; i < 6; i++) ctx.lineTo(x + shape[i].x, y + shape[i].y);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
   // Claims and settlements.

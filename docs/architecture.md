@@ -115,7 +115,7 @@ sim/          the world. no DOM, no clock, no randomness that is not seeded.
   hash.ts       state fingerprints.
   geo/          sphere, sub-map grid, addressing.
   gen/          noise, deterministic transcendentals, the planet generator.
-  model/        biome classification, tiles, and what lives on them.
+  model/        biome classification, soil, resources, supply, settlements.
 server/       the turn loop, persistence, the wire protocol.
 client/       canvas, input, the zoom through the layers.
 verify/       suites and the measurement baseline.

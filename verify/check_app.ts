@@ -225,15 +225,38 @@ check('the tile reads as modified', settled.modified);
 check('generated fields are untouched by the delta',
   settled.biome === aliceWorld.subMap([region, 4959]).biome[4959]);
 
-// Let a few turns of hunger run. One 506 m2 tile cannot feed twenty people --
-// it feeds about a tenth of one -- so they must be starving, and that is the
-// correct answer rather than a bug. Supply from neighbouring tiles is the
-// system that fixes it, and it is not written yet.
+// Twenty people used to starve here, because a settlement ate only the 506 m2
+// it stood on -- about a tenth of what one person needs. It now works the land
+// around it, so they are fed. This assertion was inverted when supply landed,
+// and the inversion is the whole point of that system.
 await settler.waitForTurn(settleFrom + 5);
-const hungry = settler.world!.tile(aliceTile);
-check('a tile that cannot feed its people starves them',
-  hungry.populationHealth < 1 || hungry.population < settled.population,
-  `health ${hungry.populationHealth.toFixed(2)}, ${hungry.population} left`);
+const fed = settler.world!.tile(aliceTile);
+check('a settlement feeds itself from the land it reaches',
+  fed.populationHealth > 0.95,
+  `health ${fed.populationHealth.toFixed(2)}, ${fed.population.toFixed(1)} people`);
+
+const supply = settler.world!.harvestFor(aliceTile, fed.population);
+check('it works far more land than it stands on',
+  supply.hectaresWorked > 1,
+  `${supply.hectaresWorked.toFixed(0)} ha worked, furthest field ${(supply.furthestWorkedM / 1000).toFixed(2)} km`);
+check('a small settlement is limited by hands, not land',
+  supply.limitedBy === 'labour', supply.limitedBy);
+
+// And starvation still happens -- at the scale where it should.
+//
+// The overload figure has to be an absolute one. Scaling it off the small
+// settlement's `potentialPopulation` did not work, because that capacity is
+// measured at the small settlement's search radius: a larger settlement looks
+// further, finds more land, and is fine. That is the adaptive radius behaving
+// correctly and it failed an earlier version of this check. Seven ground maps
+// is 35 km2, which tops out in the low thousands whatever the radius.
+const overload = 250000;
+const crowded = settler.world!.harvestFor(aliceTile, overload);
+check('a settlement far past what the land bears does starve',
+  crowded.ration < 0.9,
+  `${overload.toLocaleString('en')} people would eat at ${(crowded.ration * 100).toFixed(0)}% rations`);
+check('and is then limited by land, not hands',
+  crowded.limitedBy === 'land', crowded.limitedBy);
 
 // --- persistence -----------------------------------------------------------
 

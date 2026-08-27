@@ -6,12 +6,10 @@
 // better connection, which matters more in a persistent world than in a match:
 // here the advantage would compound for months.
 //
-// The economy in this file is deliberately thin -- food, hunger, births and
-// deaths on a single tile. What is NOT here is the thing the design cares most
-// about: supply lines, and a settlement drawing on the tiles around it rather
-// than only the one it stands on. That is the next system and it is the one
-// that makes "you can sustain whatever you can sustain" mean anything. See
-// docs/known-gaps.md.
+// A settlement eats from the land it can reach, not from the tile it stands
+// on. That distinction is the whole economy: 506 square metres feeds a tenth
+// of a person, and thirty-five square kilometres feeds three thousand. See
+// sim/model/settlement.ts for how far "can reach" goes and what it costs.
 
 import * as A from './anchors.ts';
 import { SOLDIER_GRAIN_KG_PER_DAY } from './derive.ts';
@@ -53,19 +51,16 @@ export function sortOrders(orders: Order[]): Order[] {
 }
 
 /**
- * Grain a tile produces in one week, kg.
+ * Grain a settlement gathers in one week, kg.
  *
- * The tile's yield per hectare is an annual figure and this is a weekly step,
- * so it divides -- which is a simplification worth naming. Real grain arrives
- * once, at harvest, and the whole shape of a medieval year is about storing it
- * and not running out before the next one. Averaging it across the year makes
+ * The annual harvest divided by 52, which is a simplification worth naming.
+ * Real grain arrives once, and the whole shape of a medieval year is about
+ * storing it and not running out before the next one. Averaging it makes
  * famine a slow slide rather than a cliff in March, and that is the wrong
  * shape. Recorded in docs/known-gaps.md as the first thing seasons will fix.
  */
-export function weeklyGrainKg(world: World, address: Address): number {
-  const tile = world.tile(address);
-  const areaHa = world.cellAreaAt(address.length) / 10000;
-  return (tile.flora.grainKgPerHa * areaHa) / A.TURNS_PER_YEAR;
+export function weeklyGrainKg(world: World, address: Address, population: number): number {
+  return world.harvestFor(address, population).netKgPerYear / A.TURNS_PER_YEAR;
 }
 
 /** Grain a population eats in one week, kg. */
@@ -163,7 +158,7 @@ function applyOrder(world: World, order: Order, playerCount: number): string | n
 }
 
 /**
- * A week in the life of the people on one tile.
+ * A week in the life of a settlement.
  *
  * Health is the running record of whether they have been eating. It moves
  * toward the ration they actually got, at a rate set by how long a person can
@@ -174,30 +169,63 @@ function applyOrder(world: World, order: Order, playerCount: number): string | n
  * health. The natural increase of three per thousand per year is why a
  * pre-industrial population took two centuries to double, and why the way to
  * grow a city is to attract people rather than to wait for them.
+ *
+ * There is no cap anywhere in here. A settlement grows until it runs out of
+ * hands, land or food, and if it sits on a river it can keep going a long way
+ * past what a landlocked one can.
  */
 function stepPopulation(world: World, address: Address, delta: TileDelta): boolean {
   const population = delta.population ?? 0;
   const health = delta.populationHealth ?? 1;
 
-  const produced = weeklyGrainKg(world, address);
-  const needed = weeklyNeedKg(population);
-  const ration = needed <= 0 ? 1 : clamp(produced / needed, 0, 1);
+  const gathered = world.harvestFor(address, population);
+  const ration = clamp(gathered.ration, 0, 1);
 
-  // One week of movement toward the ration actually received.
   const rate = 1 / A.STARVATION_WEEKS;
   const nextHealth = clamp(health + (ration - health) * rate, 0, 1);
 
-  const births = (population * A.BIRTH_RATE_PER_1000_YR) / 1000 / A.TURNS_PER_YEAR * nextHealth;
+  // Growth needs a surplus, not merely enough. A population exactly at
+  // subsistence stays put, which is what pre-industrial populations did for
+  // centuries at a time.
+  //
+  // The multiplier at full surplus is solved, not chosen: colonial America is
+  // the fastest a pre-industrial population ever grew from births alone, at 3%
+  // a year, and reaching that against a 32-per-thousand death rate needs
+  // births at 62 per thousand -- 1.77 times the baseline.
+  const surplus = clamp(gathered.ration - 1, 0, 1);
+  const maxMultiplier =
+    (A.MAX_NATURAL_INCREASE_PER_YEAR * 1000 + A.DEATH_RATE_PER_1000_YR)
+    / A.BIRTH_RATE_PER_1000_YR;
+
+  const births = (population * A.BIRTH_RATE_PER_1000_YR) / 1000 / A.TURNS_PER_YEAR
+    * nextHealth * (1 + (maxMultiplier - 1) * surplus);
   // Death rises as health falls: at full health the baseline rate, at zero
   // health the baseline plus everyone starving out over STARVATION_WEEKS.
   const deaths = (population * A.DEATH_RATE_PER_1000_YR) / 1000 / A.TURNS_PER_YEAR
     + population * (1 - nextHealth) * rate;
 
-  const nextPopulation = Math.max(0, Math.round(population + births - deaths));
+  // And people move to where there is food. This is how a settlement actually
+  // grows -- medieval towns grew by immigration, not by birth, because urban
+  // death rates ran ahead of urban birth rates almost everywhere.
+  const headroom = Math.max(0, gathered.potentialPopulation - population);
+  const migrants = gathered.ration >= A.MIGRATION_MIN_RATION
+    ? (headroom * A.MIGRATION_RATE_PER_YEAR) / A.TURNS_PER_YEAR
+    : 0;
+
+  // Population is carried as a fraction, not an integer.
+  //
+  // Rounding it every turn silently destroyed all growth below one person per
+  // turn: a settlement of five with an ample surplus gains 0.003 people a week,
+  // and rounding that away left it at exactly five for ten game-years. The
+  // fractional part IS the growth at this scale, and it has to survive the
+  // turn boundary. Same reasoning as the movement remainder in derive.ts.
+  const next = Math.max(0, population + births - deaths + migrants);
+  const nextPopulation = Math.round(next * 1000) / 1000;
 
   if (nextPopulation === population && Math.abs(nextHealth - health) < 0.001) return false;
 
-  if (nextPopulation <= 0) {
+  // Under half a person is nobody. A settlement does not linger at 0.4 people.
+  if (nextPopulation < 0.5) {
     world.setDelta(address, { population: undefined, populationHealth: undefined });
   } else {
     world.setDelta(address, {

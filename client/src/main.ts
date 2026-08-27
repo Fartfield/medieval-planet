@@ -18,6 +18,7 @@ import { SUBCELL_COUNT } from '../../sim/geo/hexgrid.ts';
 import { BIOME_NAMES, BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import { LANDFORM_NAMES } from '../../sim/model/tile.ts';
 import { MINERAL_NAMES } from '../../sim/model/resources.ts';
+import { workedCells } from '../../sim/model/settlement.ts';
 import type { TileDelta } from '../../sim/model/tile.ts';
 import type { ServerMessage, PlayerInfo } from '../../server/protocol.ts';
 import {
@@ -204,6 +205,22 @@ function visibleOverlays(w: World): { owned: Map<number, number>; populated: Map
   return { owned, populated };
 }
 
+/**
+ * The fields a selected settlement is actually working, for the renderer.
+ *
+ * Only computed when a populated tile is selected on a ground map, because a
+ * catchment is tens of thousands of tiles and rebuilding it every frame would
+ * be absurd. The World caches it, so panning around a selected settlement is
+ * free after the first frame.
+ */
+function workedOverlay(w: World): Map<number, number> | null {
+  if (path.length !== 2 || selected < 0) return null;
+  const address = [...path, selected];
+  const tile = w.tile(address);
+  if (tile.population <= 0) return null;
+  return workedCells(w.catchmentFor(address, tile.population), tile.population, 0);
+}
+
 // --- drawing ----------------------------------------------------------------
 
 function resize(): void {
@@ -232,7 +249,8 @@ function frame(): void {
   if (path.length === 0) {
     drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned);
   } else {
-    drawSubMap(ctx, world.subMap(path), flatView(w, h, cam), selected, owned, populated);
+    drawSubMap(ctx, world.subMap(path), flatView(w, h, cam), selected, owned, populated,
+      workedOverlay(world));
   }
 
   const remaining = Math.max(0, Math.round((nextTurnAt - performance.now()) / 1000));
@@ -462,9 +480,10 @@ function drawInspector(): void {
     </table>
     <div class="group">WHO</div><table>
     ${row('owner', owner)}
-    ${row('people', tile.population > 0 ? String(tile.population) : '<span class="none">nobody</span>')}
+    ${row('people', tile.population > 0 ? Math.round(tile.population).toLocaleString('en') : '<span class="none">nobody</span>')}
     ${tile.population > 0 ? row('condition', tile.populationHealth.toFixed(2)) : ''}
-    </table>`;
+    </table>
+    ${tile.population > 0 ? supplyPanel(world, address, tile.population) : ''}`;
 
   if (address.length === 2) {
     hint.textContent = 'double-click or Enter to open this realm';
@@ -489,6 +508,36 @@ function drawInspector(): void {
   hint.textContent = tile.elevationM < 0
     ? 'open water cannot be claimed'
     : `orders resolve at the end of turn ${turn + 1}`;
+}
+
+/**
+ * What the settlement is living on: how far it reaches, what it works, and
+ * which of the two limits it is against.
+ *
+ * "limited by" is the number a player should be reading. Labour-limited means
+ * more hands would help; land-limited means they would not, and the settlement
+ * has to spread out or move.
+ */
+function supplyPanel(w: World, address: number[], population: number): string {
+  const h = w.harvestFor(address, population);
+  const surplus = h.netKgPerYear - h.needKgPerYear;
+  const state = h.ration >= 1.05 ? 'growing'
+    : h.ration >= 0.98 ? 'at subsistence'
+    : h.ration >= 0.8 ? 'short of food' : 'starving';
+
+  return `<div class="group">WHAT IT LIVES ON</div><table>
+    ${row('condition', `<b style="color:${h.ration >= 0.98 ? '#7ba05b' : '#d0563a'}">${state}</b>`)}
+    ${row('ration', `${(h.ration * 100).toFixed(0)}% of need`)}
+    ${row('limited by', h.limitedBy === 'labour'
+      ? 'hands &mdash; more people would help'
+      : h.limitedBy === 'land' ? 'land &mdash; it must spread out' : 'nothing')}
+    ${row('fields worked', `${h.hectaresWorked.toFixed(0)} ha`)}
+    ${row('furthest field', `${(h.furthestWorkedM / 1000).toFixed(2)} km`)}
+    ${row('haulage', h.usedWater ? 'river &mdash; 43x cheaper' : 'cart')}
+    ${row('harvest', `${Math.round(h.netKgPerYear).toLocaleString('en')} kg/yr net`)}
+    ${row('surplus', `${surplus >= 0 ? '+' : ''}${Math.round(surplus).toLocaleString('en')} kg/yr`)}
+    ${row('land could feed', `${Math.round(h.potentialPopulation).toLocaleString('en')} people`)}
+    </table>`;
 }
 
 function drawLegend(): void {

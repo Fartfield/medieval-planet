@@ -37,7 +37,9 @@
 
 import * as A from '../anchors.ts';
 import { clamp, smoothstep, dpow } from '../gen/mathx.ts';
-import { potentialEvapotranspiration, biotemperature, miamiNPP, type BiomeId } from './biome.ts';
+import {
+  potentialEvapotranspiration, biotemperature, seasonalAmplitude, miamiNPP, type BiomeId,
+} from './biome.ts';
 
 export interface SoilSample {
   temperatureC: number;
@@ -195,10 +197,16 @@ export function deriveSoil(s: SoilSample): Soil {
     depthCm,
     fertility: fert,
     moisture: soilMoisture(s),
-    // Health starts at fertility: virgin ground is in the condition its
-    // climate made it. Working it moves the two apart, and that difference is
-    // what a player is actually managing.
-    health: fert,
+    // Health is one on virgin ground, and it is *not* a second copy of
+    // fertility. Fertility is what the climate and the vegetation built up over
+    // ten thousand years; health is what farming has taken out of it since, and
+    // nothing has farmed this yet.
+    //
+    // Starting it at fertility made the yield formula square the fertility term
+    // -- 0.35 became 0.12 -- and dropped median grain yield to 41 kg/ha against
+    // a medieval 330-450. Two plausible-looking numbers multiplied into one
+    // wrong one, which is the failure mode that is hardest to see.
+    health: 1,
     leaching: leachingFraction(s.precipMm, s.temperatureC, s.sinLat),
   };
 }
@@ -212,11 +220,56 @@ export function deriveSoil(s: SoilSample): Soil {
  * top of this scale, and it is reached only where fertility and health are
  * both near one.
  */
-export function grainYieldKgPerHa(soil: Soil, npp: number): number {
-  const climateCap = clamp(npp / 900, 0, 1.15);
+export function grainYieldKgPerHa(
+  soil: Soil,
+  npp: number,
+  suitability: number,
+): number {
   // Times the cropped fraction, because a third of any holding is lying fallow.
   // Leaving it out put the best land at 0.37 ha per person against a measured
   // historical 0.5-1.5; with it, 0.55.
   return A.MEDIEVAL_GRAIN_KG_PER_HA * soil.fertility * soil.health
-    * climateCap * A.CROPPED_FRACTION_THREE_FIELD;
+    * suitability * A.CROPPED_FRACTION_THREE_FIELD;
+}
+
+/**
+ * Whether wheat can grow here at all, 0..1 -- water and season, whichever is
+ * scarcer.
+ *
+ * This replaced a term that scaled with net primary productivity, which was a
+ * double-count: fertility already carries NPP through the organic matter it
+ * builds, so the same quantity was being applied twice under two names. Worse,
+ * it was the wrong quantity. NPP says what a *landscape* grows; it says
+ * nothing about whether a *crop* will ripen, and the two come apart exactly
+ * where it matters -- a rainforest hillside has enormous NPP and will not make
+ * a wheat field.
+ *
+ * Wheat's own requirements are measured, so use those.
+ */
+export function cropSuitability(precipMm: number, temperatureC: number, sinLat: number): number {
+  const water = clamp(precipMm / A.WHEAT_WATER_REQUIREMENT_MM, 0, 1.15);
+  // The season term is a threshold, not a proportion. A crop that needs 120
+  // days and gets 90 does not yield three quarters -- it does not ripen, and
+  // you get nothing. Written linearly it gave sub-Arctic tundra a suitability
+  // of 0.6 off a three-month summer.
+  const season = smoothstep(
+    A.WHEAT_GROWING_DAYS * 0.75, A.WHEAT_GROWING_DAYS,
+    growingDays(temperatureC, sinLat));
+  return Math.min(water, season);
+}
+
+/**
+ * Days a year above wheat's base temperature.
+ *
+ * Reconstructed from the annual mean and the seasonal swing with the same
+ * baked month table biotemperature uses, so it needs no transcendental and
+ * agrees with the rest of the climate model about what a year looks like.
+ */
+export function growingDays(annualMeanC: number, sinLat: number): number {
+  const half = seasonalAmplitude(sinLat) / 2;
+  let months = 0;
+  for (let m = 0; m < 12; m++) {
+    if (annualMeanC + half * A.MONTH_PHASE[m] >= A.WHEAT_BASE_TEMP_C) months++;
+  }
+  return (months * 365.25) / 12;
 }

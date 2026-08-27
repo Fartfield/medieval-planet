@@ -47,13 +47,32 @@ fine for a click and would not be fine for a bulk query.
 
 ## Simulation
 
-**Supply lines do not exist, and this is the largest gap in the project.** A
-settlement eats only what the tile it stands on grows. A ground tile is 506 m²
-and one person needs about 0.55 ha of good land, so a tile feeds roughly a
-tenth of a person — twenty settlers starve immediately, which is arithmetically
-correct and makes the game unplayable. Drawing food from surrounding tiles is
-the next system, and it is the one that makes "you can sustain whatever you can
-sustain" mean anything.
+**A catchment spreads to seven sub-maps and no further.** The home ground map
+plus its six neighbours: 35 km², enough for roughly three thousand people.
+Going further is a cost problem rather than a code one — each map is 75 ms to
+generate and 400 kB to hold, and a radius covering the full 25 km commute limit
+would want three hundred. A settlement that outgrows seven maps is the signal
+to build the incremental version. See [supply.md](supply.md).
+
+**No roads and no terrain cost.** A cart track is assumed passable between any
+two land tiles, which is generous — real terrain has bogs and gorges. It is the
+optimistic assumption, so settlements read as slightly better supplied than
+they should.
+
+**No backhaul.** Long-distance trade is cheaper than the model says, because a
+cart on an established route carries something back rather than returning
+empty. The round-trip figure is right for a settlement fetching its own crop
+and pessimistic for trade.
+
+**Nothing is traded between settlements.** Each feeds itself off its own
+catchment. Grain moving from a surplus settlement to a deficit one is the
+obvious next economic system, and it is what makes the water advantage matter
+at the scale it historically did.
+
+**Migration comes from nowhere.** People arrive at a settlement with a surplus
+at 8% of its unfilled capacity per year, from an unmodelled elsewhere. That
+rate is a free parameter and should be replaced by migration between real
+settlements the moment there are several.
 
 **Harvest is averaged across the year.** `weeklyGrainKg` divides an annual
 yield by 52. Real grain arrives once, and the whole shape of a medieval year is
@@ -62,7 +81,12 @@ famine a slow slide rather than a cliff in March, which is the wrong shape. The
 first thing seasons will fix.
 
 **No buildings, no crafts, no NPC-driven development.** The design has half a
-town's growth driven by its own people choosing trades. None of it exists.
+town's growth driven by its own people choosing trades. None of it exists —
+population is a single number with no occupations in it.
+
+**No frontiersman and no attendants.** The player is an owner id on a tile.
+The character with four assignable attendants that the design opens with is not
+built.
 
 **Houses are a number that colours a border.** No heads of household, no
 alliances, no representation on the map beyond the colour.

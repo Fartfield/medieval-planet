@@ -12,20 +12,25 @@ each.
 
 ## What is here now
 
-The world exists, can be looked at, and can be shared. The economy is a stub.
+A world you can look at, share, settle, and starve in.
 
 | | |
 |---|---|
 | the globe | 10,242 regions on a true icosahedral sphere, with the twelve pentagons a sphere cannot avoid |
 | generation | plate tectonics to elevation to climate to biome, cascading top-down, reproducible forever from one seed |
 | the lower layers | realm and ground maps, rivers from flow accumulation, soil, ore, timber and game per tile |
-| calibration | land cover matches Earth to within 2.6 points across forest, grassland, desert and tundra |
+| supply | settlements work the land they can reach; hauling food costs food, and water is 42.7× cheaper than road |
+| growth | no population cap — a settlement grows until it runs out of hands, land or food |
 | multiplayer | a turn server, two clients sharing one world, live desync detection, persistence |
-| verification | 227 measurements diffed run to run, plus an end-to-end run of the real thing |
+| verification | 301 measurements diffed run to run, plus an end-to-end run of the real thing |
 
-**Not here yet:** supply lines, and that is the largest gap. A settlement eats
-only the tile it stands on, which feeds about a tenth of a person, so settlers
-starve. See [docs/known-gaps.md](docs/known-gaps.md).
+Calibration, none of it tuned to hit its target: land cover within 2.6 points of
+Earth's across forest, grassland, desert and tundra; water:road transport cost
+42.7 against Diocletian's 40; best farmland at 0.89–1.03 ha per person against a
+measured historical 0.5–1.5.
+
+**Not here yet:** trade between settlements, roads, crafts, and the
+frontiersman himself. See [docs/known-gaps.md](docs/known-gaps.md).
 
 ## Where to start reading
 
@@ -34,6 +39,7 @@ starve. See [docs/known-gaps.md](docs/known-gaps.md).
 | [docs/architecture.md](docs/architecture.md) | the layers, the scale ladder, and why nothing is stored |
 | [docs/world-generation.md](docs/world-generation.md) | how a planet is built, and what it was calibrated against |
 | [docs/determinism.md](docs/determinism.md) | why there is a fixed-point layer and no `Math.sin` anywhere |
+| [docs/supply.md](docs/supply.md) | how food gets from where it grows to where it is eaten |
 | [docs/multiplayer.md](docs/multiplayer.md) | the turn server, the wire, and why it never sends a map |
 | [docs/testing.md](docs/testing.md) | how to run the suites and how to read a moved measurement |
 | [docs/fix-attempts.md](docs/fix-attempts.md) | what has already been tried, and the measurement that killed it |
@@ -49,15 +55,16 @@ node server/main.ts              # then open http://localhost:8787
 node server/main.ts --turn-seconds 10 --seed 1234
 node server/main.ts --turns 50   # headless, no socket in sight
 
-node verify/run_all.ts           # 227 measurements, diffed against the baseline
+node verify/run_all.ts           # 301 measurements, diffed against the baseline
 node verify/run_all.ts --anchor  # accept the current numbers as the new baseline
 node verify/check_app.ts         # a real server and two real clients, end to end
 node verify/calibrate_climate.ts # sweep the climate model against Earth
 ```
 
 Drag to turn the globe, click a region, double-click or press Enter to descend.
-Escape goes back up. Claim a ground tile and settle it, and watch what happens
-when 506 m² has to feed twenty people.
+Escape goes back up. Claim a ground tile, settle it, and the fields it works are
+drawn in gold — the ring pattern is von Thünen's, and nothing in the code
+mentions a ring. Site it on a river and watch how much further it can reach.
 
 ## The scale
 
