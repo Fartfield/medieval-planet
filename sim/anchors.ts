@@ -1,0 +1,350 @@
+// Measured reality. Nothing in this file is a design choice.
+//
+// Every number here is something someone went and measured in the world: a
+// gait laboratory, a race track, a surviving hauberk on a museum scale, a
+// chronograph in front of a replica warbow. Game numbers are not written down
+// anywhere in this project -- they are solved from these, in derive.ts.
+//
+// The rule for adding to this file: if you cannot say who measured it and what
+// they measured, it does not belong here. Put it in derive.ts as a labelled
+// free parameter instead, where it will be visible as one.
+//
+// Units are SI throughout and float, because this file is read at authoring
+// time only. Everything crossing into the simulation goes through derive.ts,
+// which snaps to the integer grid once and never looks back.
+
+// ---------------------------------------------------------------------------
+// The stat contract
+// ---------------------------------------------------------------------------
+// Carried over from medieval3d, where it earned its keep: a stat of 10 is an
+// average healthy adult, a stat of 20 is the human world record, and a stat of
+// 1 is the floor of what still counts as functioning. Every capability curve
+// is pinned at those two ends and interpolated between, so no capability is
+// ever "chosen" -- it is read off a line between a person and a record.
+
+export const STAT_AVERAGE = 10;
+export const STAT_RECORD = 20;
+export const STAT_FLOOR = 1;
+
+// ---------------------------------------------------------------------------
+// The reference body
+// ---------------------------------------------------------------------------
+
+/** Mass of the reference adult male, kg. WHO/anthropometric reference figure. */
+export const BODY_MASS = 70.0;
+
+/** Standing height of the reference adult male, m. */
+export const BODY_HEIGHT = 1.75;
+
+/** Shoulder width, m. Sets how tightly a formation can pack. */
+export const SHOULDER_WIDTH = 0.45;
+
+// ---------------------------------------------------------------------------
+// Locomotion
+// ---------------------------------------------------------------------------
+
+/**
+ * Preferred walking speed on level ground, m/s. Gait studies cluster tightly
+ * at 1.3-1.45 across populations; this is the middle of that band. It is a
+ * preferred speed, not a maximum -- people select it because it minimises
+ * metabolic cost per metre, which is exactly the quantity a marching column
+ * is also minimising.
+ */
+export const WALK_PREFERRED = 1.40;
+
+/**
+ * Gait speed below which a person has lost community ambulation, m/s. The
+ * frailty literature uses 0.6 as the threshold: slower than this and you
+ * cannot cross a road on the lights. This is the stat-1 end of the walking
+ * curve -- the floor of what still counts as walking, measured rather than
+ * guessed. derive.ts takes the ratio it implies (0.43 of average) and applies
+ * it to other capabilities, which is an assumption and is labelled as one.
+ */
+export const WALK_FRAIL_THRESHOLD = 0.6;
+
+/**
+ * 100 m sprint, world record average speed, m/s. Bolt, Berlin 2009, 9.58 s
+ * over 100 m. This is the stat-20 end of the sprint curve. (Peak speed within
+ * that run was about 12.4 m/s; the average is the honest anchor for a run of
+ * that length, and a charge is a run of about that length.)
+ */
+export const SPRINT_RECORD = 100.0 / 9.58;
+
+/**
+ * 100 m sprint, untrained healthy adult male, m/s. Physical-education norm
+ * tables put an average adult male around 15 s for 100 m. Stat-10 end.
+ */
+export const SPRINT_AVERAGE = 100.0 / 15.0;
+
+/**
+ * How long an all-out sprint can be held before the anaerobic system is spent
+ * and speed collapses, s. Track physiology: peak speed is held for a few
+ * seconds and 400 m runners are visibly decelerating by 300 m.
+ */
+export const SPRINT_DURATION = 20.0;
+
+// ---------------------------------------------------------------------------
+// What a soldier carries
+// ---------------------------------------------------------------------------
+// Masses from surviving pieces and from reconstructions weighed against them.
+
+/** Riveted mail hauberk, knee length, kg. Surviving examples run 9-11. */
+export const MAIL_HAUBERK = 10.0;
+
+/** Open-faced helm, kg. */
+export const HELM = 2.0;
+
+/** Round or kite shield, limewood with hide facing, kg. */
+export const SHIELD = 4.0;
+
+/** Spear, sword and belt, kg. */
+export const ARMS = 3.0;
+
+/** Pack: three days of grain, bedroll, cook pot, stakes, kg. */
+export const PACK = 8.0;
+
+/** A line infantryman under full campaign load, kg. */
+export const INFANTRY_LOAD = MAIL_HAUBERK + HELM + SHIELD + ARMS + PACK;
+
+// ---------------------------------------------------------------------------
+// Horses
+// ---------------------------------------------------------------------------
+
+/** Mass of a warhorse, kg. Medieval horses were smaller than modern hunters. */
+export const HORSE_MASS = 500.0;
+
+/** Horse gait speeds, m/s. Equine locomotion measurements. */
+export const HORSE_WALK = 1.6;
+export const HORSE_TROT = 3.5;
+export const HORSE_CANTER = 5.5;
+
+/**
+ * Racehorse peak, m/s. Winning Brew, 2008, 402 m in 19.32 s. The stat-20 end
+ * of the gallop curve, and a thoroughbred sprinting unburdened -- a warhorse
+ * under an armoured man is derived down from here, not up from nothing.
+ */
+export const HORSE_GALLOP_RECORD = 402.0 / 19.32;
+
+/**
+ * Full gallop of an ordinary riding horse, m/s. Equine gait measurements put
+ * a sound but unremarkable horse at 12-14. Stat-10 end of the gallop curve;
+ * HORSE_GALLOP_RECORD is the stat-20 end, and a warhorse sits between them.
+ */
+export const HORSE_GALLOP_AVERAGE = 13.0;
+
+/** How far a horse can hold a gallop before it must be pulled up, m. */
+export const HORSE_GALLOP_RANGE = 3000.0;
+
+// ---------------------------------------------------------------------------
+// Missiles
+// ---------------------------------------------------------------------------
+
+/**
+ * English warbow draw weight, N. The Mary Rose bows measure 150-160 lbf when
+ * reconstructed to their original dimensions; 150 lbf is 667 N.
+ */
+export const WARBOW_DRAW_FORCE = 667.0;
+
+/** Draw length of a warbow shot to the ear, m. */
+export const WARBOW_DRAW_LENGTH = 0.76;
+
+/** Heavy war arrow, kg. Mary Rose arrows run 60-95 g. */
+export const WAR_ARROW_MASS = 0.080;
+
+/**
+ * Measured muzzle velocity of a heavy war arrow from a warbow, m/s.
+ * Chronographed replica tests land at 50-60. Kept as its own anchor rather
+ * than derived from the draw, because bow efficiency is the thing being
+ * measured here -- derive.ts checks the two against each other.
+ */
+export const WAR_ARROW_SPEED = 55.0;
+
+/** Brace height of a warbow, m -- the string-to-belly distance at rest. The
+ * powerstroke is the draw length less this, and the force at brace is a
+ * quarter of peak, which together give the area under the force-draw curve. */
+export const WARBOW_BRACE_HEIGHT = 0.15;
+export const WARBOW_BRACE_FORCE_FRACTION = 0.25;
+
+/** Crossbow bolt mass, kg, and measured speed from a windlass-spanned bow. */
+export const BOLT_MASS = 0.060;
+export const BOLT_SPEED = 45.0;
+
+/** Aimed shots per minute a trained archer sustains before the arm gives. */
+export const ARCHER_RATE_PER_MIN = 8.0;
+
+// ---------------------------------------------------------------------------
+// Consumption
+// ---------------------------------------------------------------------------
+
+/**
+ * Daily energy requirement of a soldier on campaign, kcal. Military field
+ * studies of infantry on sustained operations report 4000-4800; 3000 is what
+ * the same man needs in garrison. Campaign figure used.
+ */
+export const SOLDIER_KCAL_PER_DAY = 4200.0;
+
+/** Energy density of wheat, kcal/kg. */
+export const WHEAT_KCAL_PER_KG = 3390.0;
+
+/** Share of a campaign ration that is grain rather than meat, cheese or ale. */
+export const GRAIN_SHARE_OF_RATION = 0.70;
+
+/** Dry forage a horse eats daily, as a fraction of its body mass. */
+export const HORSE_FORAGE_FRACTION = 0.022;
+
+/** Water, L/day, for a man and for a horse working. */
+export const MAN_WATER_PER_DAY = 3.0;
+export const HORSE_WATER_PER_DAY = 35.0;
+
+// ---------------------------------------------------------------------------
+// Physical constants
+// ---------------------------------------------------------------------------
+
+/** Standard gravity, m/s^2. */
+export const GRAVITY = 9.80665;
+
+/** Seconds in a day, for anything expressed per-day. */
+export const SECONDS_PER_DAY = 86400.0;
+
+// ---------------------------------------------------------------------------
+// The planet
+// ---------------------------------------------------------------------------
+// Earth, measured. Another planet would swap this block and nothing else.
+
+/** Mean radius, m. */
+export const EARTH_RADIUS_M = 6371000.0;
+
+/** Land as a fraction of total surface. Used to *solve* for sea level rather
+ *  than tuning the elevation field until the coastlines look about right. */
+export const LAND_FRACTION = 0.292;
+
+/** Mean elevation of land above sea level, m, and mean ocean depth, m. */
+export const MEAN_LAND_ELEVATION_M = 840.0;
+export const MEAN_OCEAN_DEPTH_M = 3688.0;
+
+/** Highest and deepest points, m. The ends of the elevation range. */
+export const MAX_ELEVATION_M = 8849.0;
+export const MAX_DEPTH_M = -10935.0;
+
+/** Environmental lapse rate, degC per metre of altitude. Measured, and one of
+ *  the most reliable numbers in atmospheric science. */
+export const LAPSE_RATE_PER_M = 0.0065;
+
+/**
+ * Zonal mean surface temperature, degC, fitted as a cubic in sin^2(latitude).
+ *
+ * The textbook sin^2 model (North's energy-balance approximation) runs about
+ * 10 degC too cold in the mid-latitudes, which pushes the temperate forest belt
+ * far enough toward the equator to be obvious. These three coefficients are a
+ * least-squares fit to observed zonal means at 0, 30, 45, 60 and 90 degrees:
+ * 26, 20, 12, 0 and -25 degC. It is a fit to data, not a physical model, and
+ * docs/known-gaps.md records that a real energy balance would replace it.
+ */
+export const TEMP_EQUATOR_C = 26.0;
+export const TEMP_QUAD_COEFF = 20.0;
+export const TEMP_CUBIC_COEFF = 31.0;
+
+/** Seasonal swing between warmest and coldest month, degC, at the pole. Near
+ *  zero at the equator and growing with sin^2(latitude). Earth: about 2 degC at
+ *  the equator, 30 at 60 degrees N. */
+export const SEASONAL_AMPLITUDE_POLE_C = 40.0;
+
+/**
+ * Koeppen's tree line: forest gives way to tundra where the warmest month
+ * averages below 10 degC, and to permanent ice below 0 degC. These are
+ * classification boundaries drawn from observed vegetation, which is exactly
+ * the kind of number this project prefers to a chosen threshold.
+ */
+export const TREELINE_WARMEST_MONTH_C = 10.0;
+export const ICE_WARMEST_MONTH_C = 0.0;
+
+/**
+ * Zonal mean precipitation over LAND, mm/yr: an equatorial peak at the
+ * intertropical convergence, a second at the polar front, over a dry
+ * background. Centres in units of |sin(latitude)|.
+ *
+ * Over land specifically, and that distinction is the whole calibration. The
+ * all-surface zonal mean at 30 degrees is around 600 mm, and fitting to it gave
+ * a planet with 0.2% desert against Earth's 19% -- because that 600 mm is
+ * almost entirely ocean, while the land sitting at 30 degrees is the Sahara,
+ * Arabia, the Atacama, the Kalahari and the Australian interior. The model only
+ * ever evaluates these over land, so the land profile is the honest target.
+ * These four values are the output of verify/calibrate_climate.ts, which
+ * sweeps them and scores the resulting land cover against Earth's. The best
+ * fit reproduces forest/grass/desert/tundra to within 2.6 points across all
+ * four -- total absolute error 0.068, against 0.266 before the classification
+ * moved onto the aridity index.
+ */
+export const PRECIP_ITCZ_MM = 2400.0;
+export const PRECIP_ITCZ_WIDTH = 0.26;
+export const PRECIP_POLAR_FRONT_MM = 800.0;
+export const PRECIP_POLAR_FRONT_CENTRE = 0.80;
+export const PRECIP_POLAR_FRONT_WIDTH = 0.20;
+export const PRECIP_BACKGROUND_MM = 40.0;
+
+/**
+ * How fast rain wrings out of an air mass moving inland, per cell of travel.
+ * At 277 km a cell this is a half-life of about 1,900 km, which puts the dry
+ * heart of a continent the right distance from its coasts.
+ */
+export const CONTINENTALITY_PER_CELL = 0.10;
+
+/** Metres of ascent that doubles rainfall on a windward slope, and metres of
+ *  descent that drives a lee slope to its driest, with that floor. Orographic
+ *  rainfall is the sharpest signal on a real precipitation map -- the Atacama
+ *  and the Great Basin are both simply behind something. */
+export const OROGRAPHIC_DOUBLING_M = 900.0;
+export const RAIN_SHADOW_M = 1400.0;
+export const RAIN_SHADOW_FLOOR = 0.10;
+
+/**
+ * Net primary productivity, the Miami model (Lieth, 1975): an empirical fit of
+ * observed plant growth against temperature and rainfall across every biome on
+ * Earth. Productivity is the lesser of what heat allows and what water allows,
+ * which is why a hot desert and a cold bog are both unproductive for different
+ * reasons. Grams of dry matter per square metre per year.
+ */
+export const MIAMI_MAX_NPP = 3000.0;
+export const MIAMI_TEMP_A = 1.315;
+export const MIAMI_TEMP_B = 0.119;
+export const MIAMI_PRECIP_K = 0.000664;
+
+/** Plate count. Earth has seven major and about eight minor plates. */
+export const TECTONIC_PLATES = 15;
+
+/** Plate drift, m/yr. Measured by satellite geodesy at 1-10 cm/yr. */
+export const PLATE_DRIFT_M_PER_YR = 0.05;
+
+/**
+ * Holdridge's potential evapotranspiration: PET in mm/yr is 58.93 times the
+ * biotemperature in degC. Biotemperature is the mean of the monthly means with
+ * everything below 0 and above 30 clamped away, on the reasoning that plants
+ * do no growing outside that range so those months should not count toward
+ * the water they need.
+ */
+export const HOLDRIDGE_PET_FACTOR = 58.93;
+export const BIOTEMP_MIN_C = 0.0;
+export const BIOTEMP_MAX_C = 30.0;
+
+/**
+ * The UNEP aridity index: precipitation divided by potential
+ * evapotranspiration, with boundaries drawn by the UN Convention to Combat
+ * Desertification from observed vegetation and soil.
+ *
+ * This replaced a pair of hand-set rainfall thresholds that had no cold desert
+ * in them at all -- the model was turning the Gobi, the Great Basin and
+ * Patagonia into grassland, which cost about a third of Earth's desert area.
+ * Aridity gets it right because it asks how much water a place has *relative to
+ * how fast it loses it*, and 200 mm is a desert at 25 degC and a wetland at 0.
+ */
+export const ARIDITY_DESERT = 0.20;      // arid and hyper-arid
+export const ARIDITY_SEMIARID = 0.50;    // grassland and steppe
+export const ARIDITY_SUBHUMID = 1.00;    // seasonal forest and woodland
+export const ARIDITY_PERHUMID = 1.90;    // rainforest
+
+/** Cosine of each month's phase, baked as literals. Used to reconstruct the
+ *  monthly temperatures a biotemperature needs, without a transcendental. */
+export const MONTH_PHASE: readonly number[] = [
+  1.0, 0.866025403784439, 0.5, 0.0, -0.5, -0.866025403784439,
+  -1.0, -0.866025403784439, -0.5, 0.0, 0.5, 0.866025403784439,
+];

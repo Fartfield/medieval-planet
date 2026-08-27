@@ -1,0 +1,17 @@
+{
+  "name": "medieval-strategy",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "A persistent hex planet, played a week at a time.",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "verify": "node verify/run_all.ts",
+    "anchor": "node verify/run_all.ts --anchor",
+    "server": "node server/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
