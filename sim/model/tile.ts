@@ -11,6 +11,7 @@
 import type { BiomeId } from './biome.ts';
 import type { Soil } from './soil.ts';
 import type { Deposit } from './resources.ts';
+import type { RockId } from './rock.ts';
 import type { Address } from '../geo/address.ts';
 
 export const Landform = {
@@ -108,6 +109,28 @@ export interface GroundTile {
 
   /** Net primary productivity, g/m2/yr. Most of the economy hangs off this. */
   nppGm2: number;
+
+  /** What rock is under this tile. See model/rock.ts. */
+  rock: RockId;
+  /** Depth of soil over bedrock, metres. Zero is bare rock. */
+  regolithM: number;
+  /** Surface lowering, metres a year. */
+  erosionMPerYr: number;
+  /**
+   * Factor of safety against a landslide, as the ground stands today.
+   *
+   * Below one it is already moving. Between one and about 1.3 it is held up by
+   * whatever is growing on it, and clearing that is a decision with a delay on
+   * it -- root strength decays over a few years, so the hillside comes down
+   * some wet season after the timber was taken rather than the same week.
+   *
+   * Only meaningful where hillslopes are resolved, which is the plot layer
+   * down. Above that the gradient is measured across kilometres and means
+   * nothing about a hillside.
+   */
+  stability: number;
+  /** Whether the four fields above are being asked at a scale they hold at. */
+  hillslopesResolved: boolean;
   soil: Soil;
   flora: Flora;
   fauna: Fauna;

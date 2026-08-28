@@ -1004,6 +1004,68 @@ export const BAD_YEAR_YIELD_FRACTION = 0.65;
  */
 export const TOPOGRAPHY_HURST = 0.70;
 
+/**
+ * Local relief at a ten-kilometre baseline: how much a landscape goes up and
+ * down across ten kilometres of it.
+ *
+ * The standard way relief is reported, and it is measured everywhere. A high
+ * mountain belt runs 800-1,500 m per 10 km; rolling hill country 100-250;
+ * a floodplain or a shield plain 10-30. These are the two ends of that.
+ *
+ * They are here because a generator needs to know how rough to make ground at
+ * a scale it is not looking at. Relief scales as the baseline to the Hurst
+ * exponent, so one measured relief at one measured baseline sets it at every
+ * other -- and *that* is the number a generated world can be checked against,
+ * which "420 metres of noise" never was.
+ *
+ * The detail amplitude used to be a bare 420 m at the top layer divided down.
+ * The trouble with a bare number is not that it is wrong, it is that nothing
+ * can say whether it is wrong. Once the staircase was out of the sampler the
+ * whole world measured under six degrees everywhere -- no slope on Earth, no
+ * bare rock, and denudation a hundredfold too slow -- and there was no
+ * measurement the old constant could be held against to have caught it.
+ */
+export const LOCAL_RELIEF_MOUNTAIN_M = 900.0;
+export const LOCAL_RELIEF_PLAIN_M = 18.0;
+export const LOCAL_RELIEF_BASELINE_M = 10000.0;
+
+/**
+ * The one measured point stream power is calibrated at.
+ *
+ * A temperate hillslope on ordinary sedimentary rock -- a catchment of about
+ * ten hectares at a gradient of one in ten -- denudes at roughly 0.05 mm a
+ * year. That is the middle of the cosmogenic-nuclide and sediment-yield
+ * compilations for stable continental uplands, and it fixes K for every other
+ * rock and every other geometry.
+ *
+ * What comes out the far end is not fitted and is the check: an active
+ * mountain front lands near 0.8 mm/yr and a lowland basin near 0.005, and the
+ * measured spread across those settings is exactly two orders of magnitude.
+ */
+/**
+ * How long a hillslope is, divide to channel: 50 to 500 m in soil-mantled
+ * temperate landscapes, and it is what sets the scale the soil and stability
+ * models are valid at.
+ *
+ * A cell has to be a good deal smaller than a hillslope before its gradient
+ * means anything. A two-kilometre mountain spread across a 2,900 km cell is a
+ * gradient under one degree -- nowhere near what strips a ridge -- so a
+ * hillslope steady state asked at that scale answers "deep soil everywhere"
+ * for every mountain on the planet. That exact failure is on record in the
+ * sister project: bare rock came out at 0% of land and mean soil at 3.6 m,
+ * and the rule was right while the grid could not ask it.
+ *
+ * So the ladder asks it only where it is resolved, which is the plot layer
+ * down. Above that the fields are still computed -- they are cheap and they
+ * are the same function -- but `hillslopesResolved` is false and nothing
+ * should be believing them.
+ */
+export const HILLSLOPE_LENGTH_M = 100.0;
+
+export const DENUDATION_TEMPERATE_M_PER_YR = 5.0e-5;
+export const DENUDATION_REFERENCE_CATCHMENT_M2 = 1.0e5;
+export const DENUDATION_REFERENCE_SLOPE = 0.10;
+
 export const STREAM_POWER_M = 0.5;
 export const STREAM_POWER_N = 1.0;
 

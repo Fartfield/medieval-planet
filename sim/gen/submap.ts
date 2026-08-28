@@ -28,7 +28,7 @@ import {
 import { CELL_COUNT, centres, neighbours, neighbourCount, cellAt } from '../geo/sphere.ts';
 import { addressSeed, SALT, type Address } from '../geo/address.ts';
 import { fbm3, ridged3 } from './noise.ts';
-import { clamp, smoothstep, dpow } from './mathx.ts';
+import { clamp, smoothstep, dpow, lerp } from './mathx.ts';
 import {
   routeWater, runoffM as runoffDepthM, drainageOf, alluvialFraction,
   type Boundary, type Flow,
@@ -36,6 +36,10 @@ import {
 import {
   classify, miamiNPP, aridityIndex, potentialEvapotranspiration, type BiomeId,
 } from '../model/biome.ts';
+import {
+  rockAt, erosionRateM, soilDepthM as regolithDepthM, factorOfSafety,
+  rootCohesionKPa, standingCoverOf, type RockId,
+} from '../model/rock.ts';
 import {
   deriveSoil, waterlogging as calcWaterlogging, grainYieldKgPerHa, cropSuitability,
   type Soil,
@@ -76,6 +80,31 @@ export interface SubMap {
   runoffM: Float32Array;
   /** Fraction of each cell that is river floodplain, 0..1. */
   alluvial: Float32Array;
+
+  /** What rock is under each cell. See model/rock.ts. */
+  rock: Uint8Array;
+  /** Surface lowering, metres a year, from stream power on this cell's own
+   *  catchment and gradient. */
+  erosionMPerYr: Float32Array;
+  /** Depth of soil over bedrock, metres. Zero is bare rock, and it happens. */
+  regolithM: Float32Array;
+  /**
+   * Infinity-capped factor of safety against a shallow landslide, dry.
+   *
+   * Below one the hillside is already going; between one and about 1.3 it is
+   * going the next time it rains hard or the next time somebody fells the
+   * trees on it. Bare rock and flat ground both return the cap.
+   */
+  stability: Float32Array;
+  /**
+   * Whether the three fields above mean anything on this map.
+   *
+   * False wherever a cell is wider than a hillslope, which is every layer
+   * above the plot. The numbers are still there -- same function, no branch --
+   * but a gradient measured across 300 km is not a hillslope gradient and the
+   * steady state it implies is fiction. See anchors.HILLSLOPE_LENGTH_M.
+   */
+  hillslopesResolved: boolean;
   /** Catchment, discharge, lakes and flow directions. See gen/hydrology.ts. */
   flow: Flow;
   waterlogging: Float32Array;
@@ -105,6 +134,13 @@ export interface ParentSample {
   precipMm: number;
   upliftM: number;
 }
+
+/**
+ * The number a factor of safety is reported as when nothing can slide -- flat
+ * ground, or bare rock. Infinity is the honest answer and it does not survive
+ * a Float32Array or a JSON round trip, so it is capped where it is stored.
+ */
+export const STABILITY_CAP = 99;
 
 /** Circumradius of a layer-0 cell in radians, and the ratio per layer down. */
 const L0_RADIUS_RAD = Math.sqrt(
@@ -201,9 +237,45 @@ function upliftProxy(planet: Planet, cell: number): number {
   return Math.max(0, planet.elevationM[cell] - base);
 }
 
-/** Read a generated sub-map at an arbitrary direction on the sphere. */
+/**
+ * Read a generated sub-map at an arbitrary direction on the sphere.
+ *
+ * Barycentric interpolation over the triangle of cell centres the point falls
+ * in. The property that matters is that it **reproduces a linear field
+ * exactly**: a planar hillside sampled at any resolution comes back planar,
+ * with the gradient it actually has.
+ *
+ * THIS TOOK THREE GOES AND THE FIRST TWO ARE WORTH KEEPING.
+ *
+ * It was nearest-neighbour for seven layers -- only the globe-to-region step
+ * had ever been fixed, and its comment there says exactly why it had to be.
+ * Every layer below inherited its parent as a step function and rebuilt the
+ * same staircase: relief measured 756 m at the 3 km layer and still 756 m at
+ * the 41 cm layer. Three quarters of a kilometre of relief across four metres
+ * of ground, with slopes reading 90 degrees.
+ *
+ * Copying samplePlanet's inverse-distance weighting fixed a third of it and
+ * not the rest. Shepard weighting has a flat spot at every node -- the
+ * gradient goes to zero exactly at a cell centre -- so the field sits level
+ * across each cell and does all its climbing near the boundary. The staircase
+ * came back as a ramp: the maximum gradient inside a child map was 50 degrees
+ * where its parent's own gradient was 8. Softer, and just as wrong.
+ *
+ * Barycentric has no flat spot and no free parameter. A point sits in a
+ * triangle of three cell centres, the three weights are what they are, and a
+ * linear field passes through untouched -- which is the whole requirement,
+ * because over one cell of the layer above, terrain *is* close to linear and
+ * the detail noise is what is supposed to add the rest.
+ *
+ * The sister project's ledger has this as "the same mistake as nearest-
+ * neighbour sampling turning a coastline into a 39 km staircase, and it was
+ * the sampler both times". Three times now.
+ */
 export function sampleSubMap(map: SubMap, x: number, y: number, z: number): ParentSample {
-  const c = cellContaining(map.basis, map.cellRadiusRad, x, y, z);
+  const b = map.basis;
+  const lx = x * b.ex + y * b.ey + z * b.ez;
+  const ly = x * b.nx + y * b.ny + z * b.nz;
+  const c = fromPixel(lx, ly, map.cellRadiusRad);
   if (c < 0) {
     // Off the edge of this sub-map. Falling back to the centre is wrong but
     // bounded, and it only happens on the outermost ring where the child map
@@ -212,6 +284,37 @@ export function sampleSubMap(map: SubMap, x: number, y: number, z: number): Pare
     const mid = fromPixel(0, 0, map.cellRadiusRad);
     return { elevationM: map.elevationM[mid], precipMm: map.precipMm[mid], upliftM: map.upliftM[mid] };
   }
+
+  const p0 = toPixel(c, map.cellRadiusRad);
+  // Hex centres are a triangular lattice, so the containing triangle is the
+  // cell and two neighbours adjacent to each other. Six to try and exactly one
+  // contains the point, except on a boundary where two agree and either does.
+  for (let i = 0; i < 6; i++) {
+    const na = subNeighbours[c * 6 + i];
+    const nb = subNeighbours[c * 6 + ((i + 1) % 6)];
+    if (na < 0 || nb < 0) continue;
+    const p1 = toPixel(na, map.cellRadiusRad);
+    const p2 = toPixel(nb, map.cellRadiusRad);
+
+    const det = (p1.y - p2.y) * (p0.x - p2.x) + (p2.x - p1.x) * (p0.y - p2.y);
+    if (det === 0) continue;
+    const w0 = ((p1.y - p2.y) * (lx - p2.x) + (p2.x - p1.x) * (ly - p2.y)) / det;
+    const w1 = ((p2.y - p0.y) * (lx - p2.x) + (p0.x - p2.x) * (ly - p2.y)) / det;
+    const w2 = 1 - w0 - w1;
+    // A small negative tolerance so a point exactly on an edge lands in the
+    // first triangle that claims it rather than in none of them.
+    if (w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9) continue;
+
+    return {
+      elevationM: w0 * map.elevationM[c] + w1 * map.elevationM[na] + w2 * map.elevationM[nb],
+      precipMm: w0 * map.precipMm[c] + w1 * map.precipMm[na] + w2 * map.precipMm[nb],
+      upliftM: w0 * map.upliftM[c] + w1 * map.upliftM[na] + w2 * map.upliftM[nb],
+    };
+  }
+
+  // No complete triangle: the parent's own rim, where the neighbours live in a
+  // map we are not holding. The cell's own value, which is the old behaviour
+  // confined to the one ring where nothing better is available.
   return { elevationM: map.elevationM[c], precipMm: map.precipMm[c], upliftM: map.upliftM[c] };
 }
 
@@ -251,6 +354,10 @@ export function generateSubMap(
   const slope = new Float32Array(SUBCELL_COUNT);
   const drainage = new Float32Array(SUBCELL_COUNT);
   const runoffM = new Float32Array(SUBCELL_COUNT);
+  const rock = new Uint8Array(SUBCELL_COUNT);
+  const erosionMPerYr = new Float32Array(SUBCELL_COUNT);
+  const regolithM = new Float32Array(SUBCELL_COUNT);
+  const stability = new Float32Array(SUBCELL_COUNT);
   const alluvial = new Float32Array(SUBCELL_COUNT);
   const waterlogging = new Float32Array(SUBCELL_COUNT);
   const nppGm2 = new Float32Array(SUBCELL_COUNT);
@@ -260,12 +367,18 @@ export function generateSubMap(
   // ground map inherits the same three hills its region already had. Tie it to
   // the cell size so every layer adds roughness at its own scale.
   const detailFreq = 0.45 / cellRad;
-  // Detail amplitude falls with depth, but more slowly than the wavelength
-  // does: relief scales as wavelength to the Hurst exponent, and real land
-  // measures about 0.7 rather than the 1.0 this used to assume. See
-  // anchors.TOPOGRAPHY_HURST -- at 1.0 the finest layer had a millimetre of
-  // texture on a 41 cm tile.
-  const detailAmp = 420 / dpow(SHRINK, A.TOPOGRAPHY_HURST * (depth - 1));
+  // How much relief to add at this layer's own scale.
+  //
+  // Anchored rather than picked: real landscapes are reported by their local
+  // relief over a ten-kilometre baseline, and relief scales as the baseline to
+  // the Hurst exponent. So one measured relief at one measured baseline fixes
+  // the amplitude at every cell size the ladder has, and the result is a
+  // number that can be checked against a landscape instead of against taste.
+  //
+  // Per cell rather than per map, because how rough ground is depends on where
+  // it is: the mountain end of the range where the plates are still pushing,
+  // the plain end where they are not. `gate` below carries that.
+  const reliefScale = dpow(spacingM / A.LOCAL_RELIEF_BASELINE_M, A.TOPOGRAPHY_HURST);
 
   for (let c = 0; c < SUBCELL_COUNT; c++) {
     const p = toPixel(c, cellRad);
@@ -283,7 +396,12 @@ export function generateSubMap(
     const crest = ridged3(x * detailFreq * 2.3, y * detailFreq * 2.3, z * detailFreq * 2.3, seed ^ 0x2e, 3);
     const gate = smoothstep(300, 2800, parent.upliftM);
 
-    let e = parent.elevationM + rolling * detailAmp + crest * gate * detailAmp * 1.6;
+    // Between the measured ends: a shield plain where nothing is being pushed
+    // up, a high belt where it is.
+    const localRelief = lerp(A.LOCAL_RELIEF_PLAIN_M, A.LOCAL_RELIEF_MOUNTAIN_M, gate);
+    const detailAmp = localRelief * reliefScale;
+
+    let e = parent.elevationM + rolling * detailAmp + crest * gate * detailAmp * 0.8;
     // Do not let detail push a sea tile onto land or the reverse; the coastline
     // belongs to the layer that solved sea level for it.
     if (parent.elevationM < -50) e = Math.min(e, -1);
@@ -375,10 +493,41 @@ export function generateSubMap(
     });
   }
 
+  // --- rock, and what it does to the ground above it -------------------------
+  //
+  // Last, because it reads the catchment (erosion), the gradient (both) and
+  // the biome (root cohesion). The order through this whole function is one
+  // long dependency chain and every reordering of it so far has been a bug.
+  for (let c = 0; c < SUBCELL_COUNT; c++) {
+    const r = rockAt({
+      x: dirs[c * 3], y: dirs[c * 3 + 1], z: dirs[c * 3 + 2],
+      upliftM: upliftM[c],
+      elevationM: elevationM[c],
+      oceanic: elevationM[c] < 0 && upliftM[c] < 200,
+      sinLat: dirs[c * 3 + 1],
+      seed,
+    });
+    rock[c] = r;
+    erosionMPerYr[c] = erosionRateM(r, flow.catchmentM2[c], slope[c]);
+    regolithM[c] = regolithDepthM(r, erosionMPerYr[c]);
+    stability[c] = factorOfSafety({
+      slope: slope[c],
+      soilDepthM: regolithM[c],
+      rock: r as RockId,
+      // Dry, and with the vegetation that is standing. The wet case is what a
+      // storm or a felling asks for, and it asks at the tile rather than here,
+      // because both are things that happen rather than things that are.
+      rootCohesionKPa: rootCohesionKPa(standingCoverOf(biome[c]), 0),
+      saturation: 0,
+    });
+    if (!isFinite(stability[c])) stability[c] = STABILITY_CAP;
+  }
+
   return {
     parent: parentAddress, depth, basis, cellRadiusRad: cellRad, spacingM,
     dirs, elevationM, slope, temperatureC, precipMm, drainage, runoffM, flow,
-    alluvial,
+    alluvial, rock, erosionMPerYr, regolithM, stability,
+    hillslopesResolved: spacingM <= A.HILLSLOPE_LENGTH_M,
     waterlogging, nppGm2, biome, upliftM,
     yieldKgPerHa: null,
   };

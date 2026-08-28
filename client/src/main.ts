@@ -20,10 +20,12 @@ import { SUBCELL_COUNT } from '../../sim/geo/hexgrid.ts';
 import { BIOME_NAMES, BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import { LANDFORM_NAMES } from '../../sim/model/tile.ts';
 import { MINERAL_NAMES } from '../../sim/model/resources.ts';
+import { ROCK_NAMES } from '../../sim/model/rock.ts';
 import { workedCells } from '../../sim/model/settlement.ts';
 import { Mineral } from '../../sim/model/resources.ts';
 import { ironOutputKgPerYear, IRON_LABOUR_SAVING } from '../../sim/model/labour.ts';
 import { GRAIN_PER_PERSON_YEAR } from '../../sim/economy.ts';
+import { NAVIGABLE_M3_PER_S } from '../../sim/derive.ts';
 import { IRON_PER_PERSON_KG_PER_YEAR } from '../../sim/anchors.ts';
 import type { TileDelta } from '../../sim/model/tile.ts';
 import type { ServerMessage, PlayerInfo } from '../../server/protocol.ts';
@@ -542,8 +544,24 @@ function drawInspector(): void {
     ${row('temperature', `${tile.temperatureC.toFixed(1)} C`)}
     ${row('rainfall', `${Math.round(tile.precipMm)} mm/yr`)}
     ${row('aridity', tile.aridity.toFixed(2))}
-    ${row('catchment', tile.drainage > 0.55 ? `river (${tile.drainage.toFixed(2)})` : tile.drainage.toFixed(2))}
+    ${row('river', tile.dischargeM3S >= NAVIGABLE_M3_PER_S
+      ? `${tile.dischargeM3S.toFixed(0)} m3/s, navigable`
+      : tile.dischargeM3S >= 0.5
+        ? `${tile.dischargeM3S.toFixed(1)} m3/s`
+        : 'none')}
+    ${row('catchment', `${(tile.catchmentM2 / 1e6).toFixed(1)} km2`)}
     ${row('fresh water', tile.freshWater.toFixed(2))}
+    </table>
+    <div class="group">GROUND</div><table>
+    ${row('rock', ROCK_NAMES[tile.rock])}
+    ${row('soil over rock', tile.regolithM > 0 ? `${tile.regolithM.toFixed(2)} m` : 'bare rock')}
+    ${row('wearing away', `${(tile.erosionMPerYr * 1e6).toFixed(0)} mm per 1000 yr`)}
+    ${row('slope holds', !tile.hillslopesResolved
+      ? 'not resolved at this scale'
+      : tile.stability >= 50 ? 'nothing to slide'
+      : tile.stability < 1 ? `UNSTABLE (${tile.stability.toFixed(2)})`
+      : tile.stability < 1.3 ? `marginal (${tile.stability.toFixed(2)}) - held by its cover`
+      : `yes (${tile.stability.toFixed(2)})`)}
     </table>
     <div class="group">SOIL</div><table>
     ${row('depth', `${Math.round(tile.soil.depthCm)} cm`)}

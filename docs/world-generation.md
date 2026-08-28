@@ -227,6 +227,104 @@ One exponent across seven orders of magnitude is an approximation and worth
 saying so — different processes shape a mountain range and a ploughed field —
 but a measured approximation beats an unmeasured one.
 
+## The ground itself
+
+Rock was a gap with an ore table sitting over it. Deposits knew about tectonic
+uplift, because ore follows hydrothermal history — but nothing knew what the
+*country rock* was, so a granite massif and a shale basin eroded at the same
+rate, made soil at the same rate, and held a slope equally well.
+
+### Rock is what the plate history left behind
+
+Not an independent roll. The planet generator already computes the history and
+read in the right order it settles the question:
+
+| | |
+|---|---|
+| oceanic crust | basalt, poured out at a ridge |
+| continental, hard convergence | the exhumed core of an orogen — granite, gneiss |
+| continental, moderate convergence | the fold belt on its flanks — sandstone, shale |
+| continental, quiet and low | a basin: carbonate where the sea was warm, clastic where it was not |
+
+Province noise is sampled in 3D world space at a 200 km wavelength, so
+provinces are hundreds of kilometres across and continuous across every map
+boundary without any map consulting its neighbours — the same property that
+makes terrain continuous, for the same reason.
+
+Each rock carries three measured numbers: erodibility, the friction angle of
+the soil it weathers into, and how fast it makes that soil. Together they are
+why the Weald is farmland and the Cairngorms are not.
+
+### Erosion, calibrated at one point
+
+Stream power, `E = K·A^0.5·S`. K is fixed by a single measured denudation rate
+— a temperate hillslope on ordinary sedimentary rock wears down about
+0.05 mm/yr — and everything else is a prediction rather than a fit:
+
+| | modelled | measured |
+|---|---|---|
+| resistant granite massif | 0.079 mm/yr | 0.02–0.2 |
+| active mountain front | 0.19 | 0.1–5 |
+| lowland basin | 0.010 | 0.001–0.05 |
+
+### Soil depth is solved, not capped
+
+Heimsath measured soil production falling exponentially with the depth already
+there — a thin cover holds water against the rock, a thick one insulates it.
+Set production equal to erosion and solve:
+
+    P₀·e^(−z/z₀) = E   →   z = z₀·ln(P₀/E)
+
+Soil depth is then **self-limiting** rather than clamped: strip a hillside and
+it makes soil faster; leave it and production slows toward nothing. And where
+erosion outruns the maximum production rate the answer is negative, which means
+**bare rock** — a result, not an exception. That is why a ridge is stone
+however wet it is, and it is the piece the old model had to assert with a slope
+threshold.
+
+This is a hillslope steady state, and hillslopes are a thirty-metre question.
+Every map carries `hillslopesResolved`, false wherever a cell is wider than a
+hillslope. The fields are still computed — same function, no branch — but
+nothing should believe them above the plot layer. The sister project has the
+failure on record: bare rock came out at 0% of land and mean soil at 3.6 m,
+and the rule was right while the grid could not ask it.
+
+## Roots hold slopes, and losing them is a landslide
+
+The infinite-slope factor of safety, the standard every landslide hazard map on
+Earth is computed with:
+
+    FS = (c_soil + c_roots + (γ·z·cos²θ − u)·tanφ) / (γ·z·sinθ·cosθ)
+
+Every term is one already held: gradient from the field, depth from the soil
+model, friction angle from the rock, pore pressure from how wet it is, root
+cohesion from what is growing (grass 1–5 kPa, shrubs 2–10, forest 5–25).
+
+A 25° shale hillside, saturated:
+
+| cover | FS | |
+|---|---|---|
+| old forest | 2.32 | holds |
+| three years after felling | 1.54 | still holds — the roots are dead and still working |
+| fifteen years after felling | 0.66 | **fails** |
+| the same, dry | 1.16 | stands |
+| bare | 0.57 | fails |
+
+Root strength decays with a measured half-life of a few years, and the measured
+consequence is that **landslide frequency after a clearcut peaks three to
+fifteen years later**, not at the time of the cut. Nobody scripts that. A
+player takes their timber and their field, and some wet season the factor of
+safety crosses one.
+
+Two more things fall out without being written down. Water is the trigger,
+because saturation subtracts from the effective stress the friction term
+multiplies. And undercutting does the same thing from the other side by raising
+the angle — so one rule serves logging, weather, and digging.
+
+There is a free check on the arithmetic: on cohesionless soil the factor of
+safety is `tanφ/tanθ` whatever the depth, so at the friction angle it is
+exactly one. The suite measures 1.001.
+
 ## Productivity
 
 Net primary productivity comes from the **Miami model** (Lieth, 1975), an

@@ -25,6 +25,7 @@ import {
   cellRadiusRad, type SubMap,
 } from './gen/submap.ts';
 import { classify } from './model/biome.ts';
+import type { RockId } from './model/rock.ts';
 import { grainYieldKgPerHa, cropSuitability } from './model/soil.ts';
 import {
   deposits, gameHeadPerKm2, timberTPerHa, freshWater, GRAZEABLE_FRACTION,
@@ -225,6 +226,11 @@ export class World {
       aridity,
       drainage,
       dischargeM3S,
+      rock: map.rock[c] as RockId,
+      regolithM: map.regolithM[c],
+      erosionMPerYr: map.erosionMPerYr[c],
+      stability: map.stability[c],
+      hillslopesResolved: map.hillslopesResolved,
       catchmentM2: map.flow.catchmentM2[c],
       lakeDepthM: map.flow.lakeDepthM[c],
       freshWater: freshWater(drainage, map.precipMm[c], waterlog),

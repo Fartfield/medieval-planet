@@ -185,7 +185,111 @@ work now.
 
 ---
 
-## Rivers stopped at the edge of every map
+## Every layer below the first was a staircase
+
+**Problem.** Found by asking a question nothing had asked before -- how fast
+does this world wear away -- and getting an answer a hundredfold too slow, with
+no bare rock anywhere and not one unstable slope on the planet.
+
+`sampleSubMap` was **nearest-neighbour**. A child map covers one parent cell
+and its rim cells overhang into the parent's neighbours, so the full elevation
+difference between two parent cells appeared as a vertical step inside the
+child -- and every layer rebuilt it from its own parent, forever. Measured on a
+mountain descent: relief was 756 m at the 3 km layer and **still 756 m at the
+41 cm layer**. Three quarters of a kilometre of relief across four metres of
+ground, with slopes reading 90 degrees at four layers running.
+
+`samplePlanet`, one function above it, already interpolated, and **its comment
+says exactly why it had to**: "taking the containing cell's value alone would
+give every sub-map a flat floor with a cliff at each region boundary". The
+globe-to-region step had been fixed and the seven below it never were.
+
+It hid because it produces a plausible *median*. Most of a child's cells sit
+inside one parent cell and are therefore perfectly flat, so the map looks
+smooth until something asks about the maximum.
+
+* ~~Copy samplePlanet's inverse-distance weighting.~~ Fixed a third of it.
+  Shepard weighting has a flat spot at every node -- the gradient is zero
+  exactly at a cell centre -- so the field sits level across each cell and does
+  all its climbing near the boundary. The staircase came back as a ramp:
+  maximum gradient inside a child map was **50 degrees where its parent's own
+  gradient was 8**. Softer, and just as wrong.
+
+* **Barycentric over the triangle of cell centres.** No flat spot and no free
+  parameter, and it reproduces a linear field exactly -- which is the whole
+  requirement, because over one cell of the layer above terrain is close to
+  linear and the detail noise is what is supposed to add the rest.
+
+  Measured: relief 3162 -> 1080 -> 184 -> 23 -> 2.9 -> 0.6 -> 0.1 m down the
+  seven layers, falling at every step.
+
+This is the sister project's finding almost word for word: "the same mistake as
+nearest-neighbour sampling turning a coastline into a 39 km staircase, and it
+was the sampler both times". Three times now.
+
+---
+
+## A bare number cannot be wrong, which is the problem with it
+
+**Problem.** With the staircase gone, **nothing in the world was steeper than
+six degrees**. No slope on Earth, no bare rock, denudation a hundredfold too
+slow, and not a single unstable hillside.
+
+The detail amplitude was `420 / SHRINK^(0.7*(depth-1))` -- a bare 420 m at the
+top divided down. The trouble is not that 420 was wrong. It is that **nothing
+could say whether it was wrong**: there was no measurement it could be held
+against, so it had passed every suite the project had for its whole life.
+
+**Local relief over a ten-kilometre baseline** is how landscapes are actually
+reported, and it is published: a high mountain belt runs 800-1,500 m per 10 km,
+rolling hill country 100-250, a shield plain 10-30. Anchor the two ends to
+that, scale by the Hurst exponent, and modulate by uplift per cell -- and every
+other scale becomes a *prediction* that can be checked:
+
+| span | modelled | real |
+|---|---|---|
+| 2,900 km | 6,557 m | 4,000-8,000 |
+| 300 km | 2,566 | 2,000-3,000 |
+| 350 m | 29.6 | 30-100 |
+| 4.5 m | 1.5 | 0.5-2 |
+
+The world's own implied Hurst exponent, measured across four decades of scale,
+comes back 0.700 -- which is the anchor, recovered from the output.
+
+---
+
+## Shale came out more stable than granite
+
+**Problem.** With the geotechnics wired up, no slope anywhere would fail. A
+bare, saturated, thirty-degree shale hillside returned a factor of safety of
+1.40. Every response was right in *direction* -- forest above bare, wet below
+dry -- and nothing could ever cross one.
+
+Soil cohesion was carrying everything: 10 kPa for shale against a friction term
+of 3.5 kPa. Those are **undrained shear strengths of stiff clay**, which
+describe a different failure. What governs a shallow landslide is the drained,
+and for anything that has moved before, **residual** cohesion -- and residual c'
+in clay is near zero.
+
+Worse, at peak values shale measured *more stable than granite*, because at the
+metre or so a shallow slide involves, cohesion outweighs friction. That inverts
+the best-known ordering in the subject, and the file's own comment three lines
+above the table called shale the classic landslide lithology. **The comment was
+right and the number was wrong.**
+
+At residual values -- shale 1.0 kPa, granite 0.5 -- shale returns 0.57 wet
+where granite returns 0.85, and the felling sequence works: 2.32 under old
+forest, 1.54 three years after, 0.66 at fifteen.
+
+**And one test was wrong rather than the code.** A first version asked a
+30-degree shale slope to stand dry and fail wet. It fails dry too, and
+correctly: tan(24)/tan(30) is 0.77 before any water is involved, so residual
+clay cannot hold 30 degrees without roots. The water trigger is demonstrated at
+25 degrees, where it is what decides.
+
+---
+
+## ## Rivers stopped at the edge of every map
 
 **Problem.** Reported from the screen: "rivers do not connect". Each sub-map
 accumulated flow over its own 91 cells with every cell starting at one unit,

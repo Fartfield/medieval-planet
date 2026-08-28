@@ -259,6 +259,25 @@ export const SOLDIER_WATER_L_PER_DAY = A.MAN_WATER_PER_DAY;
 export const HORSE_WATER_L_PER_DAY = A.HORSE_WATER_PER_DAY;
 
 // ---------------------------------------------------------------------------
+// How fast the ground wears away
+// ---------------------------------------------------------------------------
+
+/**
+ * Stream power's erodibility, solved from the one measured denudation rate.
+ *
+ *     E = K * sqrt(A) * S   ->   K = E / (sqrt(A) * S)
+ *     K = 5.0e-5 / (sqrt(1.0e5) * 0.10) = 1.58e-6
+ *
+ * With m = 0.5 exactly the area term is a square root, so this file's
+ * arithmetic stays inside + - * / and sqrt and keeps its IEEE guarantee.
+ * Per-rock erodibility multiplies this, and is relative rather than absolute
+ * for the same reason: one thing is measured and the rest are ratios to it.
+ */
+export const EROSION_K_REFERENCE =
+  A.DENUDATION_TEMPERATE_M_PER_YR
+  / (Math.sqrt(A.DENUDATION_REFERENCE_CATCHMENT_M2) * A.DENUDATION_REFERENCE_SLOPE);
+
+// ---------------------------------------------------------------------------
 // Rivers
 // ---------------------------------------------------------------------------
 
