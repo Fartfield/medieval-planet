@@ -12,13 +12,14 @@
 // map several times a second.
 
 import * as A from './anchors.ts';
-import { CELL_COUNT, centres, cellAt } from './geo/sphere.ts';
+import { CELL_COUNT, centres, cellAt, neighbours } from './geo/sphere.ts';
 import { SUBCELL_COUNT, subNeighbours } from './geo/hexgrid.ts';
 import {
   type Address, toKey, fromKey, addressSeed, SALT, MAX_DEPTH, GROUND_DEPTH,
   layerName, parent as parentOf,
 } from './geo/address.ts';
 import { generatePlanet, type Planet } from './gen/planet.ts';
+import type { Boundary } from './gen/hydrology.ts';
 import {
   generateSubMap, basisAt, samplePlanet, sampleSubMap, soilAt, aridityAt,
   cellRadiusRad, type SubMap,
@@ -123,21 +124,25 @@ export class World {
     const depth = address.length;
     let basis;
     let sample: (x: number, y: number, z: number) => ReturnType<typeof samplePlanet>;
+    let inflow: Boundary[];
 
     if (depth === 1) {
       const region = address[0];
       if (region < 0 || region >= CELL_COUNT) throw new RangeError(`no region ${region}`);
       basis = basisAt(centres[region * 3], centres[region * 3 + 1], centres[region * 3 + 2]);
       sample = (x, y, z) => samplePlanet(this.planet, x, y, z);
+      inflow = inflowFromPlanet(this.planet, region);
     } else {
       const above = this.subMap(parentOf(address));
       const cell = address[address.length - 1];
       if (cell < 0 || cell >= SUBCELL_COUNT) throw new RangeError(`no cell ${cell}`);
       basis = basisAt(above.dirs[cell * 3], above.dirs[cell * 3 + 1], above.dirs[cell * 3 + 2]);
       sample = (x, y, z) => sampleSubMap(above, x, y, z);
+      inflow = inflowFromSubMap(above, cell);
     }
 
-    const map = generateSubMap(this.seed, address, depth, basis, sample, this.radiusM);
+    const map = generateSubMap(
+      this.seed, address, depth, basis, sample, this.radiusM, inflow);
 
     this.cache.set(key, map);
     if (this.cache.size > this.cacheSize) {
@@ -170,6 +175,7 @@ export class World {
     const biome = map.biome[c];
     const npp = map.nppGm2[c];
     const drainage = map.drainage[c];
+    const dischargeM3S = map.flow.dischargeM3S[c];
     const waterlog = map.waterlogging[c];
 
     // Coastal: any neighbour under water. Only checks within this sub-map,
@@ -218,6 +224,9 @@ export class World {
       precipMm: map.precipMm[c],
       aridity,
       drainage,
+      dischargeM3S,
+      catchmentM2: map.flow.catchmentM2[c],
+      lakeDepthM: map.flow.lakeDepthM[c],
       freshWater: freshWater(drainage, map.precipMm[c], waterlog),
       nppGm2: npp,
       soil,
@@ -587,4 +596,62 @@ function compareAddress(a: Address, b: Address): number {
   const n = Math.min(a.length, b.length);
   for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] - b[i];
   return a.length - b.length;
+}
+
+// ---------------------------------------------------------------------------
+// Water crossing a layer
+// ---------------------------------------------------------------------------
+//
+// A map inherits its water from its parent and never from its neighbours. Two
+// sources add up to everything crossing its edge:
+//
+//   1. Parent neighbours that drain into this cell. The parent routed its own
+//      water and knows which of its neighbours point here and how much each
+//      carries.
+//
+//   2. What the parent itself was handed from outside. If water entered the
+//      parent map at this very cell, it has to keep going -- and it has to
+//      keep the direction it arrived from, because this map has to find its
+//      own edge with it. Dropping this term is the subtle way to lose a
+//      trunk river: it survives one layer of descent and vanishes on the next.
+//
+// The two together conserve catchment exactly. What leaves a child through its
+// rim equals what its parent said crossed that cell, and verify_hydrology
+// checks the equality rather than trusting it.
+
+function inflowFromPlanet(planet: Planet, region: number): Boundary[] {
+  const out: Boundary[] = [];
+  for (let d = 0; d < 6; d++) {
+    const n = neighbours[region * 6 + d];
+    if (n < 0) continue;
+    if (planet.flow.downstream[n] !== region) continue;
+    out.push({
+      cell: -1,
+      dir: [centres[n * 3], centres[n * 3 + 1], centres[n * 3 + 2]],
+      areaM2: planet.flow.catchmentM2[n],
+      dischargeM3S: planet.flow.dischargeM3S[n],
+    });
+  }
+  return out;
+}
+
+function inflowFromSubMap(above: SubMap, cell: number): Boundary[] {
+  const out: Boundary[] = [];
+  for (let d = 0; d < 6; d++) {
+    const n = subNeighbours[cell * 6 + d];
+    if (n < 0) continue;
+    if (above.flow.downstream[n] !== cell) continue;
+    out.push({
+      cell: -1,
+      dir: [above.dirs[n * 3], above.dirs[n * 3 + 1], above.dirs[n * 3 + 2]],
+      areaM2: above.flow.catchmentM2[n],
+      dischargeM3S: above.flow.dischargeM3S[n],
+    });
+  }
+  // And whatever crossed into the parent map at this cell keeps going.
+  for (const b of above.flow.injected) {
+    if (b.cell !== cell) continue;
+    out.push({ ...b, cell: -1 });
+  }
+  return out;
 }

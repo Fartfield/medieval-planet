@@ -113,6 +113,120 @@ third of Earth's desert area. Aridity gets it right because it asks how much
 water a place has *relative to how fast it loses it* — and 200 mm is a desert
 at 25 °C and a wetland at 0 °C.
 
+## Water
+
+Rivers used to stop at the edge of a sub-map. Each map computed flow
+accumulation over its own 91 cells, every cell starting at one unit, and
+normalised the result against its own biggest channel. Three things were wrong
+with that and only the first was visible:
+
+* A river ran to the rim and ended. The map next door started its own rivers
+  from nothing, so nothing lined up across a boundary.
+* A brook in a flat map painted as boldly as a trunk river in a mountainous
+  one, because both were the largest thing in their own map.
+* Flow died in any hollow, so the river below a basin lost everything above it.
+
+### Cascade, do not consult
+
+A map cannot ask its neighbours what they are sending it. They would have to
+ask theirs, and the regress crosses the planet. It asks its **parent**, which
+routed water at its own resolution and is generated on the way down anyway.
+The parent knows which of its neighbours drain into this cell and how much each
+carries. That is the entire boundary condition, and it is already in hand.
+
+Water enters at **the lowest cell of the edge it crosses**. Nothing coordinates
+the two maps on that point; they agree because elevation is a continuous
+function of position on the sphere and both are sampling the same function
+along the same line. The river leaves one map through its valley and enters the
+next through the same valley.
+
+### Absolute, so a river is the same river everywhere
+
+Catchment is carried in square metres and discharge in cubic metres a second,
+all the way down. That gives a conservation law to test against rather than a
+picture to squint at: what leaves a map through its rim equals what entered it
+plus what fell on it. It holds to six figures at every layer.
+
+Following one trunk river down the ladder:
+
+| Layer | Cell | Entering | Leaving |
+|---|---|---|---|
+| 1 march | 265 km | — | 1,108 m³/s |
+| 2 shire | 27.8 km | 385 | 743 |
+| 3 hundred | 2.9 km | 735 | 692 |
+| 4 parish | 306 m | 692 | 691 |
+| 5 plot | 32 m | 691 | 691 |
+
+The same river, at every scale, arriving at the tile a person stands on.
+
+### Runoff, not area
+
+Discharge accumulates **runoff**, by Turc-Pike:
+
+    AET = P / sqrt(1 + (P/PET)²),   runoff = P − AET
+
+so a channel crossing ground that yields nothing gains nothing. A desert river
+shrinks as it goes, which is the Nile below its last tributary, and no rule
+says so — it falls out of accumulating the right quantity.
+
+### Lakes are a by-product
+
+Depressions are filled by priority flood before routing, because water does not
+stop in a hollow: it fills it and goes over the lip. The level each cell fills
+to *is* the level a lake would stand at, so lakes are what the fill leaves
+behind rather than a feature anyone placed.
+
+### What this does not claim
+
+Flow accumulation on a 2,922 km cell is not a river. It is a divide structure —
+which way a continent tilts — and that is all a sub-map needs from it. The
+catchment number is right at every layer; the channel's *position* only starts
+meaning something once cells are narrower than a valley.
+
+## Rivers decide where the soil is
+
+Navigability is solved rather than chosen. Leopold and Maddock measured twenty
+river systems in 1953 and found width, depth and velocity each scale as a fixed
+power of discharge, with the three exponents summing to one because their
+product is the discharge itself. Inverting the depth law at a laden barge's
+draught:
+
+    d = 0.27·Q^0.40  →  Q = (0.9/0.27)^2.5 = 20.3 m³/s
+
+The Thames at Teddington runs 66 m³/s and carried barges for a thousand years.
+The Wey at 5 m³/s needed locks cut before it would. Twenty is the line between
+them and nobody put it there.
+
+The width half of the same relations gives the floodplain. Leopold and Wolman
+found meander geometry locked to channel width — the belt a channel sweeps, and
+therefore the floodplain it builds, is fifteen widths. Compare that with the
+tile's own width and the answer is **the fraction of the tile that is valley
+floor**: one on a plot beside a great river, a few per cent on a parish crossed
+by a brook.
+
+That fraction is what the soil model reads. It used to read a normalised
+drainage rank instead, and the difference is the subject of a long entry in
+`fix-attempts.md`: the rank reached 1.0 somewhere in every map, *including maps
+with no river in them*, so every landscape's median tile was being treated as
+half a floodplain. Absolute discharge broke that accidental calibration by
+being honest about how little water a hillside carries.
+
+## Relief follows a measured exponent
+
+Terrain is self-affine, not self-similar: halve the horizontal scale and the
+relief falls by rather less than half. The Hurst exponent for real land
+surfaces measures 0.5 to 0.8, and detail amplitude had been falling as the full
+first power of the wavelength — an exponent of 1.0, smoother than any real
+landscape.
+
+Applied seven times over, that left the finest layer with **one millimetre of
+texture on a 41 cm tile**, and the plot a person stands on with five
+centimetres across thirty-seven metres. At 0.7 they are 3.2 cm and 76 cm.
+
+One exponent across seven orders of magnitude is an approximation and worth
+saying so — different processes shape a mountain range and a ploughed field —
+but a measured approximation beats an unmeasured one.
+
 ## Productivity
 
 Net primary productivity comes from the **Miami model** (Lieth, 1975), an

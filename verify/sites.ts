@@ -28,31 +28,32 @@ export function bestRegion(w: World, biome?: BiomeId): number {
 }
 
 /**
- * Descend from a region to a ground-layer address, following productivity.
+ * Descend from a region to a ground-layer address, following grain yield.
  *
- * At the last step it switches from productivity to grain yield, because that
- * is what a settlement actually cares about and the two come apart -- a wet
- * hillside out-produces a dry field and will not feed anybody.
+ * It used to follow net primary productivity and switch to yield only on the
+ * last step, and its own comment said why that was wrong -- a wet hillside
+ * out-produces a dry field and will not feed anybody -- without applying the
+ * argument to the earlier steps.
+ *
+ * It survived because it was being carried. Drainage was a rank within each
+ * map, so wherever the productivity descent landed, the tile arrived holding a
+ * mid-rank alluvial bonus and yielded well enough. When drainage became an
+ * absolute discharge and the bonus went to real floodplains only, the descent
+ * put its reference settlement on a wet hillside and the site yield fell 72%
+ * while the best tile available fell 39%. The gap between those two numbers is
+ * the whole finding: the world got a third poorer and the chooser got worse.
  */
 export function groundSiteIn(w: World, region: number): number[] {
   let address: number[] = [region];
 
   while (address.length <= GROUND_DEPTH) {
     const map = w.subMap(address);
-    const last = address.length === GROUND_DEPTH;
     let pick = -1;
 
-    if (last) {
-      const ys = yieldsFor(map);
-      for (let c = 0; c < SUBCELL_COUNT; c++) {
-        if (map.elevationM[c] < 0) continue;
-        if (pick < 0 || ys[c] > ys[pick]) pick = c;
-      }
-    } else {
-      for (let c = 0; c < SUBCELL_COUNT; c++) {
-        if (map.elevationM[c] < 0) continue;
-        if (pick < 0 || map.nppGm2[c] > map.nppGm2[pick]) pick = c;
-      }
+    const ys = yieldsFor(map);
+    for (let c = 0; c < SUBCELL_COUNT; c++) {
+      if (map.elevationM[c] < 0) continue;
+      if (pick < 0 || ys[c] > ys[pick]) pick = c;
     }
     // Every cell under water: take the highest and carry on, so the descent
     // always terminates with a real address rather than throwing.

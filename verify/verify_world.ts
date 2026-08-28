@@ -33,7 +33,7 @@ suite('soil', () => {
   // tundra at 24 degrees, which is how the first version of this test managed
   // to report a leaching fraction of 1.00 on permanently frozen ground.
   const at = (t: number, p: number, sinLat: number, biome: number) =>
-    deriveSoil({ temperatureC: t, precipMm: p, sinLat, slope: 0.01, drainage: 0.2, biome });
+    deriveSoil({ temperatureC: t, precipMm: p, sinLat, slope: 0.01, alluvial: 0.2, biome });
 
   const grassland = at(9, 480, 0.65, Biome.TemperateGrassland);
   const savanna = at(24, 800, 0.20, Biome.Savanna);
@@ -84,8 +84,8 @@ suite('soil', () => {
     biotemperature(26, 0.0), 26, 0.001);
 
   // Slope must strip soil off a mountain however good the climate is.
-  const flat = deriveSoil({ temperatureC: 11, precipMm: 900, sinLat: 0.7, slope: 0.01, drainage: 0.2, biome: Biome.TemperateForest });
-  const steep = deriveSoil({ temperatureC: 11, precipMm: 900, sinLat: 0.7, slope: 0.45, drainage: 0.2, biome: Biome.TemperateForest });
+  const flat = deriveSoil({ temperatureC: 11, precipMm: 900, sinLat: 0.7, slope: 0.01, alluvial: 0.2, biome: Biome.TemperateForest });
+  const steep = deriveSoil({ temperatureC: 11, precipMm: 900, sinLat: 0.7, slope: 0.45, alluvial: 0.2, biome: Biome.TemperateForest });
   assert('a steep slope holds far less soil', steep.depthCm < flat.depthCm * 0.4);
 });
 

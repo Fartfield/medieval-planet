@@ -91,8 +91,19 @@ export interface GroundTile {
   temperatureC: number;
   precipMm: number;
   aridity: number;
-  /** Upstream catchment, 0..1. Above about 0.55 there is a river on this tile. */
+  /**
+   * Discharge on the fixed 0..1 scale. Comparable between any two tiles in the
+   * world, which it was not while each map normalised against its own biggest
+   * channel. Good for drawing and for asking how near a valley floor is; for
+   * anything that decides something, use the real numbers below.
+   */
   drainage: number;
+  /** Mean discharge, cubic metres a second. */
+  dischargeM3S: number;
+  /** Upstream catchment, square metres. */
+  catchmentM2: number;
+  /** Standing water on this tile, metres. A lake, if it is more than a puddle. */
+  lakeDepthM: number;
   freshWater: number;
 
   /** Net primary productivity, g/m2/yr. Most of the economy hangs off this. */

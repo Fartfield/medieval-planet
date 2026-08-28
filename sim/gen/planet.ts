@@ -17,10 +17,13 @@
 // you generate rainfall before relief you cannot express that.
 
 import * as A from '../anchors.ts';
+import { routeWater, runoffM as runoffDepthM, drainageOf, type Flow } from './hydrology.ts';
 import { CELL_COUNT, centres, neighbours, neighbourCount } from '../geo/sphere.ts';
 import { fbm3, ridged3, hash3, unit } from './noise.ts';
 import { dexp, clamp, smoothstep } from './mathx.ts';
-import { Biome, classify, miamiNPP, type BiomeId } from '../model/biome.ts';
+import {
+  Biome, classify, miamiNPP, potentialEvapotranspiration, type BiomeId,
+} from '../model/biome.ts';
 
 export interface Planet {
   seed: number;
@@ -39,6 +42,20 @@ export interface Planet {
   biome: Uint8Array;
   /** Steps to the nearest ocean cell. Zero for ocean itself. */
   oceanDistance: Int16Array;
+
+  /** Depth of water leaving each cell in a year, metres. */
+  runoffM: Float32Array;
+  /**
+   * Where the water goes at continental scale.
+   *
+   * At 2,922 km a cell this is not a river and is not claimed to be one. It is
+   * the divide structure -- which way each part of a continent tilts -- and
+   * that is exactly and only what a sub-map needs from it to know how much
+   * water crosses its own edge. See gen/hydrology.ts.
+   */
+  flow: Flow;
+  /** Discharge on the 0..1 scale, for drawing and for the soil model. */
+  drainage: Float32Array;
 }
 
 const PLATES = A.TECTONIC_PLATES;
@@ -117,9 +134,36 @@ export function generatePlanet(
     });
   }
 
+  // --- water ---------------------------------------------------------------
+  // The sphere is closed, so there is no rim and no inflow: the only way out
+  // is the sea. Everything else drains to it, which is what makes this the
+  // boundary condition for every map below rather than a thing needing one.
+  const runoffM = new Float32Array(CELL_COUNT);
+  const isOutlet = new Uint8Array(CELL_COUNT);
+  for (let c = 0; c < CELL_COUNT; c++) {
+    const sinLat = centres[c * 3 + 1];
+    runoffM[c] = elevationM[c] < 0
+      ? 0
+      : runoffDepthM(precipMm[c], potentialEvapotranspiration(temperatureC[c], sinLat));
+    isOutlet[c] = elevationM[c] < 0 ? 1 : 0;
+  }
+  const flow = routeWater({
+    count: CELL_COUNT,
+    neighbours,
+    degree: 6,
+    elevationM,
+    cellAreaM2: (4 * Math.PI * radiusM * radiusM) / CELL_COUNT,
+    runoffM,
+    isOutlet,
+    inflow: [],
+  });
+  const drainage = new Float32Array(CELL_COUNT);
+  for (let c = 0; c < CELL_COUNT; c++) drainage[c] = drainageOf(flow.dischargeM3S[c]);
+
   return {
     seed, radiusM, plate, plateOceanic, plateDrift,
     elevationM, temperatureC, precipMm, nppGm2, biome, oceanDistance,
+    runoffM, flow, drainage,
   };
 }
 

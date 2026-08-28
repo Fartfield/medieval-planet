@@ -185,7 +185,134 @@ work now.
 
 ---
 
-## Four wrong answers to where a daughter village goes
+## Rivers stopped at the edge of every map
+
+**Problem.** Reported from the screen: "rivers do not connect". Each sub-map
+accumulated flow over its own 91 cells with every cell starting at one unit,
+and normalised against its own maximum.
+
+* ~~Match the channels up at the boundary by having each map look at its
+  neighbours.~~ Cannot be done. The neighbour would have to look at *its*
+  neighbours to know what it is passing on, and the regress crosses the planet.
+  This is the same wall `cellsWithin` hit, and it has the same answer:
+  **descend, do not walk**.
+
+* **Cascade from the parent.** The parent routed water at its own resolution
+  and is generated on the way down anyway. It knows which of its neighbours
+  drain into this cell and how much each brings. Water enters the child at the
+  lowest cell of the edge it crosses, and the two maps agree on that point
+  without consulting each other because elevation is continuous and both sample
+  the same function along the same line.
+
+  Measured: one trunk river carried 743 → 735 → 692 → 691 m³/s across four
+  layers of descent, and catchment conserved to six figures at every one.
+
+**Two bugs inside the fix, both found by measurement rather than by looking.**
+
+* **Injected water left the map in the same step it entered.** A rim cell is an
+  outlet, so the inflow was handed to a cell whose downstream was already -1.
+  The trunk river lost two thirds of its discharge on every descent — 1108 →
+  385 → and so on — *while the catchment area stayed exactly right*, because
+  area was conserved whether or not the water crossed anything. Conservation of
+  one quantity is not evidence about another. A rim cell that water arrives at
+  is no longer an outlet; below sea level the flag stands, because water
+  arriving at the sea really has stopped.
+
+* **The old accumulator let flow die in hollows.** Replaced with a priority
+  flood, which fills every depression to the level of its lowest escape before
+  routing. Lakes fall out of it as the cells the fill had to raise.
+
+---
+
+## Every hillside in the world was half a floodplain
+
+**Problem.** The moment drainage became an absolute discharge, yields fell from
+a median of 330-450 kg/ha to **153 everywhere**, and three suites went red.
+
+The old `drainage` was a rank within its own map: log flow over the map's own
+maximum, so **it reached 1.0 somewhere in every map including maps with no
+river in them**, and the median tile sat near 0.5. The soil model read that
+number twice — once as an alluvial multiplier on topsoil depth, once on
+fertility — so every landscape's ordinary hillside was being handed half a
+floodplain's worth of enrichment. The medieval yield calibration had been
+satisfied by it, which is why nobody had noticed.
+
+* ~~Restore the ranking, or scale the new number to reproduce the old
+  distribution.~~ That is re-fitting a term to a bug. The rank does not mean
+  anything: it says where a tile sits in an arbitrary 91-cell window.
+
+* ~~Use the topographic wetness index, ln(a/tanβ).~~ It is the standard index
+  and it is scale-dependent through `a` — the same hillside measures 8.6 at a
+  306 m cell and 6.3 at a 32 m one. On a ladder that changes resolution by
+  √91 per layer that is a recalibration at every layer.
+
+* **Ask how much of the tile is floodplain.** Meander belt width is fifteen
+  channel widths (Leopold and Wolman), channel width is 2.7·Q^0.5 (Leopold and
+  Maddock), so the floodplain a river builds is fixed by its discharge. Divide
+  by the tile's own width and the answer is a fraction that means the same
+  thing at every layer, and it needs exactly the absolute discharge the
+  cascade had just made available. **It could not have been asked before.**
+
+  Measured: a 1 m³/s brook floods 13% of a 306 m parish tile and all of a 32 m
+  plot. The Amazon floods both. A hillside floods neither.
+
+**Then the soil model measured correctly against real soils** — Ukrainian
+chernozem 579 kg/ha held, the Beauce 667, English midlands 253, Amazon
+rainforest 84 — and two of the three red suites turned out to be red for a
+different reason (below).
+
+---
+
+## The test helper was choosing wet hillsides
+
+**Problem.** After the floodplain fix the reference settlement's site yield fell
+**72%** while the best tile in the world fell only 26%. Two different numbers
+means two different problems, and the gap was the finding: the world got a
+quarter poorer, and the chooser got much worse.
+
+`groundSiteIn` descended by net primary productivity at every layer and
+switched to grain yield only on the last step. **Its own comment said why that
+was wrong** — "a wet hillside out-produces a dry field and will not feed
+anybody" — without applying the argument to the earlier steps. It survived
+because the drainage rank was carrying it: wherever the productivity descent
+landed, the tile arrived holding a mid-rank alluvial bonus and yielded well
+enough.
+
+Following yield at every layer put the reference settlement back on real
+farmland: site yield 554 → 571, and the catchment's carrying capacity 566 →
+1,130.
+
+**A knock-on worth recording, because it looks like a regression and is not.**
+A forty-year run now founds **one** daughter town where it founded eight. The
+trigger is intact — the settlement is labour-limited to about 200 people and
+land-limited from about 500 — but its capacity doubled, so the pressure that
+makes it spread now arrives after year 40 instead of before it. Eight towns was
+what a village on a mediocre hillside did.
+
+---
+
+## The layer a person stands on had one millimetre of relief
+
+**Problem.** Found while chasing a suite that said a ground map had no relief.
+Detail amplitude fell as `SHRINK^(depth-1)` — amplitude proportional to the
+full first power of the wavelength.
+
+Terrain is self-affine, not self-similar. The measured Hurst exponent for land
+surfaces is 0.5 to 0.8, not 1.0, and the error compounds because the ladder
+applies it seven times:
+
+| Layer | Cell | At H = 1.0 | At H = 0.7 |
+|---|---|---|---|
+| 5 plot | 37 m | 5 cm | 76 cm |
+| 7 pace | 41 cm | **1 mm** | 3.2 cm |
+
+The suite that caught it was itself half-stale — the new site descent had
+landed it on a floodplain, which is genuinely flat — but the underlying number
+was wrong on every tile in the world, not just that one.
+
+---
+
+## ## Four wrong answers to where a daughter village goes
 
 **Problem.** Settlements had to spread when their land filled, and every
 version of the spacing rule broke something.

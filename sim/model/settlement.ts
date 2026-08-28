@@ -38,6 +38,7 @@ import { clamp } from '../gen/mathx.ts';
 import { yieldsFor, type SubMap } from '../gen/submap.ts';
 import { hectareDays, threshDays, HELD_HECTARE_DAYS_IRON } from './labour.ts';
 import { WOODY_FRACTION } from './resources.ts';
+import { NAVIGABLE_M3_PER_S } from '../derive.ts';
 
 import {
   Transport, TRANSPORT_NAMES, modeFor, reachFactor, labourEfficiency, delivered,
@@ -167,7 +168,7 @@ export function buildCatchment(
   const ox = origin.dirs[originCell * 3];
   const oy = origin.dirs[originCell * 3 + 1];
   const oz = origin.dirs[originCell * 3 + 2];
-  const originDrainage = origin.drainage[originCell];
+  const originDischarge = origin.flow.dischargeM3S[originCell];
   const areaHa = cellAreaM2 / 10000;
   const radiusRad = radiusM / A.EARTH_RADIUS_M;
 
@@ -203,7 +204,8 @@ export function buildCatchment(
       const yieldKgPerHa = yields[c];
       if (yieldKgPerHa <= 0) continue;
 
-      const mode = modeFor(originDrainage, map.drainage[c], A.NAVIGABLE_DRAINAGE);
+      const mode = modeFor(
+        originDischarge, map.flow.dischargeM3S[c], NAVIGABLE_M3_PER_S);
       const survives = delivered(mode, km);
 
       const deliveredKgPerYear = yieldKgPerHa * areaHa * survives;

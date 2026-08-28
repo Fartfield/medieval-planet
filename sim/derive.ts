@@ -259,6 +259,48 @@ export const SOLDIER_WATER_L_PER_DAY = A.MAN_WATER_PER_DAY;
 export const HORSE_WATER_L_PER_DAY = A.HORSE_WATER_PER_DAY;
 
 // ---------------------------------------------------------------------------
+// Rivers
+// ---------------------------------------------------------------------------
+
+/**
+ * The discharge a river needs before a barge can work it.
+ *
+ * Solved, not chosen. Leopold and Maddock's depth law inverted at a laden
+ * barge's draught:
+ *
+ *     d = 0.27 * Q^0.40   ->   Q = (d / 0.27)^2.5
+ *     Q = (0.9 / 0.27)^2.5 = 20.3 m3/s
+ *
+ * Which lands where the history does. The Thames at Teddington runs 66 m3/s
+ * and carried barges to London for a thousand years; the Wey at 5 m3/s needed
+ * locks and dredging before it would. Twenty is the line between them, and
+ * nobody put it there.
+ *
+ * The exponent is exact rather than approximate: 1/0.40 is 2.5, so this is x
+ * squared times the square root of x -- multiplication and sqrt only, which is
+ * what keeps this file's IEEE guarantee (see the header).
+ */
+const BARGE_DEPTH_RATIO = A.BARGE_LADEN_DRAFT_M / A.HYDRAULIC_DEPTH_COEFF;
+export const NAVIGABLE_M3_PER_S =
+  BARGE_DEPTH_RATIO * BARGE_DEPTH_RATIO * Math.sqrt(BARGE_DEPTH_RATIO);
+
+// ---------------------------------------------------------------------------
+// FREE PARAMETER 5: the bottom of the river scale
+// ---------------------------------------------------------------------------
+/**
+ * Discharge spans five orders of magnitude and has to be shown on a log scale,
+ * which needs a floor. One cubic metre a second is where we stop caring: a
+ * channel below it is a ditch you step over, and no measurement says where
+ * "worth drawing" begins. The top of the scale is not free -- it is the
+ * Amazon, and a world that produced a bigger river would be lying.
+ *
+ * Display and soil-model convenience only. Nothing decides anything from it.
+ * Navigability is decided from NAVIGABLE_M3_PER_S above in real units, and the
+ * soil model reads it only to ask how near a valley floor is.
+ */
+export const STREAM_M3_PER_S = 1.0;
+
+// ---------------------------------------------------------------------------
 // FREE PARAMETER 3: formation spacing
 // ---------------------------------------------------------------------------
 /**

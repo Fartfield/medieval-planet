@@ -264,13 +264,21 @@ suite('a settlement over time', () => {
   // two earlier versions of this test failed against entirely correct
   // behaviour for that reason. What must be true at every point is that
   // feeding more people off the same land gets harder.
-  const early = w.harvestFor(addr, 20).ration;
-  const late = w.harvestFor(addr, Math.max(40, Math.round(track[4]))).ration;
-  measure('ration at 20 people', early);
-  measure('ration at the current size', late);
-  assert('the same land feeds a larger settlement less well', late < early);
+  //
+  // Measured against the land's own capacity rather than at 20 and 40 people.
+  // Those were absolute numbers that only meant anything for the site the test
+  // used to land on: once the reference settlement moved to real farmland with
+  // room for eleven hundred, both populations sat so far inside it that the
+  // ration was at its cap in both, and a true claim measured 0 -- not because
+  // it had stopped being true but because it was being asked somewhere it
+  // could not show.
   const final = track[track.length - 1];
   const capacity = w.harvestFor(addr, final).potentialPopulation;
+  const early = w.harvestFor(addr, Math.max(5, capacity * 0.1)).ration;
+  const late = w.harvestFor(addr, Math.max(10, capacity * 0.9)).ration;
+  measure('ration at a tenth of capacity', early);
+  measure('ration at nine tenths of capacity', late);
+  assert('the same land feeds a larger settlement less well', late < early);
   measure('population after 50 years', final);
   measure('carrying capacity of the land', capacity);
   measure('fraction of capacity reached', final / capacity);

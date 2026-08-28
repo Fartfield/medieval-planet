@@ -35,6 +35,7 @@ import { clamp } from './gen/mathx.ts';
 import { Mineral } from './model/resources.ts';
 import { ironOutputKgPerYear, ironLimit, hectareDays } from './model/labour.ts';
 import { clear, stockTarget, spoil, type Trader, type Flow } from './model/trade.ts';
+import { navigable } from './gen/hydrology.ts';
 import { idleShare } from './expansion.ts';
 import type { Harvest, Competitor } from './model/settlement.ts';
 import type { World } from './world.ts';
@@ -333,7 +334,7 @@ function tradeGood(
       address: report.address,
       dir: tile.dir,
       // A boat can reach it if it stands on a navigable channel or a coast.
-      navigable: tile.drainage >= A.NAVIGABLE_DRAINAGE || tile.fauna.fish > 0,
+      navigable: navigable(tile.dischargeM3S) || tile.fauna.fish > 0,
       offered: Math.max(0, stock - target),
       wanted: Math.max(0, target - stock),
     });

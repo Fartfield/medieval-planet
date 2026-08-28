@@ -23,13 +23,19 @@
 
 import * as A from '../anchors.ts';
 import {
-  SUBCELL_COUNT, subNeighbours, toPixel, fromPixel, ringOf,
+  SUBCELL_COUNT, RADIUS, subNeighbours, toPixel, fromPixel, ringOf,
 } from '../geo/hexgrid.ts';
 import { CELL_COUNT, centres, neighbours, neighbourCount, cellAt } from '../geo/sphere.ts';
 import { addressSeed, SALT, type Address } from '../geo/address.ts';
 import { fbm3, ridged3 } from './noise.ts';
-import { clamp, smoothstep, dlog } from './mathx.ts';
-import { classify, miamiNPP, aridityIndex, type BiomeId } from '../model/biome.ts';
+import { clamp, smoothstep, dpow } from './mathx.ts';
+import {
+  routeWater, runoffM as runoffDepthM, drainageOf, alluvialFraction,
+  type Boundary, type Flow,
+} from './hydrology.ts';
+import {
+  classify, miamiNPP, aridityIndex, potentialEvapotranspiration, type BiomeId,
+} from '../model/biome.ts';
 import {
   deriveSoil, waterlogging as calcWaterlogging, grainYieldKgPerHa, cropSuitability,
   type Soil,
@@ -59,8 +65,19 @@ export interface SubMap {
   slope: Float32Array;
   temperatureC: Float32Array;
   precipMm: Float32Array;
-  /** Normalised upstream catchment, 0..1. Above ~0.4 this is a river. */
+  /**
+   * Discharge on the fixed 0..1 scale of hydrology.drainageOf.
+   *
+   * Comparable between maps and between layers now, which it was not when each
+   * map normalised against its own biggest channel.
+   */
   drainage: Float32Array;
+  /** Depth of water leaving each cell in a year, metres. */
+  runoffM: Float32Array;
+  /** Fraction of each cell that is river floodplain, 0..1. */
+  alluvial: Float32Array;
+  /** Catchment, discharge, lakes and flow directions. See gen/hydrology.ts. */
+  flow: Flow;
   waterlogging: Float32Array;
   nppGm2: Float32Array;
   biome: Uint8Array;
@@ -215,6 +232,7 @@ export function generateSubMap(
   basis: Basis,
   sample: (x: number, y: number, z: number) => ParentSample,
   radiusM = A.EARTH_RADIUS_M,
+  inflow: readonly Boundary[] = [],
 ): SubMap {
   const cellRad = cellRadiusRad(depth);
   const spacingM = Math.sqrt(3) * cellRad * radiusM;
@@ -232,6 +250,8 @@ export function generateSubMap(
   const temperatureC = new Float32Array(SUBCELL_COUNT);
   const slope = new Float32Array(SUBCELL_COUNT);
   const drainage = new Float32Array(SUBCELL_COUNT);
+  const runoffM = new Float32Array(SUBCELL_COUNT);
+  const alluvial = new Float32Array(SUBCELL_COUNT);
   const waterlogging = new Float32Array(SUBCELL_COUNT);
   const nppGm2 = new Float32Array(SUBCELL_COUNT);
   const biome = new Uint8Array(SUBCELL_COUNT);
@@ -240,10 +260,12 @@ export function generateSubMap(
   // ground map inherits the same three hills its region already had. Tie it to
   // the cell size so every layer adds roughness at its own scale.
   const detailFreq = 0.45 / cellRad;
-  // Detail amplitude falls with depth: a region's relief is hundreds of metres,
-  // a ground tile's is a few. Halving per layer matches the way real terrain
-  // loses amplitude faster than it loses wavelength.
-  const detailAmp = 420 / SHRINK ** (depth - 1);
+  // Detail amplitude falls with depth, but more slowly than the wavelength
+  // does: relief scales as wavelength to the Hurst exponent, and real land
+  // measures about 0.7 rather than the 1.0 this used to assume. See
+  // anchors.TOPOGRAPHY_HURST -- at 1.0 the finest layer had a millimetre of
+  // texture on a 41 cm tile.
+  const detailAmp = 420 / dpow(SHRINK, A.TOPOGRAPHY_HURST * (depth - 1));
 
   for (let c = 0; c < SUBCELL_COUNT; c++) {
     const p = toPixel(c, cellRad);
@@ -279,9 +301,11 @@ export function generateSubMap(
     slope[c] = worst;
   }
 
-  computeDrainage(elevationM, drainage);
-
-  // --- climate and everything downstream of it -------------------------------
+  // --- climate ---------------------------------------------------------------
+  // Split from the biome pass below because the water has to run between them:
+  // runoff needs temperature and rainfall, and the biome needs the drainage the
+  // water produces. Having both in one loop is what forced the old drainage
+  // model to work from elevation alone.
   for (let c = 0; c < SUBCELL_COUNT; c++) {
     const sinLat = dirs[c * 3 + 1];
     const u = sinLat * sinLat;
@@ -297,6 +321,39 @@ export function generateSubMap(
       : clamp(1 + rise / A.RAIN_SHADOW_M, 0.35, 1);
     precipMm[c] = Math.max(0, parentPrecip[c] * local);
 
+    runoffM[c] = elevationM[c] < 0
+      ? 0
+      : runoffDepthM(precipMm[c], potentialEvapotranspiration(temperatureC[c], sinLat));
+  }
+
+  // --- water, with what the layer above is sending us ------------------------
+  const resolved = resolveInflow(inflow, basis, dirs, elevationM);
+  const isOutlet = new Uint8Array(SUBCELL_COUNT);
+  for (let c = 0; c < SUBCELL_COUNT; c++) {
+    isOutlet[c] = (ringOf(c) === RADIUS || elevationM[c] < 0) ? 1 : 0;
+  }
+  const flow = routeWater({
+    count: SUBCELL_COUNT,
+    neighbours: subNeighbours,
+    degree: 6,
+    elevationM,
+    // A hexagon of circumradius r has area 3*sqrt(3)/2 * r^2 and a spacing of
+    // sqrt(3)*r, so this is sqrt(3)/2 * spacing^2. Ninety-one of them come to
+    // exactly the parent cell's area, which is what makes the catchment totals
+    // reconcile across a layer rather than merely look plausible.
+    cellAreaM2: (Math.sqrt(3) / 2) * spacingM * spacingM,
+    runoffM,
+    isOutlet,
+    inflow: resolved,
+  });
+  for (let c = 0; c < SUBCELL_COUNT; c++) {
+    drainage[c] = drainageOf(flow.dischargeM3S[c]);
+    alluvial[c] = alluvialFraction(flow.dischargeM3S[c], spacingM);
+  }
+
+  // --- everything that reads the water ---------------------------------------
+  for (let c = 0; c < SUBCELL_COUNT; c++) {
+    const sinLat = dirs[c * 3 + 1];
     // Ordering: waterlogging is needed to classify the biome, and the biome is
     // needed to derive the soil. Waterlogging itself does not read the biome,
     // so it can be computed first with a placeholder.
@@ -305,7 +362,7 @@ export function generateSubMap(
       precipMm: precipMm[c],
       sinLat,
       slope: slope[c],
-      drainage: drainage[c],
+      alluvial: alluvial[c],
       biome: 0,
     });
     nppGm2[c] = elevationM[c] < 0 ? 0 : miamiNPP(temperatureC[c], precipMm[c]);
@@ -320,56 +377,79 @@ export function generateSubMap(
 
   return {
     parent: parentAddress, depth, basis, cellRadiusRad: cellRad, spacingM,
-    dirs, elevationM, slope, temperatureC, precipMm, drainage,
+    dirs, elevationM, slope, temperatureC, precipMm, drainage, runoffM, flow,
+    alluvial,
     waterlogging, nppGm2, biome, upliftM,
     yieldKgPerHa: null,
   };
 }
 
 /**
- * Flow accumulation: where the water goes, and therefore where the rivers are.
+ * Which rim cell each inflow enters at: the lowest one facing its source.
  *
- * Every cell sends its water to its lowest neighbour. Process the cells from
- * high to low and each one has already received everything upstream of it by
- * the time its turn comes, so a single pass does the whole catchment -- no
- * iteration, no convergence test.
+ * The map upstream does not tell us this and does not have to. It says only
+ * "this much water is coming from over there"; where it crosses the edge is
+ * decided by the edge, and both maps read the same continuous elevation field
+ * along it. So the map sending the water and the map receiving it pick the
+ * same valley without either one consulting the other, and the river joins up.
  *
- * The result is the most useful field on the map. Rivers are where it is
- * large; floodplains are where it is large and flat; the deepest soil in any
- * landscape is where it is large, flat and slow. It is why settlements go
- * where they go, and it costs one sort.
- *
- * Sinks are not filled. A basin with no outlet keeps its water, which is
- * correct -- that is a lake, and the Caspian is not a bug.
+ * A face of the hexagon spans 60 degrees, so a rim cell counts as facing the
+ * source when it is within 30 degrees of the bearing. If the geometry is odd
+ * enough that nothing qualifies -- which the twelve pentagons can manage,
+ * their neighbours not being evenly spaced -- the best-facing cell is used
+ * rather than dropping the water, because losing a river is worse than
+ * putting it one cell off.
  */
-function computeDrainage(elevation: Float32Array, out: Float32Array): void {
-  const order = new Int32Array(SUBCELL_COUNT);
-  for (let i = 0; i < SUBCELL_COUNT; i++) order[i] = i;
-  // Descending by elevation. Ties broken by index so the order is total and
-  // the result does not depend on the sort's stability.
-  const sorted = Array.from(order).sort((a, b) => (elevation[b] - elevation[a]) || (a - b));
+const FACE_HALF_ANGLE_COS = Math.sqrt(3) / 2; // cos 30 degrees
 
-  const flow = new Float32Array(SUBCELL_COUNT).fill(1);
-  for (const c of sorted) {
-    let lowest = -1;
-    let lowestE = elevation[c];
-    for (let d = 0; d < 6; d++) {
-      const n = subNeighbours[c * 6 + d];
-      if (n < 0) continue;
-      if (elevation[n] < lowestE) { lowestE = elevation[n]; lowest = n; }
+function resolveInflow(
+  inflow: readonly Boundary[],
+  basis: Basis,
+  dirs: Float64Array,
+  elevationM: Float32Array,
+): Boundary[] {
+  if (inflow.length === 0) return [];
+  const out: Boundary[] = [];
+
+  for (const b of inflow) {
+    // The source direction, flattened into this map's tangent plane. Both this
+    // and the rim cells' offsets are measured the same way, so comparing them
+    // is a plain dot product.
+    const dot = b.dir[0] * basis.ox + b.dir[1] * basis.oy + b.dir[2] * basis.oz;
+    let wx = b.dir[0] - dot * basis.ox;
+    let wy = b.dir[1] - dot * basis.oy;
+    let wz = b.dir[2] - dot * basis.oz;
+    const wlen = Math.sqrt(wx * wx + wy * wy + wz * wz);
+    if (wlen < 1e-12) continue; // straight down: no edge to cross
+    wx /= wlen; wy /= wlen; wz /= wlen;
+
+    let chosen = -1;
+    let chosenElev = Infinity;
+    let fallback = -1;
+    let fallbackScore = -Infinity;
+
+    for (let c = 0; c < SUBCELL_COUNT; c++) {
+      if (ringOf(c) !== RADIUS) continue;
+      const cx = dirs[c * 3], cy = dirs[c * 3 + 1], cz = dirs[c * 3 + 2];
+      const cd = cx * basis.ox + cy * basis.oy + cz * basis.oz;
+      const tx = cx - cd * basis.ox;
+      const ty = cy - cd * basis.oy;
+      const tz = cz - cd * basis.oz;
+      const tlen = Math.sqrt(tx * tx + ty * ty + tz * tz);
+      if (tlen < 1e-12) continue;
+      const score = (tx * wx + ty * wy + tz * wz) / tlen;
+
+      if (score > fallbackScore) { fallbackScore = score; fallback = c; }
+      if (score >= FACE_HALF_ANGLE_COS && elevationM[c] < chosenElev) {
+        chosenElev = elevationM[c];
+        chosen = c;
+      }
     }
-    if (lowest >= 0) flow[lowest] += flow[c];
-  }
 
-  // Normalise on a log scale. Flow accumulation spans four orders of magnitude
-  // between a hilltop and a trunk river, and a linear normalisation would make
-  // everything except the main channel read as zero.
-  let maxFlow = 1;
-  for (let c = 0; c < SUBCELL_COUNT; c++) maxFlow = Math.max(maxFlow, flow[c]);
-  const denom = dlog(maxFlow + 1);
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
-    out[c] = denom > 0 ? dlog(flow[c] + 1) / denom : 0;
+    const cell = chosen >= 0 ? chosen : fallback;
+    if (cell >= 0) out.push({ ...b, cell });
   }
+  return out;
 }
 
 /** Soil for one cell of a generated sub-map. */
@@ -379,7 +459,7 @@ export function soilAt(map: SubMap, cell: number): Soil {
     precipMm: map.precipMm[cell],
     sinLat: map.dirs[cell * 3 + 1],
     slope: map.slope[cell],
-    drainage: map.drainage[cell],
+    alluvial: map.alluvial[cell],
     biome: map.biome[cell] as BiomeId,
   });
 }

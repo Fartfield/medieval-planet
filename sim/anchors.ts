@@ -636,11 +636,70 @@ export const WORKING_DAYS_PER_YEAR = 250.0;
 export const MEDIEVAL_YIELD_RATIO = 3.5;
 
 /**
- * How much flow a channel needs to float a barge, as normalised catchment.
- * The same threshold the renderer draws a river at, because a river you can
- * see and a river you can move grain on should be the same river.
+ * Downstream hydraulic geometry: how deep a river is for the water in it.
+ *
+ * Leopold and Maddock measured 20 river systems across the United States in
+ * 1953 and found the same power laws in all of them -- width, depth and
+ * velocity each scale as a fixed power of discharge, and the three exponents
+ * sum to one because their product is the discharge itself. Mean depth is
+ *
+ *     d = 0.27 * Q^0.40      d in metres, Q in cubic metres a second
+ *
+ * This is what lets a channel's size be *solved* from its catchment rather
+ * than asserted. Navigability follows from it and a barge's draught, which is
+ * the point: nobody gets to choose how big a river has to be.
  */
-export const NAVIGABLE_DRAINAGE = 0.55;
+export const HYDRAULIC_DEPTH_COEFF = 0.27;
+export const HYDRAULIC_DEPTH_EXPONENT = 0.40;
+
+/**
+ * The width half of the same relations: w = 2.7 * Q^0.50.
+ *
+ * The three coefficients multiply to one and the three exponents sum to one,
+ * because width times depth times velocity is the discharge itself. That is
+ * not a fit, it is an identity, and it is the reason this set can be trusted
+ * where a single fitted curve could not.
+ */
+export const CHANNEL_WIDTH_COEFF = 2.7;
+export const CHANNEL_WIDTH_EXPONENT = 0.50;
+
+/**
+ * How wide a river's floodplain is, in channel widths.
+ *
+ * Leopold and Wolman measured meander geometry across scales and found the
+ * whole pattern locked to channel width: a meander wavelength is 10-14 widths,
+ * and the belt the channel sweeps across -- which is the floodplain it builds
+ * -- is 15 to 18. A brook has a floodplain a few metres wide and the Mississippi
+ * has one tens of kilometres wide, for the same reason and by the same ratio.
+ *
+ * This is what lets alluvial soil be placed by size rather than by rank. A
+ * floodplain narrower than the tile it sits in is not absent, it is a fraction
+ * of that tile, and saying so is the only honest thing a coarse map can do.
+ */
+export const MEANDER_BELT_WIDTHS = 15.0;
+
+/**
+ * What a laden medieval river barge drew.
+ *
+ * Around 0.9 m for the flat-bottomed craft that worked the Severn trows, the
+ * Thames western barges and the Rhine and Meuse traffic. Shallower than a
+ * seagoing hull by design: a river boat is built to the river it works, and
+ * the binding constraint is the shallowest reach it must cross in summer.
+ */
+export const BARGE_LADEN_DRAFT_M = 0.9;
+
+/**
+ * The largest river there is: the Amazon at its mouth, 209,000 m3/s.
+ *
+ * The top of the scale discharge is measured against. It is a real ceiling
+ * rather than a convenience -- no drainage basin on Earth delivers more, and
+ * a generated world that produced a bigger one would be saying something
+ * false about itself.
+ */
+export const AMAZON_M3_PER_S = 209000.0;
+
+/** Seconds in a Julian year, for turning a depth per year into a flow. */
+export const SECONDS_PER_YEAR = 31557600.0;
 
 /**
  * What wheat needs, as opposed to what a landscape grows.
@@ -901,3 +960,111 @@ export const IDLE_SHARE_TO_SPREAD = 0.20;
  * that feeds a town and pays a tax comes from in a good year.
  */
 export const BAD_YEAR_YIELD_FRACTION = 0.65;
+
+// ---------------------------------------------------------------------------
+// The ground, as rock and as soil
+// ---------------------------------------------------------------------------
+// Everything below is a laboratory or field measurement of real material.
+// What varies from one is which rock a place is made of, and that is settled
+// by the tectonic history the planet generator already computes.
+
+/**
+ * Stream-power incision: how fast running water cuts down into rock.
+ *
+ *     E = K * A^m * S^n,   with m ~ 0.5 and n ~ 1
+ *
+ * The exponents are the ones every field calibration converges on, and the
+ * m/n ratio near 0.5 is why a river long-profile is concave -- discharge grows
+ * downstream faster than the slope it needs, so the channel flattens as it
+ * goes. This is the law that carves a valley rather than drawing one.
+ *
+ * K is the erodibility, and it is the part that depends on the rock. The range
+ * across lithologies spans three orders of magnitude, which is why a granite
+ * massif stands while the shale beside it is a plain.
+ */
+/**
+ * How rough terrain stays as you look closer: the Hurst exponent.
+ *
+ * Topography is self-affine, not self-similar -- halve the horizontal scale
+ * and the relief does not halve with it, it falls by rather less. Variogram
+ * and spectral analyses of real land surfaces put the exponent between 0.5 and
+ * 0.8, a fractal dimension of 2.2 to 2.5, and 0.7 is the middle of that for
+ * continental topography.
+ *
+ * The number matters here more than it would in a single-scale generator,
+ * because it is applied seven times over. Amplitude had been falling as the
+ * full first power of the wavelength, which is an exponent of 1.0 and smoother
+ * than any real landscape: it left the layer a person actually stands on with
+ * ONE MILLIMETRE of texture on a 41 cm tile, and the plot layer with five
+ * centimetres across thirty-seven metres. Both were flat as glass.
+ *
+ * One exponent across seven orders of magnitude is an approximation and worth
+ * saying so -- different processes shape a mountain range and a ploughed field
+ * -- but a measured approximation beats an unmeasured one.
+ */
+export const TOPOGRAPHY_HURST = 0.70;
+
+export const STREAM_POWER_M = 0.5;
+export const STREAM_POWER_N = 1.0;
+
+/**
+ * Soil production, by Heimsath's cosmogenic-nuclide measurements.
+ *
+ *     P = P0 * exp(-z / z0)
+ *
+ * Bedrock turns into soil fastest where there is a thin cover over it -- some
+ * soil to hold water against the rock, but not enough to insulate it. Under a
+ * deep column production falls away exponentially. Measured at Point Reyes,
+ * the Oregon Coast Range and Nunnock River, all agreeing on a decay depth
+ * around half a metre.
+ *
+ * The exponential is why soil depth is *self-limiting*: strip a hillside and
+ * it makes soil faster; leave it and production slows to nothing. A steady
+ * state falls out where production equals erosion, and that steady state is
+ * the soil depth of a landscape -- not a number anybody types in.
+ */
+export const SOIL_PRODUCTION_MAX_M_PER_YR = 0.00009;
+export const SOIL_PRODUCTION_DECAY_M = 0.50;
+
+/**
+ * Root cohesion: the strength a plant's roots add to the soil, in kilopascals.
+ *
+ * Measured by back-analysis of slopes that failed and shear tests on rooted
+ * blocks. It is the term that makes vegetation part of the geotechnics rather
+ * than decoration on top of it: bare soil at the angle of repose sits at a
+ * factor of safety near 1 by definition, so 15 kPa of forest roots is the
+ * difference between a stable 33-degree slope and a stable 45-degree one.
+ */
+export const ROOT_COHESION_BARE_KPA = 0.0;
+export const ROOT_COHESION_GRASS_KPA = 3.0;
+export const ROOT_COHESION_SHRUB_KPA = 6.0;
+export const ROOT_COHESION_FOREST_KPA = 15.0;
+
+/**
+ * How fast root strength goes after the plants die: half-life 2-5 years.
+ *
+ * Sidle's decay curves. The consequence is measured too and it is the reason
+ * this number is here: landslide frequency after a clearcut peaks 3 to 15
+ * years later, not at the time of the cut. The roots keep holding while they
+ * rot, and the hillside comes down on whoever is farming it by then.
+ */
+export const ROOT_DECAY_HALFLIFE_YR = 3.5;
+
+/**
+ * Unit weight of wet soil and of water, and gravity. Newtons per cubic metre.
+ *
+ * Soil at 1,900 kg/m3 is a typical wet colluvium -- the material that actually
+ * sits on hillsides and the material that actually slides off them.
+ */
+export const SOIL_UNIT_WEIGHT_N_M3 = 18640.0;
+export const WATER_UNIT_WEIGHT_N_M3 = 9810.0;
+
+/**
+ * Angle of repose of drained granular soil, degrees.
+ *
+ * Around 33 for sand and gravel, and it is where the infinite-slope test is
+ * calibrated: on bare cohesionless ground the factor of safety is exactly 1 at
+ * this angle, whatever the depth, because both sides of the ratio carry the
+ * same weight term. That identity is a free check on the arithmetic.
+ */
+export const SOIL_FRICTION_ANGLE_DEG = 33.0;

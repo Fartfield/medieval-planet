@@ -47,8 +47,14 @@ export interface SoilSample {
   sinLat: number;
   /** Local gradient, rise over run. */
   slope: number;
-  /** How much upstream land drains through here, 0..1 after normalisation. */
-  drainage: number;
+  /**
+   * How much of this tile is floodplain, 0..1.
+   *
+   * From the river's real discharge and the tile's real width, so it means the
+   * same thing at every layer -- see hydrology.alluvialFraction. It replaced a
+   * normalised drainage rank, which meant something different on every map.
+   */
+  alluvial: number;
   /** What grows here, which decides where the production goes. */
   biome: BiomeId;
 }
@@ -116,7 +122,7 @@ export function nutrientAvailability(temperatureC: number, sinLat: number): numb
 export function topsoilDepth(s: SoilSample, npp: number): number {
   const organic = clamp(npp / A.MIAMI_MAX_NPP, 0, 1);
   const held = 1 - smoothstep(A.SLOPE_WATERLOGGING_LIMIT, A.SLOPE_EROSION_LIMIT, s.slope);
-  const alluvial = 1 + 1.4 * clamp(s.drainage, 0, 1) * held;
+  const alluvial = 1 + 1.4 * clamp(s.alluvial, 0, 1) * held;
 
   const depth = A.TOPSOIL_THIN_CM
     + (A.TOPSOIL_DEEPEST_CM - A.TOPSOIL_THIN_CM) * organic * held * alluvial;
@@ -156,7 +162,7 @@ export function fertility(s: SoilSample, npp: number, depthCm: number): number {
   const body = clamp(depthCm / A.TOPSOIL_TYPICAL_CM, 0, 1.6) / 1.6;
 
   // Alluvium arrives pre-enriched, stripped off somewhere upstream.
-  const alluvial = 1 + 0.45 * clamp(s.drainage, 0, 1);
+  const alluvial = 1 + 0.45 * clamp(s.alluvial, 0, 1);
 
   // And none of it counts if nothing can mineralise it.
   const available = nutrientAvailability(s.temperatureC, s.sinLat);
@@ -169,13 +175,13 @@ export function fertility(s: SoilSample, npp: number, depthCm: number): number {
  *
  * Not the same as rainfall and not the same as aridity. A cold wet flat holds
  * water it cannot evaporate and is a bog; a hot wet slope sheds it and is dry
- * by August. Drainage raises it, slope lowers it.
+ * by August. Being on a floodplain raises it, slope lowers it.
  */
 export function soilMoisture(s: SoilSample): number {
   const pet = potentialEvapotranspiration(s.temperatureC, s.sinLat);
   const supply = pet <= 0 ? 2 : s.precipMm / pet;
   const shed = smoothstep(A.SLOPE_WATERLOGGING_LIMIT, A.SLOPE_EROSION_LIMIT * 2, s.slope);
-  return clamp(supply * (1 - 0.55 * shed) + 0.5 * s.drainage, 0, 2) / 2;
+  return clamp(supply * (1 - 0.55 * shed) + 0.5 * s.alluvial, 0, 2) / 2;
 }
 
 /**
@@ -185,7 +191,7 @@ export function soilMoisture(s: SoilSample): number {
 export function waterlogging(s: SoilSample): number {
   const flat = 1 - smoothstep(A.SLOPE_WATERLOGGING_LIMIT, A.SLOPE_EROSION_LIMIT, s.slope);
   const wet = soilMoisture(s);
-  return clamp(flat * (0.45 * wet + 0.75 * clamp(s.drainage, 0, 1)), 0, 1);
+  return clamp(flat * (0.45 * wet + 0.75 * clamp(s.alluvial, 0, 1)), 0, 1);
 }
 
 /** Everything at once, which is what the tile generator wants. */
