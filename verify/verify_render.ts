@@ -19,7 +19,7 @@ import { Biome } from '../sim/model/biome.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
   pickGlobe, pickSubMap, corners, rotate, unrotate, houseColour,
-  MOSAIC_MIN_PX, type ChildLookup,
+  blendColours, TINT_MIN_PX, type CellTint,
 } from '../client/src/render.ts';
 import { bestRegion } from './sites.ts';
 import { check, measure, assert, suite } from './harness.ts';
@@ -183,76 +183,69 @@ suite('the map fills the window', () => {
     Math.max(widthPx / W, heightPx / H) > 0.85);
 });
 
-suite('mosaic', () => {
-  // Every hex is painted from its own children, one layer down and no more.
-  // The claim under test is that "no more" -- a globe that recursed would end
-  // up asking for all 4.75 quadrillion cells.
+suite('tint from one layer below', () => {
+  // Every hex stays a single hexagon and is coloured by the average of its own
+  // 91 children. The claim under test is the "own" -- a globe that recursed
+  // would end up asking for all 4.75 quadrillion cells to paint twelve shapes.
   const world = new World({ seed: 20260826 });
   const cam = newCamera();
   const view = globeView(W, H);
 
-  // Count how often the renderer asks for children, and at what addresses.
+  // Blending, on its own.
+  check('one colour blends to itself',
+    blendColours(['#c2bb6b']) === '#c2bb6b' ? 1 : 0, 1, 0);
+  const mostlyOcean = blendColours([...Array(90).fill('#1b3a5c'), '#3d6b34']);
+  assert('a mostly-ocean blend stays ocean', mostlyOcean.startsWith('#1'));
+  const half = blendColours(['#3d6b34', '#d9c08a']);
+  assert('green and sand blend to neither', half !== '#3d6b34' && half !== '#d9c08a');
+  check('an empty blend is safe', blendColours([]) === '#000000' ? 1 : 0, 1, 0);
+
+  // Asked once per visible cell, and only for cells of the layer on screen.
   const asked: number[] = [];
-  const lookup: ChildLookup = (cell) => { asked.push(cell); return world.subMap([cell]); };
+  const tint: CellTint = (cell) => { asked.push(cell); return '#123456'; };
 
   const flat = stub();
   drawGlobe(flat, world.planet, cam, view, -1, new Map(), null);
+  const tinted = stub();
+  drawGlobe(tinted, world.planet, cam, view, -1, new Map(), tint);
+
   const flatRaw = flat as unknown as StubContext;
+  const tintRaw = tinted as unknown as StubContext;
 
-  const mosaic = stub();
-  drawGlobe(mosaic, world.planet, cam, view, -1, new Map(), lookup);
-  const mosaicRaw = mosaic as unknown as StubContext;
-
-  measure('shapes drawn flat', flatRaw.fills + flatRaw.rects);
-  measure('shapes drawn with a mosaic', mosaicRaw.fills + mosaicRaw.rects);
-  measure('child maps requested', asked.length);
-
-  check('a flat globe draws no mosaic tiles', flatRaw.rects, 0, 0);
-  assert('a mosaic draws far more', mosaicRaw.rects > flatRaw.fills * 10);
-  check('the mosaic produced no NaN coordinates', mosaicRaw.nans, 0, 0);
-
-  // ONE LAYER. Each visible region is asked for its children exactly once, and
-  // nothing is ever asked for a grandchild.
-  const unique = new Set(asked);
-  check('every region is asked at most once', asked.length, unique.size, 0);
-  assert('only regions are asked, never anything deeper',
+  measure('cells asked for a tint', asked.length);
+  check('tinting draws no extra shapes', tintRaw.fills, flatRaw.fills, 0);
+  check('and no mosaic tiles at all', tintRaw.rects, 0, 0);
+  check('every cell is asked at most once', asked.length, new Set(asked).size, 0);
+  assert('only cells of the visible layer are asked',
     asked.every((c) => c >= 0 && c < CELL_COUNT));
+  check('the tinted globe produced no NaN', tintRaw.nans, 0, 0);
 
-  // The parent is still filled underneath. A hexagon of hexagons has stepped
-  // edges, and without the fill behind it the ocean would show through them.
-  assert('parents are still filled underneath the mosaic',
-    mosaicRaw.fills >= flatRaw.fills);
-
-  // Below the threshold a cell is painted flat, however small the globe gets.
-  const tiny = stub();
+  // Below the threshold nothing is asked at all.
   const asked2: number[] = [];
-  drawGlobe(tiny, world.planet, cam, { cx: 100, cy: 100, radius: 20 }, -1, new Map(),
-    (cell) => { asked2.push(cell); return world.subMap([cell]); });
-  check('a tiny globe draws no mosaic', (tiny as unknown as StubContext).rects, 0, 0);
-  check('and asks for no children at all', asked2.length, 0, 0);
+  const tiny = stub();
+  drawGlobe(tiny, world.planet, cam, { cx: 50, cy: 50, radius: 4 }, -1, new Map(),
+    (c) => { asked2.push(c); return '#123456'; });
+  check('a tiny globe asks for no tints', asked2.length, 0, 0);
 
-  // The same on a flat sub-map, where children lay out in local coordinates
-  // rather than being projected.
-  const region = bestRegion(world);
-  const sub = stub();
-  const subAsked: number[] = [];
-  drawSubMap(sub, world.subMap([region]), flatView(W, H, cam), -1,
-    new Map(), new Map(), null,
-    (cell) => { subAsked.push(cell); return world.subMap([region, cell]); });
-  const subRaw = sub as unknown as StubContext;
-  measure('sub-map mosaic tiles', subRaw.rects);
-  assert('a sub-map is mosaicked too', subRaw.rects > 100);
-  check('a sub-map mosaic produced no NaN', subRaw.nans, 0, 0);
-  check('each sub-map cell is asked at most once', subAsked.length, new Set(subAsked).size, 0);
-
-  // And the finest layer has no children to ask for, which must not throw.
-  let deepThrew = false;
+  // A tint of null is always safe -- that is what the finest layer returns.
+  let threw = false;
   try {
-    const deepest = stub();
-    drawSubMap(deepest, world.subMap([region]), flatView(W, H, cam), -1,
-      new Map(), new Map(), null, () => null);
-    assert('a layer with no children still draws', (deepest as unknown as StubContext).fills > 0);
-  } catch { deepThrew = true; }
-  assert('no children is not an error', !deepThrew);
+    const nulled = stub();
+    drawGlobe(nulled, world.planet, cam, view, -1, new Map(), () => null);
+    assert('a null tint still draws', (nulled as unknown as StubContext).fills > 0);
+  } catch { threw = true; }
+  assert('a null tint is not an error', !threw);
+
+  // The same on a flat sub-map.
+  const region = bestRegion(world);
+  const subAsked: number[] = [];
+  const sub = stub();
+  drawSubMap(sub, world.subMap([region]), flatView(W, H, cam), -1,
+    new Map(), new Map(), null, (c) => { subAsked.push(c); return '#654321'; });
+  const subRaw = sub as unknown as StubContext;
+  check('a sub-map draws no mosaic tiles either', subRaw.rects, 0, 0);
+  check('each sub-map cell is asked once', subAsked.length, new Set(subAsked).size, 0);
+  assert('a sub-map asks for tints', subAsked.length > 0);
+  check('a tinted sub-map produced no NaN', subRaw.nans, 0, 0);
   measure('max depth', MAX_DEPTH);
 });

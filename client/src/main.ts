@@ -31,8 +31,8 @@ import type { Polity } from '../../sim/model/polity.ts';
 import { AUTHORITY_REACH_KM } from '../../sim/model/polity.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
-  pickGlobe, pickSubMap, houseColour, MOSAIC_MIN_PX,
-  type Camera, type ChildLookup,
+  pickGlobe, pickSubMap, houseColour, blendColours, TINT_MIN_PX,
+  type Camera, type CellTint,
 } from './render.ts';
 
 // --- state ------------------------------------------------------------------
@@ -112,7 +112,7 @@ function handle(msg: ServerMessage): void {
       log(`world ${msg.seed} built locally in ${Math.round(performance.now() - t0)} ms`);
       log(`${CELL_COUNT} regions, ${world.totalCellsAt(GROUND_DEPTH).toLocaleString('en')} ground tiles`);
       log(`${MAX_DEPTH} layers: ${LAYER_NAMES.join(' > ')}`);
-      log(`each hex is painted from its own ${SUBCELL_COUNT} children, one layer only`);
+      log(`each hex is tinted by its own ${SUBCELL_COUNT} children, one layer only`);
       log(`${msg.deltas.length} changed tile(s) received`);
 
       setLive(true);
@@ -223,29 +223,47 @@ function visibleOverlays(w: World): { owned: Map<number, number>; populated: Map
 }
 
 /**
- * One layer of detail below whatever is on screen.
+ * What colour a cell should be, given the land one layer below it.
  *
- * Each cell of the current view is painted from its own 91 children, and no
- * further. That is what gives the world map real coastlines and mountain
- * ranges without it having to resolve anything below the layer beneath it --
- * recursing would end with the globe asking for all 4.75 quadrillion cells,
- * which is precisely what generate-on-demand exists to prevent.
+ * Each cell is painted as itself -- one hexagon -- but coloured by the average
+ * of its own 91 children, so a region that is half desert and half steppe
+ * reads as neither. That puts real geography on the world map without it
+ * resolving anything below the layer beneath it.
  *
- * Null below the mosaic threshold and at the finest layer, where a cell has no
- * children; the renderer falls back to a flat fill either way.
+ * Cached by address, because the blend never changes: the children are a pure
+ * function of the seed. Without the cache this would regenerate 91 sub-maps
+ * per visible cell per frame.
  */
-function mosaicFor(w: World, at: number[]): ChildLookup | null {
+const tintCache = new Map<string, string>();
+
+function tintFor(w: World, at: number[]): CellTint | null {
   if (at.length >= MAX_DEPTH - 1) return null;
 
   return (cell: number) => {
+    const address = [...at, cell];
+    const key = toKey(address);
+    const hit = tintCache.get(key);
+    if (hit !== undefined) return hit;
+
+    let map;
     try {
-      return w.subMap([...at, cell]);
+      map = w.subMap(address);
     } catch {
-      // An address the ladder does not reach. Flat fill is the right answer.
       return null;
     }
+
+    const colours: string[] = [];
+    for (let c = 0; c < SUBCELL_COUNT; c++) {
+      colours.push(map.elevationM[c] < 0 ? OCEAN_COLOUR : BIOME_COLOURS[map.biome[c]]);
+    }
+    const blended = blendColours(colours);
+    tintCache.set(key, blended);
+    return blended;
   };
 }
+
+/** The colour water is drawn in, so a blend can mix it like any other cover. */
+const OCEAN_COLOUR = BIOME_COLOURS[Biome.Ocean];
 
 /**
  * The fields a selected settlement is actually working, for the renderer.
@@ -295,10 +313,10 @@ function frame(): void {
   const { owned, populated } = visibleOverlays(world);
 
   if (path.length === 0) {
-    drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned, mosaicFor(world, []));
+    drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned, tintFor(world, []));
   } else {
     drawSubMap(ctx, world.subMap(path), flatView(w, h, cam), selected, owned, populated,
-      workedOverlay(world), mosaicFor(world, path));
+      workedOverlay(world), tintFor(world, path));
   }
 
   const remaining = Math.max(0, Math.round((nextTurnAt - performance.now()) / 1000));

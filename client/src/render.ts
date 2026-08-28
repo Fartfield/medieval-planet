@@ -80,32 +80,65 @@ function shade(hex: string, amount: number): string {
 }
 
 /**
- * How a cell is painted: as one colour, or as a mosaic of its children.
+ * The colour a cell should be, given the land one layer below it.
  *
- * ONE LAYER DOWN, NEVER MORE. A region drawn from its 91 children shows real
- * terrain -- a coastline, a range, the edge of a desert -- without the world
- * map having to resolve anything below the layer under it. Recursing would
- * mean the globe eventually asking for all 4.75 quadrillion cells, which is
- * the thing the whole generate-on-demand design exists to avoid.
+ * ONE LAYER DOWN, NEVER MORE. A region asks its 91 children what colour they
+ * average to, and paints itself that. It stays a single hexagon -- it just
+ * tells the truth about what is inside it, so a region that is half desert and
+ * half steppe reads as neither one nor the other.
  *
- * Returning null is always allowed and always safe: the cell falls back to its
- * own colour. That is what happens at the finest layer, where there are no
- * children, and whenever a cell is too small on screen for a mosaic to be
- * worth the work.
+ * This replaced drawing the children as a visible mosaic of little tiles. That
+ * did put real information on screen and it looked like noise: ninety-one
+ * shapes inside one hexagon reads as a dither pattern, not as terrain, and the
+ * hexagon stopped reading as a hexagon at all.
+ *
+ * Recursing would mean the globe eventually asking for all 4.75 quadrillion
+ * cells to paint twelve hexagons, which is the thing generate-on-demand exists
+ * to prevent. Returning null is always safe: the cell keeps its own colour.
  */
-export type ChildLookup = (cell: number) => SubMap | null;
+export type CellTint = (cell: number) => string | null;
 
 /**
- * Below this many pixels across, a cell is painted flat.
+ * Below this many pixels across, a cell is not worth asking about.
  *
- * A mosaic of 91 hexes inside something 24 pixels wide is 91 shapes averaging
- * two and a half pixels each -- invisible, and ninety times the drawing. The
- * threshold is what keeps a zoomed-out view cheap.
+ * Blending a cell's children costs generating them, and a cell three pixels
+ * wide looks the same either way.
  */
-export const MOSAIC_MIN_PX = 26;
+export const TINT_MIN_PX = 6;
 
-/** The scale of a child hexagon against its parent: 91 of them fill it. */
-const CHILD_SCALE = 1 / Math.sqrt(SUBCELL_COUNT);
+/**
+ * The average colour of a set of cells, as the eye would see them mixed.
+ *
+ * Averaged in linear light rather than in the sRGB values, because sRGB is
+ * perceptual and mixing it directly makes everything muddy -- half green and
+ * half sand comes out a dull olive rather than the pale khaki it should be.
+ * Squaring in and rooting out is the cheap approximation of that and it is
+ * close enough for a hexagon.
+ *
+ * Water is mixed in as water, so a region that is a third coast reads bluer
+ * than one that is not -- which is most of what makes a coastline legible on
+ * a map with 92 cells on it.
+ */
+export function blendColours(colours: readonly string[]): string {
+  if (colours.length === 0) return '#000000';
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const c of colours) {
+    const n = parseInt(c.slice(1), 16);
+    const cr = (n >> 16) & 255;
+    const cg = (n >> 8) & 255;
+    const cb = n & 255;
+    r += cr * cr;
+    g += cg * cg;
+    b += cb * cb;
+  }
+  const k = colours.length;
+  const hex = (v: number): string =>
+    Math.round(Math.sqrt(v / k)).toString(16).padStart(2, '0');
+  return `#${hex(r)}${hex(g)}${hex(b)}`;
+}
+
 
 export interface GlobeView {
   cx: number;
@@ -132,7 +165,7 @@ export function drawGlobe(
   view: GlobeView,
   highlight: number,
   owned: Map<number, number>,
-  children: ChildLookup | null = null,
+  tint: CellTint | null = null,
 ): void {
   const { cx, cy, radius } = view;
 
@@ -143,10 +176,8 @@ export function drawGlobe(
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fill();
 
-  // A region is 2,922 km across, so at 92 of them the globe is a dozen big
-  // shapes. Mosaic threshold in screen pixels: the region's own width.
   const regionPx = (2 * radius) / Math.sqrt(CELL_COUNT);
-  const wantMosaic = children !== null && regionPx >= MOSAIC_MIN_PX;
+  const wantTint = tint !== null && regionPx >= TINT_MIN_PX;
 
   for (let c = 0; c < CELL_COUNT; c++) {
     const [, cyy, cz] = rotate(cam, centres[c * 3], centres[c * 3 + 1], centres[c * 3 + 2]);
@@ -166,15 +197,9 @@ export function drawGlobe(
     // Light from the upper left, plus a lift with altitude so ranges read.
     const lambert = 0.55 + 0.45 * Math.max(0, cz * 0.75 + cyy * 0.35);
     const altitude = 1 + Math.min(0.5, Math.max(0, planet.elevationM[c]) / 6000);
-    ctx.fillStyle = shade(BIOME_COLOURS[planet.biome[c]], lambert * altitude);
-    // Filled whether or not a mosaic follows, so that the stepped edges of a
-    // hexagon-of-hexagons never show the ocean through the gaps.
+    const base = (wantTint ? tint(c) : null) ?? BIOME_COLOURS[planet.biome[c]];
+    ctx.fillStyle = shade(base, lambert * altitude);
     ctx.fill();
-
-    if (wantMosaic) {
-      const kids = children(c);
-      if (kids !== null) drawGlobeMosaic(ctx, kids, cam, view, lambert);
-    }
 
     const owner = owned.get(c);
     if (owner !== undefined) {
@@ -208,44 +233,6 @@ export function drawGlobe(
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.stroke();
-}
-
-/**
- * Paint one region from its 91 children.
- *
- * The children carry real positions on the sphere, so they are projected the
- * same way their parent was and land where they belong -- no separate layout
- * and no assumption that a hexagon of hexagons is a hexagon.
- *
- * Drawn as flat-shaded quads rather than hexagons. At this size a child is a
- * few pixels across and nobody can tell, and it is six sides of work saved on
- * every one of four thousand shapes.
- */
-function drawGlobeMosaic(
-  ctx: CanvasRenderingContext2D,
-  kids: SubMap,
-  cam: Camera,
-  view: GlobeView,
-  lambert: number,
-): void {
-  const { cx, cy, radius } = view;
-  // A child's on-screen half-width. Padded a little so neighbours touch and
-  // the mosaic reads as ground rather than as a scatter of dots.
-  const half = (radius / Math.sqrt(CELL_COUNT)) * CHILD_SCALE * 1.15;
-
-  const dirs = kids.dirs;
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
-    const [px, py, pz] = rotate(cam, dirs[c * 3], dirs[c * 3 + 1], dirs[c * 3 + 2]);
-    if (pz < 0) continue;
-    const sx = cx + px * radius;
-    const sy = cy - py * radius;
-
-    const alt = 1 + Math.min(0.5, Math.max(0, kids.elevationM[c]) / 6000);
-    ctx.fillStyle = kids.elevationM[c] < 0
-      ? shade('#1b3a5c', lambert)
-      : shade(BIOME_COLOURS[kids.biome[c]], lambert * alt);
-    ctx.fillRect(sx - half, sy - half, half * 2, half * 2);
-  }
 }
 
 /** Screen point back to a direction on the sphere, or null if off the globe. */
@@ -302,11 +289,11 @@ export function drawSubMap(
   owned: Map<number, number>,
   populated: Map<number, number>,
   worked: Map<number, number> | null = null,
-  children: ChildLookup | null = null,
+  tint: CellTint | null = null,
 ): void {
   const { cx, cy, size } = view;
   const shape = corners(size);
-  const wantMosaic = children !== null && size * 2 >= MOSAIC_MIN_PX;
+  const wantTint = tint !== null && size * 2 >= TINT_MIN_PX;
 
   let lo = Infinity;
   let hi = -Infinity;
@@ -331,29 +318,9 @@ export function drawSubMap(
     ctx.closePath();
 
     const relief = 0.72 + 0.5 * ((map.elevationM[c] - lo) / span);
-    ctx.fillStyle = shade(BIOME_COLOURS[map.biome[c]], relief);
-    // Filled first either way, so the stepped edge of a hexagon-of-hexagons
-    // never lets the background through.
+    const base = (wantTint ? tint!(c) : null) ?? BIOME_COLOURS[map.biome[c]];
+    ctx.fillStyle = shade(base, relief);
     ctx.fill();
-
-    if (wantMosaic) {
-      const kids = children!(c);
-      if (kids !== null) {
-        // The children lay out as their own hex grid centred on this cell, so
-        // their positions are exact in flat coordinates -- no projection and
-        // no lookup needed, unlike on the globe.
-        const childSize = size * CHILD_SCALE;
-        const half = childSize * 1.15;
-        for (let k = 0; k < SUBCELL_COUNT; k++) {
-          const q = toPixel(k, childSize);
-          const alt = 0.72 + 0.5 * ((kids.elevationM[k] - lo) / span);
-          ctx.fillStyle = kids.elevationM[k] < 0
-            ? shade('#1b3a5c', 1)
-            : shade(BIOME_COLOURS[kids.biome[k]], alt);
-          ctx.fillRect(x + q.x - half, y + q.y - half, half * 2, half * 2);
-        }
-      }
-    }
   }
 
   // Water second, so channels sit on top of the ground they cut through.
