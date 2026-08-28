@@ -1,0 +1,21 @@
+{
+  "seed": 1237075107,
+  "radiusM": 6371000,
+  "turn": 314,
+  "players": [
+    {
+      "id": 0,
+      "name": "player-4046",
+      "seat": null,
+      "house": 0
+    },
+    {
+      "id": 1,
+      "name": "launch-check",
+      "seat": null,
+      "house": 1
+    }
+  ],
+  "polities": [],
+  "createdAt": "2026-08-28T21:34:51.891Z"
+}

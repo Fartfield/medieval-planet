@@ -144,6 +144,16 @@ does not need 32 Hz — and should be revisited rather than deleted.
 
 ## Infrastructure
 
+**The mosaic is one layer only, by design, but that is also its limit.** A
+region shows its 91 children and nothing finer, so zooming the globe never
+reveals more detail — you have to descend. Two layers of mosaic would look
+better and cost 91 times as much.
+
+**Mosaic tiles are drawn as squares.** At a few pixels across nobody can tell a
+square from a hexagon, and it saves six sides of work on every one of eight
+thousand shapes. It would show if the threshold were ever lowered.
+
+
 **No spatial index on the delta store.** "Which changed tiles are inside this
 region" is a prefix scan over string keys today. Fine at small numbers, not
 fine at a million.

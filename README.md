@@ -18,6 +18,7 @@ A world you can look at, share, settle, trade across, and watch fill up.
 |---|---|
 | the globe | 92 regions on a true icosahedral sphere, with the twelve pentagons a sphere cannot avoid |
 | the ladder | eight layers, each a 10×10 hexagon of hexagons, from a 2,922 km region down to a 41 cm pace |
+| detail | every hex is painted from its own 91 children — one layer down, never more, so the world map has real coastlines without resolving a quadrillion cells |
 | generation | plate tectonics to elevation to climate to biome, cascading top-down, reproducible forever from one seed |
 | the lower layers | realm and ground maps, rivers from flow accumulation, soil, ore, timber and game per tile |
 | supply | settlements work the land they can reach; hauling food costs food, and water is 42.7× cheaper than road |
@@ -26,7 +27,7 @@ A world you can look at, share, settle, trade across, and watch fill up.
 | spreading | a town that fills its land throws off daughters, and stops where it meets somebody. Borders are residue |
 | kingdoms | bounded at 393 km, which is what forty days of feudal service and a walking pace multiply out to |
 | multiplayer | a turn server, two clients sharing one world, live desync detection, persistence |
-| verification | 409 measurements diffed run to run, plus an end-to-end run of the real thing |
+| verification | 432 measurements diffed run to run, plus an end-to-end run of the real thing |
 
 Calibration, none of it tuned to hit its target: land cover within 2.6 points of
 Earth's; water:road transport cost 42.7 against Diocletian's 40; best farmland
@@ -63,7 +64,7 @@ node server/main.ts              # then open http://localhost:8787
 node server/main.ts --turn-seconds 10 --seed 1234
 node server/main.ts --turns 50   # headless, no socket in sight
 
-node verify/run_all.ts           # 409 measurements, diffed against the baseline
+node verify/run_all.ts           # 432 measurements, diffed against the baseline
 node verify/run_all.ts --anchor  # accept the current numbers as the new baseline
 node verify/check_app.ts         # a real server and two real clients, end to end
 node verify/calibrate_climate.ts # sweep the climate model against Earth

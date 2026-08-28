@@ -31,7 +31,8 @@ import type { Polity } from '../../sim/model/polity.ts';
 import { AUTHORITY_REACH_KM } from '../../sim/model/polity.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
-  pickGlobe, pickSubMap, houseColour, type Camera,
+  pickGlobe, pickSubMap, houseColour, MOSAIC_MIN_PX,
+  type Camera, type ChildLookup,
 } from './render.ts';
 
 // --- state ------------------------------------------------------------------
@@ -111,6 +112,7 @@ function handle(msg: ServerMessage): void {
       log(`world ${msg.seed} built locally in ${Math.round(performance.now() - t0)} ms`);
       log(`${CELL_COUNT} regions, ${world.totalCellsAt(GROUND_DEPTH).toLocaleString('en')} ground tiles`);
       log(`${MAX_DEPTH} layers: ${LAYER_NAMES.join(' > ')}`);
+      log(`each hex is painted from its own ${SUBCELL_COUNT} children, one layer only`);
       log(`${msg.deltas.length} changed tile(s) received`);
 
       setLive(true);
@@ -221,6 +223,31 @@ function visibleOverlays(w: World): { owned: Map<number, number>; populated: Map
 }
 
 /**
+ * One layer of detail below whatever is on screen.
+ *
+ * Each cell of the current view is painted from its own 91 children, and no
+ * further. That is what gives the world map real coastlines and mountain
+ * ranges without it having to resolve anything below the layer beneath it --
+ * recursing would end with the globe asking for all 4.75 quadrillion cells,
+ * which is precisely what generate-on-demand exists to prevent.
+ *
+ * Null below the mosaic threshold and at the finest layer, where a cell has no
+ * children; the renderer falls back to a flat fill either way.
+ */
+function mosaicFor(w: World, at: number[]): ChildLookup | null {
+  if (at.length >= MAX_DEPTH - 1) return null;
+
+  return (cell: number) => {
+    try {
+      return w.subMap([...at, cell]);
+    } catch {
+      // An address the ladder does not reach. Flat fill is the right answer.
+      return null;
+    }
+  };
+}
+
+/**
  * The fields a selected settlement is actually working, for the renderer.
  *
  * Only computed when a populated tile is selected on a ground map, because a
@@ -268,10 +295,10 @@ function frame(): void {
   const { owned, populated } = visibleOverlays(world);
 
   if (path.length === 0) {
-    drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned);
+    drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned, mosaicFor(world, []));
   } else {
     drawSubMap(ctx, world.subMap(path), flatView(w, h, cam), selected, owned, populated,
-      workedOverlay(world));
+      workedOverlay(world), mosaicFor(world, path));
   }
 
   const remaining = Math.max(0, Math.round((nextTurnAt - performance.now()) / 1000));

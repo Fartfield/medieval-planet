@@ -113,6 +113,38 @@ boundaries, sea level and distance-to-ocean are *global* properties — you
 cannot know whether a cell is coastal by looking only at that cell. Ten
 thousand cells is nothing.
 
+## Detail, one layer at a time
+
+Every hex is painted as a **mosaic of its own children, and no further**.
+
+A region on the world map is not a flat colour; it is its 91 sub-cells drawn in
+their real positions. That gives the globe a coastline, a mountain range, the
+edge of a desert — genuine terrain rather than an average — and it costs one
+extra layer of generation, not seven.
+
+The "no further" is the whole point. A globe that recursed would end up asking
+for all 4.75 quadrillion cells to draw twelve hexagons, which is exactly what
+generate-on-demand exists to prevent. So the renderer takes a `ChildLookup`
+that returns one layer down, and calls it once per visible cell.
+
+Three things make it behave:
+
+* **The parent is filled first, underneath.** A hexagon of hexagons has stepped
+  edges and does not quite tile a hexagon, so without the fill behind it the
+  background would show through the steps.
+* **Below 26 pixels a cell is painted flat.** A mosaic of 91 shapes inside
+  something 24 pixels wide is invisible and ninety times the drawing.
+* **Returning null is always safe.** That is what happens at the finest layer,
+  where a cell has no children at all.
+
+On the globe the children carry real positions on the sphere and are projected
+exactly as their parent was. On a flat sub-map they lay out as their own hex
+grid centred on the parent, so their positions are exact in local coordinates
+with no projection at all.
+
+Measured: a globe goes from 15 shapes to 1,179, asking 14 regions for children
+once each. A sub-map draws 8,281 mosaic tiles.
+
 ## Simulation and renderer are separate programs
 
 `sim/` owns everything true about the world and has never heard of a pixel. It
