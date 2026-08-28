@@ -22,10 +22,13 @@ import { generatePlanet, type Planet } from './gen/planet.ts';
 import type { Boundary } from './gen/hydrology.ts';
 import {
   generateSubMap, basisAt, samplePlanet, sampleSubMap, soilAt, aridityAt,
+  STABILITY_CAP,
   cellRadiusRad, type SubMap,
 } from './gen/submap.ts';
 import { classify } from './model/biome.ts';
-import type { RockId } from './model/rock.ts';
+import {
+  factorOfSafety, rootCohesionAfterClearing, standingCoverOf, type RockId,
+} from './model/rock.ts';
 import { grainYieldKgPerHa, cropSuitability } from './model/soil.ts';
 import {
   deposits, gameHeadPerKm2, timberTPerHa, freshWater, GRAZEABLE_FRACTION,
@@ -214,6 +217,28 @@ export class World {
     const cleared = delta?.cleared ?? 0;
     const standing = timberTPerHa(biome, npp) * (1 - clamp(cleared, 0, 1));
 
+    // Whether this hillside is still standing up, as it is TODAY rather than
+    // as generated. The generated field assumes whatever the biome grows; this
+    // one knows what has been cut off it and how long ago, which is the whole
+    // difference between a hazard map and a consequence.
+    //
+    // Saturation is the tile's own waterlogging: how much of the year the
+    // ground is actually wet. That is what makes a marshy hillside marginal
+    // and a dry one safe at the same gradient, without any rule saying so.
+    const yearsSinceCleared = delta?.clearedTurn === undefined
+      ? 0
+      : Math.max(0, this.turn - delta.clearedTurn) / A.TURNS_PER_YEAR;
+    const stability = map.hillslopesResolved
+      ? Math.min(STABILITY_CAP, factorOfSafety({
+        slope: map.slope[c],
+        soilDepthM: map.regolithM[c],
+        rock: map.rock[c] as RockId,
+        rootCohesionKPa: rootCohesionAfterClearing(
+          standingCoverOf(biome), cleared, yearsSinceCleared),
+        saturation: waterlog,
+      }))
+      : STABILITY_CAP;
+
     return {
       address,
       dir: [map.dirs[c * 3], map.dirs[c * 3 + 1], map.dirs[c * 3 + 2]],
@@ -229,7 +254,7 @@ export class World {
       rock: map.rock[c] as RockId,
       regolithM: map.regolithM[c],
       erosionMPerYr: map.erosionMPerYr[c],
-      stability: map.stability[c],
+      stability,
       hillslopesResolved: map.hillslopesResolved,
       catchmentM2: map.flow.catchmentM2[c],
       lakeDepthM: map.flow.lakeDepthM[c],
@@ -556,6 +581,11 @@ export class World {
     const key = toKey(address);
     const existing = this.deltas.get(key) ?? { key, turn: this.turn };
     const next: TileDelta = { ...existing, ...patch, key, turn: this.turn };
+    // Stamp the felling, and only a felling. Clearing more ground restarts the
+    // clock, which is right: the newest stumps are the ones still holding.
+    if (patch.cleared !== undefined && patch.cleared > (existing.cleared ?? 0)) {
+      next.clearedTurn = this.turn;
+    }
     if (deltaIsEmpty(next)) {
       this.deltas.delete(key);
       return next;

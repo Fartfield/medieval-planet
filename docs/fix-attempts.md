@@ -185,7 +185,42 @@ work now.
 
 ---
 
-## Every layer below the first was a staircase
+## Soil sat on a seventy-four degree cliff
+
+**Problem.** Searching the world for hillsides held up only by their trees
+found four, and every one of them was at 74 or 75 degrees carrying most of a
+metre of soil. The mechanic worked -- fell them and twelve years later they go
+-- but no such slope carries soil in the first place.
+
+Soil depth was the balance of production against erosion, and erosion was
+stream power. On a ridge-top cell the catchment is one cell, so stream power
+says the wearing is slow -- which is **true and beside the point. A 74-degree
+slope does not wear away, it lets go.**
+
+The missing term was already in the file, unused: the infinite-slope equation
+solved for depth instead of for safety.
+
+    z <= c / (gamma * (sin(t)cos(t) - cos^2(t)*tan(phi)))
+
+Below the friction angle that bracket is negative and there is no limit, which
+is correct and is not a special case -- friction scales with weight exactly as
+the driving stress does, so the slope genuinely does not care how much is on
+it. Above the friction angle it can never balance, and the only thing holding
+the soil on is cohesion, which does *not* scale with depth. So there is a
+ceiling, and it collapses fast: granite holds 0.25 m at 45 degrees and 0.11 m
+at 60.
+
+Evaluated bare, without roots, because vegetation comes and goes over centuries
+and soil depth is the product of millennia. Roots then decide whether what is
+there today stays there today, which is the other function and the other
+timescale.
+
+**This is why cliffs are bare**, and it was being asserted by a slope threshold
+in the old topsoil model rather than derived.
+
+---
+
+## ## Every layer below the first was a staircase
 
 **Problem.** Found by asking a question nothing had asked before -- how fast
 does this world wear away -- and getting an answer a hundredfold too slow, with

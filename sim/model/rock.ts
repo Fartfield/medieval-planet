@@ -280,11 +280,48 @@ export function erosionRateM(
  * the answer comes back "three metres of soil everywhere" -- which is why the
  * caller passes the cell size and the coarse layers do not ask.
  */
-export function soilDepthM(rock: RockId, erosionM: number): number {
+export function soilDepthM(rock: RockId, erosionM: number, slope = 0): number {
   const production = A.SOIL_PRODUCTION_MAX_M_PER_YR * ROCK_SOIL_PRODUCTION[rock];
-  if (erosionM <= 0) return A.SOIL_PRODUCTION_DECAY_M * dlog(production / 1e-9);
-  if (erosionM >= production) return 0;
-  return A.SOIL_PRODUCTION_DECAY_M * dlog(production / erosionM);
+  let z: number;
+  if (erosionM <= 0) z = A.SOIL_PRODUCTION_DECAY_M * dlog(production / 1e-9);
+  else if (erosionM >= production) z = 0;
+  else z = A.SOIL_PRODUCTION_DECAY_M * dlog(production / erosionM);
+  // And however slowly it wears away, no more than the slope will hold.
+  return Math.min(z, maxStableSoilM(rock, slope));
+}
+
+/**
+ * The thickest soil a slope can hold, metres. Infinity below the friction
+ * angle, where there is no limit.
+ *
+ * The infinite-slope equation solved for depth at a factor of safety of one:
+ *
+ *     z <= c / (gamma * (sin(t)cos(t) - cos^2(t)*tan(phi)))
+ *
+ * Below the friction angle that bracket is negative and any depth is stable --
+ * friction scales with weight exactly as the driving stress does, so the slope
+ * does not care how much is on it. Above it, friction can never balance, and
+ * the only thing holding the soil on is cohesion, which does NOT scale with
+ * depth. So there is a maximum thickness, and it falls away fast.
+ *
+ * This is why cliffs are bare, and it is the piece that was missing. Without
+ * it the production-against-erosion balance happily put 0.73 m of soil on a
+ * 74-degree granite face -- because stream power with a ridge-top catchment
+ * says erosion there is slow, which is true and irrelevant. A 74-degree slope
+ * does not wear away, it lets go.
+ *
+ * Evaluated bare, without roots. Vegetation comes and goes over centuries and
+ * soil depth is the product of millennia, so what the ground can hold on its
+ * own is what settles the long-run depth. Roots then decide whether what is
+ * there today stays there today, which is the other function.
+ */
+export function maxStableSoilM(rock: RockId, slope: number): number {
+  if (slope <= 0) return Infinity;
+  const t = slope;
+  const sec2 = 1 + t * t;
+  const excess = t / sec2 - (1 / sec2) * tanDeg(ROCK_FRICTION_DEG[rock]);
+  if (excess <= 0) return Infinity;
+  return (ROCK_SOIL_COHESION_KPA[rock] * 1000) / (A.SOIL_UNIT_WEIGHT_N_M3 * excess);
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +381,31 @@ export const STANDING_COVER: readonly number[] = [
 
 export function standingCoverOf(biome: number): number {
   return STANDING_COVER[biome] ?? 0;
+}
+
+/**
+ * Root cohesion on ground that has been part-cleared, kPa.
+ *
+ * Two populations, and keeping them apart is what produces the delay that the
+ * field data shows. What is still growing holds at full strength. What was
+ * cut is dead and rotting, and holds at a strength that decays with the
+ * measured half-life -- so on the day the trees come down the hillside is
+ * exactly as strong as it was, and it weakens over the years afterwards.
+ *
+ * Collapse the two and the mechanic disappears: the slope would fail the week
+ * it was felled, which is not what happens and not what anybody measured.
+ * Landslide frequency after a clearcut peaks three to fifteen years later
+ * precisely because the roots keep working while they rot.
+ */
+export function rootCohesionAfterClearing(
+  cover: number,
+  clearedFraction: number,
+  yearsSince: number,
+): number {
+  const cut = clamp(clearedFraction, 0, 1);
+  const living = rootCohesionKPa(cover * (1 - cut), 0);
+  const rotting = rootCohesionKPa(cover * cut, yearsSince);
+  return living + rotting;
 }
 
 export interface SlopeCase {

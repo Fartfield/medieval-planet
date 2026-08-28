@@ -170,6 +170,15 @@ export interface TileDelta {
   depleted?: number[];
   /** Timber cut, as a fraction of what stood. Regrows. */
   cleared?: number;
+  /**
+   * The turn the timber was last cut.
+   *
+   * Separate from `turn` below, which moves on every write of any kind and so
+   * cannot say how long ago the trees came down. The distance from here is
+   * what the root-decay curve is read at, and it is the reason a hillside
+   * comes down years after the felling rather than the same week.
+   */
+  clearedTurn?: number;
   /** Grain in the granary, kg. A year's eating is the target. */
   grainStock?: number;
   /** Iron in hand, kg. A year's wear is the target. */
@@ -213,6 +222,7 @@ export function deltaIsEmpty(d: TileDelta): boolean {
     && d.owner === undefined
     && d.depleted === undefined
     && d.cleared === undefined
+    && d.clearedTurn === undefined
     && d.grainStock === undefined
     && d.ironStock === undefined
     && d.farmShare === undefined

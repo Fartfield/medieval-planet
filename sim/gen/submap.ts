@@ -509,7 +509,7 @@ export function generateSubMap(
     });
     rock[c] = r;
     erosionMPerYr[c] = erosionRateM(r, flow.catchmentM2[c], slope[c]);
-    regolithM[c] = regolithDepthM(r, erosionMPerYr[c]);
+    regolithM[c] = regolithDepthM(r, erosionMPerYr[c], slope[c]);
     stability[c] = factorOfSafety({
       slope: slope[c],
       soilDepthM: regolithM[c],

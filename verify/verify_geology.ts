@@ -28,6 +28,7 @@ import * as A from '../sim/anchors.ts';
 import {
   Rock, ROCK_NAMES, ROCK_ERODIBILITY, ROCK_FRICTION_DEG,
   rockAt, erosionRateM, soilDepthM, factorOfSafety, rootCohesionKPa,
+  maxStableSoilM, rootCohesionAfterClearing,
 } from '../sim/model/rock.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
@@ -343,4 +344,100 @@ suite('what holds a hillside up', () => {
   const oneHalf = rootCohesionKPa(1, A.ROOT_DECAY_HALFLIFE_YR);
   measure('root cohesion kPa under closed forest', full);
   check('root strength halves at the measured half-life', oneHalf, full / 2, full * 0.01);
+});
+
+suite('a slope holds only so much soil', () => {
+  // Below the friction angle there is no limit: friction scales with weight
+  // exactly as the driving stress does, so the slope does not care how much is
+  // on it. Above it, only cohesion holds the soil on and cohesion does not
+  // scale with depth, so there is a ceiling and it falls away fast.
+  //
+  // Without this the production-against-erosion balance put 0.73 m of soil on
+  // a 74-degree granite face, because stream power with a ridge-top catchment
+  // says erosion there is slow -- which is true and beside the point. A
+  // 74-degree slope does not wear away, it lets go.
+  const tanPhi = tan(ROCK_FRICTION_DEG[Rock.Granite]);
+  assert('below the friction angle there is no limit',
+    maxStableSoilM(Rock.Granite, tanPhi * 0.7) === Infinity);
+  assert('flat ground has no limit',
+    maxStableSoilM(Rock.Granite, 0) === Infinity);
+
+  const at45 = maxStableSoilM(Rock.Granite, tan(45));
+  const at60 = maxStableSoilM(Rock.Granite, tan(60));
+  measure('soil a 45 degree granite slope holds, m', at45);
+  measure('soil a 60 degree granite slope holds, m', at60);
+  assert('a steep slope holds only centimetres', at45 < 1 && at45 > 0);
+  assert('steeper holds less', at60 < at45);
+
+  // Shale starts losing its soil at a much gentler angle, because its friction
+  // angle is the lowest of any of them. That is the same property that makes
+  // it the landslide lithology, showing up as thin soil.
+  assert('shale sheds soil on gentler ground than granite',
+    maxStableSoilM(Rock.Shale, tan(30)) < maxStableSoilM(Rock.Granite, tan(30)));
+
+  // And it feeds through: the same erosion rate leaves less soil on a steep
+  // slope than a flat one, whatever stream power says about the wearing.
+  const flat = soilDepthM(Rock.Granite, 1e-6, 0);
+  const steep = soilDepthM(Rock.Granite, 1e-6, tan(55));
+  measure('soil at a given erosion rate, flat', flat);
+  measure('soil at the same rate, 55 degrees', steep);
+  assert('a steep slope keeps less of it', steep < flat / 3);
+});
+
+suite('clearing a hillside is a decision with a delay', () => {
+  // The loop closed: a tile knows what has been cut off it and when, so its
+  // factor of safety is what the ground is doing today rather than what the
+  // biome would imply. Two populations of root, kept apart -- what still grows
+  // holds at full strength, what was cut is dead and rotting at the measured
+  // half-life.
+  const full = rootCohesionAfterClearing(1, 0, 0);
+  const justCut = rootCohesionAfterClearing(1, 1, 0);
+  const later = rootCohesionAfterClearing(1, 1, 12);
+  const partial = rootCohesionAfterClearing(1, 0.5, 12);
+  measure('root cohesion under standing forest kPa', full);
+  measure('root cohesion the day it is felled kPa', justCut);
+  measure('root cohesion twelve years later kPa', later);
+  measure('root cohesion twelve years after half of it kPa', partial);
+
+  check('felling costs nothing the day it happens', justCut, full, full * 1e-9);
+  assert('and most of it a decade later', later < full * 0.15);
+  assert('half-clearing keeps half of it', partial > full * 0.4 && partial < full * 0.6);
+
+  // On a real tile in the generated world.
+  const w = new World({ seed: SEED });
+  let found: number[] | null = null;
+  outer: for (let region = 0; region < CELL_COUNT; region++) {
+    if (w.planet.elevationM[region] <= 200) continue;
+    let a = [region];
+    while (a.length < 5) {
+      const map = w.subMap(a);
+      let pick = 0;
+      for (let c = 0; c < SUBCELL_COUNT; c++) {
+        if (map.slope[c] > map.slope[pick] && map.elevationM[c] > 0) pick = c;
+      }
+      a = [...a, pick];
+    }
+    const map = w.subMap(a);
+    for (let c = 0; c < SUBCELL_COUNT; c++) {
+      if (map.elevationM[c] > 0 && map.regolithM[c] > 0.2 && map.slope[c] > 0.2) {
+        found = [...a, c];
+        break outer;
+      }
+    }
+  }
+  assert('found a hillside with soil on it', found !== null);
+  if (found === null) return;
+
+  const before = w.tile(found).stability;
+  w.setDelta(found, { cleared: 1 });
+  w.turn = 0;
+  const sameYear = w.tile(found).stability;
+  w.turn = Math.round(12 * A.TURNS_PER_YEAR);
+  const twelveYears = w.tile(found).stability;
+
+  measure('hillside FS with its trees', before);
+  measure('hillside FS the year it is felled', sameYear);
+  measure('hillside FS twelve years later', twelveYears);
+  check('felling does not change it that year', sameYear, before, before * 1e-6);
+  assert('it is weaker a decade later', twelveYears < before * 0.8);
 });
