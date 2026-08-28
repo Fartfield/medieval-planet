@@ -11,20 +11,49 @@
 // its address and the world seed, and the store below holds only the tiles
 // somebody changed.
 
-export const LAYER_NAMES = ['region', 'realm', 'ground', 'plot'] as const;
+/**
+ * The ladder, top to bottom. Each layer is a "10 by 10" hexagon of hexagons --
+ * 91 cells, the nearest hexagonal number to a hundred -- so each step divides
+ * the ground by ninety-one.
+ *
+ *   region    5.5 M km2   2,922 km across   the world map, 92 cells
+ *   march       60,930 km2    306 km        what a kingdom might hold
+ *   shire          670 km2     32 km        where borders get drawn
+ *   hundred       7.36 km2    3.4 km        a day's walk across
+ *   parish        8.09 ha      353 m        a manor and its fields
+ *   plot           888 m2     37.0 m        THE GROUND. Where the game is.
+ *   yard          9.76 m2     3.88 m        a building, a room
+ *   pace         0.107 m2    40.6 cm        where a person stands
+ */
+export const LAYER_NAMES = [
+  'region', 'march', 'shire', 'hundred', 'parish', 'plot', 'yard', 'pace',
+] as const;
 export type LayerName = (typeof LAYER_NAMES)[number];
 
-/** How deep the world goes. Ground is where the game is played; plot is for
- *  building interiors and costs nothing until something is built. */
-export const MAX_DEPTH = 4;
+/** How deep the world goes: the globe plus seven subdivisions. */
+export const MAX_DEPTH = 8;
+
+/**
+ * The layer the economy lives on: 888 m2, about 37 m across.
+ *
+ * Named rather than written as a bare 2 or 5 in a dozen places, because it has
+ * now moved once and the previous version had it hardcoded in nine files. A
+ * settlement stands on a cell of this depth; everything below it is buildings
+ * and the people inside them, and nothing there is simulated yet.
+ */
+export const GROUND_DEPTH = 5;
 
 export type Address = readonly number[];
 
 export const Layer = {
   Region: 0,
-  Realm: 1,
-  Ground: 2,
-  Plot: 3,
+  March: 1,
+  Shire: 2,
+  Hundred: 3,
+  Parish: 4,
+  Plot: GROUND_DEPTH,
+  Yard: 6,
+  Pace: 7,
 } as const;
 
 export function depthOf(a: Address): number {
@@ -32,7 +61,7 @@ export function depthOf(a: Address): number {
 }
 
 export function layerName(a: Address): LayerName {
-  return LAYER_NAMES[a.length - 1] ?? 'plot';
+  return LAYER_NAMES[a.length - 1] ?? 'pace';
 }
 
 export function parent(a: Address): Address {

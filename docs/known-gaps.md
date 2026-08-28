@@ -20,9 +20,10 @@ sin²(latitude) term — is too crude near the poles.
 Clausius-Clapeyron relation, which is exponential. Replacing it is cheap; it has
 not been done because the calibration currently absorbs the difference.
 
-**Rivers exist but do not cross a sub-map boundary.** Flow accumulation runs
-within one sub-map, so a river reaching the rim stops there instead of
-continuing into the next. Same root cause as the adjacency gap below.
+**Rivers are crude and do not cross a sub-map boundary.** Flow accumulation
+runs within one map, and a map is 91 cells now — a third of which are rim. A
+channel over 91 cells is a rough thing and a river reaching the edge stops
+there. Both follow from the adjacency gap above.
 
 **Sinks are not filled.** A basin with no outlet keeps its water, which is
 correct — that is a lake, and the Caspian is not a bug — but nothing yet marks
@@ -34,25 +35,33 @@ eventually want real seasons, and that is a layer-1 concern.
 
 ## Geometry
 
-**Cross-boundary adjacency is not implemented.** A cell on the rim of a sub-map
-has fewer than six neighbours, and its true neighbour lies in the adjacent
-parent's sub-map. Within-map adjacency works; crossing a boundary does not.
-This is genuinely hard on a sphere — the twelve pentagons mean sub-map
-orientation cannot be globally consistent — and it is the largest unsolved
-geometric problem in the project. It has to be solved before supply lines can
-cross a region border.
+**One region in eight is a pentagon.** A sphere needs exactly twelve whatever
+its resolution, so at 92 regions they are 13% of the world map rather than the
+0.12% they were at 10,242. Unavoidable, and visible.
+
+**A 2,900 km cell cannot resolve a mountain range.** Uplift smearing is scaled
+to a real distance and at this resolution correctly does nothing, so relief at
+the world layer is blocky. Everything finer is generated below it.
+
+
+**Cross-boundary adjacency is still not implemented, but area queries are.**
+A cell on the rim of a sub-map has fewer than six neighbours and no way to name
+the missing one, so rivers still stop at a map edge and nothing can walk across
+one. What *does* cross now is `World.cellsWithin` — every cell within a radius
+of a point, found by descending rather than walking, so catchments, trade and
+settlement all reach past a boundary. Measured: 4,096 cells within 2 km across
+60 different parent maps. Adjacency is the remaining half.
 
 **`cellAt` is a greedy walk with no spatial index.** About 50 steps, which is
 fine for a click and would not be fine for a bulk query.
 
 ## Simulation
 
-**A catchment spreads to seven sub-maps and no further.** The home ground map
-plus its six neighbours: 35 km², enough for roughly three thousand people.
-Going further is a cost problem rather than a code one — each map is 75 ms to
-generate and 400 kB to hold, and a radius covering the full 25 km commute limit
-would want three hundred. A settlement that outgrows seven maps is the signal
-to build the incremental version. See [supply.md](supply.md).
+**A catchment spreads to 128 sub-maps and no further.** That is about 1,035
+hectares, which supports roughly 1,200 people — a large village or a small
+town. Beyond that a settlement is land-limited and throws off daughters, which
+is the designed behaviour, but it does mean no single settlement can become a
+city. Raising the cap is a cost decision, not a code one.
 
 **No roads and no terrain cost.** A cart track is assumed passable between any
 two land tiles, which is generous — real terrain has bogs and gorges. It is the

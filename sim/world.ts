@@ -15,7 +15,8 @@ import * as A from './anchors.ts';
 import { CELL_COUNT, centres, cellAt } from './geo/sphere.ts';
 import { SUBCELL_COUNT, subNeighbours } from './geo/hexgrid.ts';
 import {
-  type Address, toKey, fromKey, addressSeed, SALT, MAX_DEPTH, layerName, parent as parentOf,
+  type Address, toKey, fromKey, addressSeed, SALT, MAX_DEPTH, GROUND_DEPTH,
+  layerName, parent as parentOf,
 } from './geo/address.ts';
 import { generatePlanet, type Planet } from './gen/planet.ts';
 import {
@@ -38,7 +39,16 @@ import { clamp, dlog } from './gen/mathx.ts';
 export interface WorldOptions {
   seed: number;
   radiusM?: number;
-  /** How many sub-maps to keep generated. Each is about 400 kB. */
+  /**
+   * How many sub-maps to keep generated.
+   *
+   * A map is 91 cells now rather than 9,919, so one is about 4 kB and a
+   * catchment touches over a hundred of them plus every ancestor on the way
+   * down. The old default of 96 was sized for the old maps and made the cache
+   * thrash so badly that a forty-year run went from ten seconds to over ten
+   * minutes -- without ever being wrong, which is what makes that kind of
+   * regression hard to notice.
+   */
   cacheSize?: number;
 }
 
@@ -68,7 +78,7 @@ export class World {
   constructor(opts: WorldOptions) {
     this.seed = opts.seed;
     this.radiusM = opts.radiusM ?? A.EARTH_RADIUS_M;
-    this.cacheSize = opts.cacheSize ?? 96;
+    this.cacheSize = opts.cacheSize ?? 16384;
     this.planet = generatePlanet(this.seed, this.radiusM);
   }
 
@@ -233,65 +243,51 @@ export class World {
   // --- what a settlement can reach ------------------------------------------
 
   /**
-   * How far a catchment search may spread, in sub-maps.
+   * How many sub-maps a catchment may spread over.
    *
-   * The home ground map plus its six neighbours: seven maps, 35 km2, enough to
-   * feed roughly three thousand people. Going further is not a code change but
-   * a cost one -- each map is 75 ms to generate and 400 kB to hold, and a
-   * radius covering the full 25 km commute limit would want three hundred of
-   * them. A settlement that outgrows seven maps is the signal to build the
-   * incremental version, and it is in docs/known-gaps.md.
+   * A sub-map is now 91 cells of 888 m2, which is 8 hectares -- a fifth of what
+   * one family farms. So a catchment needs *many* maps where it used to need
+   * one, and the cap is correspondingly larger. It is not as expensive as it
+   * sounds: a 91-cell map costs about a hundredth of what a 9,919-cell one did,
+   * so 127 of them is still less work than seven of the old ones.
    */
-  static readonly CATCHMENT_MAPS = 7;
+  static readonly CATCHMENT_MAPS = 127;
 
   /**
    * The land a settlement at `address` can reach, with the maps it needs
    * generated and the result cached.
    *
    * The cache key buckets the radius, because a settlement growing by one
-   * person a week would otherwise rebuild a 69,000-tile catchment every turn
-   * to get the same answer. A bucket is a factor of 1.25 in radius, so the
+   * person a week would otherwise rebuild the whole catchment every turn to
+   * get the same answer. A bucket is a factor of 1.25 in radius, so the
    * rebuild happens when the reachable area has changed by half.
    */
   catchmentFor(address: Address, population: number): Catchment {
-    if (address.length !== 3) throw new RangeError('settlements stand on ground tiles');
-    const areaM2 = this.cellAreaAt(2);
+    if (address.length !== GROUND_DEPTH + 1) {
+      throw new RangeError(`settlements stand on layer ${GROUND_DEPTH} tiles`);
+    }
+    const areaM2 = this.cellAreaAt(GROUND_DEPTH);
 
-    // The radius is quantised, and then the quantised value is what gets used.
+    // The radius is quantised, and the quantised value is what gets used.
     //
     // Bucketing only the cache *key* while building with the raw radius made
     // the catchment depend on call history: two populations landing in the same
-    // bucket shared whichever catchment the first one happened to build, so the
-    // same world could give different answers depending on the order it was
-    // asked. That is exactly the class of bug docs/determinism.md exists to
-    // prevent, and it is invisible until two machines disagree.
+    // bucket shared whichever catchment the first one built, so the same world
+    // could give different answers depending on the order it was asked. That is
+    // exactly the class of bug docs/determinism.md exists to prevent.
     //
     // dlog rather than Math.log for the same reason -- see determinism.md.
     const wanted = radiusForPopulation(population, areaM2);
     const bucket = Math.round(dlog(Math.max(1, wanted)) / dlog(1.25));
     const radiusM = 1.25 ** bucket;
     const key = `${toKey(address)}@${bucket}`;
+
     const hit = this.catchments.get(key);
     if (hit !== undefined) return hit;
 
-    const region = address[0];
-    const realmCell = address[1];
-    const maps: SubMap[] = [this.subMap([region, realmCell])];
-    const addresses: Address[] = [[region, realmCell]];
-
-    // Outward through the realm map's own adjacency. A settlement on the rim
-    // of a realm map gets fewer neighbours than one in the middle, which is
-    // the cross-boundary gap showing through -- it under-feeds rim
-    // settlements rather than crashing, which is the right way to be wrong.
-    for (let d = 0; d < 6 && maps.length < World.CATCHMENT_MAPS; d++) {
-      const n = subNeighbours[realmCell * 6 + d];
-      if (n < 0) continue;
-      maps.push(this.subMap([region, n]));
-      addresses.push([region, n]);
-    }
-
+    const { maps, addresses } = this.mapsAround(address, radiusM, World.CATCHMENT_MAPS);
     const built = buildCatchment(
-      maps, addresses, 0, address[2], radiusM, areaM2);
+      maps, addresses, 0, address[address.length - 1], radiusM, areaM2);
 
     this.catchments.set(key, built);
     if (this.catchments.size > 64) {
@@ -302,58 +298,139 @@ export class World {
   }
 
   /**
-   * What that land actually delivers.
+   * Every cell of a given address length whose centre lies within `radiusM`
+   * of a point, wherever it is and whatever it belongs to.
    *
-   * `ironSupply` is how much of the iron the settlement wants it actually has,
-   * 0..1 -- iron tools take about a third off the farming year. `labourShare`
-   * is how much of its hands are farming rather than mining or logging, which
-   * is what lets a town specialise.
+   * THIS IS THE CROSS-BOUNDARY QUERY, and it took the world getting smaller to
+   * force it. The previous version walked neighbours inside one sub-map, which
+   * worked when a map was 9,919 cells and hid a real limitation. At 91 cells a
+   * settlement's entire reachable world became 91 x 91 tiles -- exactly what it
+   * farms -- so there was never anywhere to put a daughter village, and
+   * expansion stopped for good.
+   *
+   * The method is to descend rather than to walk. At the globe every cell is
+   * reachable, so take the ones near the point; then inside each of those take
+   * the sub-cells near the point; and so on down. Boundaries are crossed for
+   * free, because at every level *all* the parents that reach the disc are
+   * considered, not just the one the point happens to sit in.
+   *
+   * What this does not solve is tile-to-tile adjacency across a boundary --
+   * a cell on a rim still has five neighbours. Area queries are the case that
+   * matters for catchments, trade and settlement, and this is them.
    */
-  /**
-   * Every ground map within `radiusM` of a settlement, generated as needed.
-   *
-   * A catchment stops at seven maps because that is as far as anybody walks to
-   * a field twice a day. A founding party is not going to a field -- it is
-   * leaving -- and it will walk further than the fields reach. Without this a
-   * town that had filled its whole catchment could never place a daughter,
-   * because the only ground it could see was already its own, and expansion
-   * stopped dead at exactly the moment population pressure was highest.
-   *
-   * Rings of realm cells, so the cost is 1, 7, 19 or 37 maps. Capped at three
-   * rings, beyond which a founding party is walking further than it would.
-   */
-  mapsWithin(address: Address, radiusM: number): { maps: SubMap[]; addresses: Address[] } {
-    const region = address[0];
-    const home = address[1];
+  cellsWithin(
+    x: number, y: number, z: number,
+    radiusM: number,
+    addressLength: number,
+    cap = 4096,
+    minRadiusM = 0,
+  ): Address[] {
+    const len = Math.max(1, Math.min(addressLength, MAX_DEPTH));
+    // Addresses start at length one -- a globe cell -- and each descent adds a
+    // number, so reaching length L takes L-1 steps. Running L of them returned
+    // cells one whole layer too deep, and put the annulus filter on the wrong
+    // layer as well, which is why a founding party kept being handed the
+    // thousand tiles nearest its own front door.
+    const steps = len - 1;
 
-    // Realm cells are 2.4 km centre to centre, so this is how many rings out
-    // the radius actually reaches.
-    const realmSpacingM = Math.sqrt(3) * cellRadiusRad(1) * this.radiusM;
-    const rings = Math.max(1, Math.min(3, Math.ceil(radiusM / realmSpacingM)));
+    // Level 0: the globe, where every cell is reachable from every other.
+    const slack0 = cellRadiusRad(0) * this.radiusM;
+    let level: Address[] = [];
+    for (let c = 0; c < CELL_COUNT; c++) {
+      const dx = centres[c * 3] - x;
+      const dy = centres[c * 3 + 1] - y;
+      const dz = centres[c * 3 + 2] - z;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) * this.radiusM;
+      if (d <= radiusM + slack0) level.push([c]);
+    }
+    // Always at least the cell the point is in, so a tiny radius still returns
+    // something rather than an empty list.
+    if (level.length === 0) level = [[cellAt(x, y, z)]];
 
-    const seen = new Set<number>([home]);
-    let frontier = [home];
-    for (let r = 0; r < rings; r++) {
-      const next: number[] = [];
-      for (const cell of frontier) {
-        for (let d = 0; d < 6; d++) {
-          const n = subNeighbours[cell * 6 + d];
-          if (n < 0 || seen.has(n)) continue;
-          seen.add(n);
-          next.push(n);
+    for (let depth = 1; depth <= steps; depth++) {
+      // A cell of this depth can reach the disc if its centre is within the
+      // radius plus its own size; anything further cannot overlap.
+      const slack = cellRadiusRad(depth) * this.radiusM;
+      const next: Address[] = [];
+
+      // Distance is computed once and carried, not recomputed inside the
+      // comparator. Sorting with a comparator that re-derived it turned a
+      // few-millisecond query into minutes.
+      const scored: { address: Address; d: number }[] = [];
+      for (const parent of level) {
+        const map = this.subMap(parent);
+        for (let c = 0; c < SUBCELL_COUNT; c++) {
+          const dx = map.dirs[c * 3] - x;
+          const dy = map.dirs[c * 3 + 1] - y;
+          const dz = map.dirs[c * 3 + 2] - z;
+          const d = Math.sqrt(dx * dx + dy * dy + dz * dz) * this.radiusM;
+              // An annulus, not a disc, when a minimum is given.
+          //
+          // The cap keeps the nearest cells, which is right for a catchment
+          // and exactly wrong for a founding party: asked for somewhere 3.6 km
+          // out it was handed the thousand closest tiles, all of them inside
+          // the parent's own fields, and reported no site available for ever.
+          if (d > radiusM + slack) continue;
+          // The inner edge only applies at the layer actually being returned.
+          // Applying it on the way down would discard parents that straddle it
+          // and lose everything beyond.
+          if (depth === steps && d < minRadiusM) continue;
+          scored.push({ address: [...parent, c], d });
         }
       }
-      frontier = next;
-    }
+      if (scored.length === 0) break;
 
-    const cells = [...seen].sort((a, b) => a - b);
+      // Nearest first, so a cap keeps the closest rather than an arbitrary
+      // slice, and the order never depends on how the parents were listed.
+      scored.sort((a, b) => a.d - b.d || compareAddress(a.address, b.address));
+      const kept = scored.length > cap ? scored.slice(0, cap) : scored;
+      for (const item of kept) next.push(item.address);
+      level = next;
+    }
+    return level;
+  }
+
+  /**
+   * The sub-maps a settlement at `address` can draw on, out to `radiusM`.
+   *
+   * Home first, so the catchment's own index 0 is always the settlement's map.
+   */
+  private mapsAround(
+    address: Address,
+    radiusM: number,
+    cap: number,
+    minRadiusM = 0,
+  ): { maps: SubMap[]; addresses: Address[] } {
+    const home = address.slice(0, -1);
+    const dir = this.tile(address).dir;
+    const found = this.cellsWithin(
+      dir[0], dir[1], dir[2], radiusM, home.length, cap, minRadiusM);
+
+    const homeKey = toKey(home);
+    const ordered = [home, ...found.filter((a) => toKey(a) !== homeKey)];
+
     const maps: SubMap[] = [];
     const addresses: Address[] = [];
-    for (const cell of cells) {
-      maps.push(this.subMap([region, cell]));
-      addresses.push([region, cell]);
+    for (const a of ordered) {
+      maps.push(this.subMap(a));
+      addresses.push(a);
     }
     return { maps, addresses };
+  }
+
+  /**
+   * Every sub-map within `radiusM` of an address, however many that takes.
+   *
+   * A catchment is capped, because nobody walks to a field on the far side of
+   * the county twice a day. A founding party is not going to a field -- it is
+   * leaving -- so its search is allowed a much larger budget.
+   */
+  mapsWithin(
+    address: Address,
+    radiusM: number,
+    minRadiusM = 0,
+  ): { maps: SubMap[]; addresses: Address[] } {
+    return this.mapsAround(address, radiusM, 1024, minRadiusM);
   }
 
   harvestFor(
@@ -491,11 +568,11 @@ export class World {
   // --- diagnostics ----------------------------------------------------------
 
   describe(): string {
-    const ground = this.totalCellsAt(2);
+    const ground = this.totalCellsAt(GROUND_DEPTH);
     return [
       `world ${this.seed}`,
       `${CELL_COUNT} regions, ${ground.toLocaleString('en')} ground tiles`,
-      `${Math.round(this.cellAreaAt(2))} m2 each`,
+      `${Math.round(this.cellAreaAt(GROUND_DEPTH))} m2 each`,
       `turn ${this.turn}, ${this.deltas.size} deltas, `
         + `${this.polities.size} polities, ${this.cache.size} maps cached`,
     ].join(' | ');
@@ -504,3 +581,10 @@ export class World {
 
 export { toKey, fromKey, layerName, type Address, type GroundTile, type TileDelta };
 export type { Catchment, Harvest, Competitor, Polity };
+
+/** A total order on addresses, so nothing depends on iteration order. */
+function compareAddress(a: Address, b: Address): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return a.length - b.length;
+}

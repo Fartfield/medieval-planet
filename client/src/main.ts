@@ -12,7 +12,9 @@
 
 import { World } from '../../sim/world.ts';
 import { regionFingerprint } from '../../sim/turn.ts';
-import { toKey, fromKey } from '../../sim/geo/address.ts';
+import {
+  toKey, fromKey, GROUND_DEPTH, MAX_DEPTH, LAYER_NAMES,
+} from '../../sim/geo/address.ts';
 import { CELL_COUNT } from '../../sim/geo/sphere.ts';
 import { SUBCELL_COUNT } from '../../sim/geo/hexgrid.ts';
 import { BIOME_NAMES, BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
@@ -107,7 +109,8 @@ function handle(msg: ServerMessage): void {
       world.turn = msg.turn;
       world.loadDeltas(msg.deltas);
       log(`world ${msg.seed} built locally in ${Math.round(performance.now() - t0)} ms`);
-      log(`${CELL_COUNT} regions, ${world.totalCellsAt(2).toLocaleString('en')} ground tiles`);
+      log(`${CELL_COUNT} regions, ${world.totalCellsAt(GROUND_DEPTH).toLocaleString('en')} ground tiles`);
+      log(`${MAX_DEPTH} layers: ${LAYER_NAMES.join(' > ')}`);
       log(`${msg.deltas.length} changed tile(s) received`);
 
       setLive(true);
@@ -226,7 +229,7 @@ function visibleOverlays(w: World): { owned: Map<number, number>; populated: Map
  * free after the first frame.
  */
 function workedOverlay(w: World): Map<number, number> | null {
-  if (path.length !== 2 || selected < 0) return null;
+  if (path.length !== GROUND_DEPTH || selected < 0) return null;
   const address = [...path, selected];
   const tile = w.tile(address);
   if (tile.population <= 0) return null;
@@ -340,9 +343,13 @@ window.addEventListener('keydown', (e) => {
 
 function descend(): void {
   if (world === null || selected < 0) return;
-  // The ground layer is the deepest that generates today; plot maps are a
-  // configuration change away but nothing consumes them yet.
-  if (path.length >= 2) { log('the ground layer is as deep as it goes for now'); return; }
+  // Down to the finest layer the ladder has. Below the plot layer nothing is
+  // simulated -- a yard and a pace are generated ground with no economy on
+  // them -- but they are real cells and can be looked at.
+  if (path.length >= MAX_DEPTH - 1) {
+    log(`${LAYER_NAMES[MAX_DEPTH - 1]} is the finest layer there is`);
+    return;
+  }
   path = [...path, selected];
   cam.panX = 0; cam.panY = 0; cam.zoom = 1;
   selected = -1;
@@ -458,7 +465,7 @@ function drawInspector(): void {
       ${row('plate', String(p.plate[c]))}
       ${row('to the sea', `${p.oceanDistance[c]} cell(s)`)}
       ${row('area', `${Math.round(world.cellAreaAt(0) / 1e6).toLocaleString('en')} km2`)}
-      ${row('holds', `${SUBCELL_COUNT.toLocaleString('en')} realms`)}
+      ${row('holds', `${SUBCELL_COUNT} ${LAYER_NAMES[1]}s`)}
     </table>`;
     hint.textContent = 'double-click or Enter to open this region';
     return;
@@ -519,8 +526,10 @@ function drawInspector(): void {
     </table>
     ${tile.population > 0 ? supplyPanel(world, address, tile.population) : ''}`;
 
-  if (address.length === 2) {
-    hint.textContent = 'double-click or Enter to open this realm';
+  // Only the plot layer has an economy on it. Everything between the globe and
+  // it is a place you pass through on the way down.
+  if (address.length < GROUND_DEPTH + 1) {
+    hint.textContent = `double-click or Enter to open this ${LAYER_NAMES[address.length - 1]}`;
     return;
   }
 
@@ -541,7 +550,8 @@ function drawInspector(): void {
 
   hint.textContent = tile.elevationM < 0
     ? 'open water cannot be claimed'
-    : `orders resolve at the end of turn ${turn + 1}`;
+    : `orders resolve at the end of turn ${turn + 1}`
+      + (address.length < MAX_DEPTH ? ' \u00b7 Enter to go deeper' : '');
 }
 
 /**

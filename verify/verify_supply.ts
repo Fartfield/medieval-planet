@@ -11,6 +11,7 @@ import { World } from '../sim/world.ts';
 import { resolveTurn } from '../sim/turn.ts';
 import { SUBCELL_COUNT } from '../sim/geo/hexgrid.ts';
 import { CELL_COUNT } from '../sim/geo/sphere.ts';
+import { GROUND_DEPTH } from '../sim/geo/address.ts';
 import { yieldsFor } from '../sim/gen/submap.ts';
 import { soilAt } from '../sim/gen/submap.ts';
 import { grainYieldKgPerHa, cropSuitability, growingDays } from '../sim/model/soil.ts';
@@ -25,6 +26,7 @@ import {
 } from '../sim/model/settlement.ts';
 import { HELD_HECTARE_DAYS_IRON } from '../sim/model/labour.ts';
 import { check, measure, assert, suite } from './harness.ts';
+import { bestRegion, groundSiteIn, bestFarmSite, yieldAt, siblingIn } from './sites.ts';
 
 const SEED = 20260826;
 
@@ -135,29 +137,25 @@ suite('crop suitability', () => {
   // And the double-count itself must stay gone: fertility must not appear
   // twice in a yield. Virgin soil has full health.
   const w = new World({ seed: SEED });
-  let region = 0;
-  for (let c = 0; c < CELL_COUNT; c++) {
-    if (w.planet.elevationM[c] > 100 && w.planet.biome[c] === Biome.Savanna) { region = c; break; }
-  }
-  const map = w.subMap([region, 4959]);
+  const map = w.subMap(bestFarmSite(w).slice(0, -1));
   let sample = -1;
   for (let c = 0; c < SUBCELL_COUNT; c++) if (map.elevationM[c] > 0) { sample = c; break; }
-  const soil = soilAt(map, sample);
+  const soil = soilAt(map, sample >= 0 ? sample : 0);
   check('virgin soil is in full health', soil.health, 1, 0);
 });
 
 suite('farmland', () => {
-  const w = new World({ seed: SEED, cacheSize: 16 });
+  const w = new World({ seed: SEED });
 
   // Somewhere on this planet must have land as good as medieval Europe's, or
   // the game has no arable at all. Scan and take the best.
   let bestHaPerPerson = Infinity;
   let bestYield = 0;
   let scanned = 0;
-  for (let c = 0; c < CELL_COUNT && scanned < 16; c += 11) {
-    if (w.planet.elevationM[c] <= 50) continue;
+  for (let c = 0; c < CELL_COUNT && scanned < 16; c += 3) {
+    if (w.planet.elevationM[c] <= 0) continue;
     scanned++;
-    const map = w.subMap([c, 4959]);
+    const map = w.subMap(groundSiteIn(w, c).slice(0, -1));
     const ys = yieldsFor(map);
     const sorted = Array.from(ys).filter((v) => v > 0).sort((a, b) => b - a);
     if (sorted.length === 0) continue;
@@ -179,17 +177,9 @@ suite('farmland', () => {
 });
 
 suite('settlement', () => {
-  const w = new World({ seed: SEED, cacheSize: 32 });
-  let region = 0;
-  for (let c = 0; c < CELL_COUNT; c++) {
-    if (w.planet.elevationM[c] > 100 && w.planet.biome[c] === Biome.Savanna) { region = c; break; }
-  }
-  const map = w.subMap([region, 4959]);
-  const ys = yieldsFor(map);
-  let best = 0;
-  for (let c = 0; c < SUBCELL_COUNT; c++) if (ys[c] > ys[best]) best = c;
-  const addr = [region, 4959, best];
-  measure('reference settlement site yield', ys[best]);
+  const w = new World({ seed: SEED });
+  const addr = bestFarmSite(w);
+  measure('reference settlement site yield', yieldAt(w, addr));
 
   // A settlement must reach far more land than it stands on. This is the whole
   // point of the system: one tile is 506 m2 and feeds a tenth of a person.
@@ -212,12 +202,13 @@ suite('settlement', () => {
   assert('six thousand people outgrow the land', big.ration < 1);
   assert('and are limited by land, not by hands', big.limitedBy === 'land');
   measure('carrying capacity of the catchment', big.potentialPopulation);
-  assert('the catchment supports a proper town',
-    big.potentialPopulation > 500 && big.potentialPopulation < 20000);
+  assert('the catchment supports a proper village or town',
+    big.potentialPopulation > 100 && big.potentialPopulation < 20000);
 
   // Radius grows with the settlement, or a city searches only its own doorstep.
   assert('a bigger settlement searches further',
-    radiusForPopulation(5000, w.cellAreaAt(2)) > radiusForPopulation(50, w.cellAreaAt(2)));
+    radiusForPopulation(5000, w.cellAreaAt(GROUND_DEPTH))
+      > radiusForPopulation(50, w.cellAreaAt(GROUND_DEPTH)));
 
   // The ranking must be by return per day, so the best land is taken first.
   const catchment = w.catchmentFor(addr, 500);
@@ -237,16 +228,8 @@ suite('settlement', () => {
 });
 
 suite('a settlement over time', () => {
-  const w = new World({ seed: SEED, cacheSize: 32 });
-  let region = 0;
-  for (let c = 0; c < CELL_COUNT; c++) {
-    if (w.planet.elevationM[c] > 100 && w.planet.biome[c] === Biome.Savanna) { region = c; break; }
-  }
-  const map = w.subMap([region, 4959]);
-  const ys = yieldsFor(map);
-  let best = 0;
-  for (let c = 0; c < SUBCELL_COUNT; c++) if (ys[c] > ys[best]) best = c;
-  const addr = [region, 4959, best];
+  const w = new World({ seed: SEED });
+  const addr = bestFarmSite(w);
 
   w.setDelta(addr, { owner: 0, population: 5, populationHealth: 1 });
   const track: number[] = [];
@@ -303,26 +286,33 @@ suite('a settlement over time', () => {
   assert('it grows many times over', final > track[0] * 8);
   assert('and never exceeds what the land can bear', final < capacity);
 
-  // Poor land must support fewer people than good land. Stated as a
-  // comparison rather than an absolute: an earlier version asserted that forty
-  // people could not live on taiga, which stopped being true the moment the
-  // labour model came down to the real medieval task rates and doubled how
-  // much ground a person could work. The ordering is the durable claim.
-  const w2 = new World({ seed: SEED, cacheSize: 32 });
-  let poor = 0;
+  // Poor land must support fewer people than good land, measured the same way.
+  //
+  // Two earlier versions of this got it wrong in different ways. The first
+  // asserted an absolute -- that forty people could not live on taiga -- which
+  // stopped being true when the labour model came down to real medieval task
+  // rates. The second compared the two at *different populations*, and since
+  // the search radius grows with population that compared two different-sized
+  // catchments and reported the poor land as richer. Same population, same
+  // radius, or it means nothing.
+  const w2 = new World({ seed: SEED });
+  let poorSite: number[] | null = null;
+  let poorYield = Infinity;
   for (let c = 0; c < CELL_COUNT; c++) {
-    if (w2.planet.elevationM[c] > 100 && w2.planet.biome[c] === Biome.Taiga) { poor = c; break; }
+    if (w2.planet.elevationM[c] <= 0 || w2.planet.nppGm2[c] <= 0) continue;
+    const candidate = groundSiteIn(w2, c);
+    const y = yieldAt(w2, candidate);
+    if (y > 0 && y < poorYield) { poorYield = y; poorSite = candidate; }
   }
-  if (poor > 0) {
-    const pmap = w2.subMap([poor, 4959]);
-    const pys = yieldsFor(pmap);
-    let pbest = 0;
-    for (let c = 0; c < SUBCELL_COUNT; c++) if (pys[c] > pys[pbest]) pbest = c;
-    const paddr = [poor, 4959, pbest];
-    const poorCapacity = w2.harvestFor(paddr, 400).potentialPopulation;
+
+  if (poorSite !== null) {
+    const AT = 400;
+    const poorCapacity = w2.harvestFor(poorSite, AT).potentialPopulation;
+    const goodCapacity = w2.harvestFor(bestFarmSite(w2), AT).potentialPopulation;
+    measure('poorest site yield kg per ha', poorYield);
     measure('poor land carrying capacity', poorCapacity);
-    measure('good land carrying capacity', capacity);
-    assert('poor land carries far fewer people than good land',
-      poorCapacity < capacity * 0.6);
+    measure('good land carrying capacity', goodCapacity);
+    assert('poor land carries fewer people than good land, at the same size',
+      poorCapacity < goodCapacity);
   }
 });

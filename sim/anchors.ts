@@ -283,11 +283,29 @@ export const PRECIP_POLAR_FRONT_WIDTH = 0.20;
 export const PRECIP_BACKGROUND_MM = 40.0;
 
 /**
- * How fast rain wrings out of an air mass moving inland, per cell of travel.
- * At 277 km a cell this is a half-life of about 1,900 km, which puts the dry
- * heart of a continent the right distance from its coasts.
+ * How fast rain wrings out of an air mass moving inland, per KILOMETRE.
+ *
+ * Per kilometre, not per cell, and that distinction is not pedantry: it was
+ * written per cell, and when the globe went from 10,242 regions to 92 the cell
+ * grew from 277 km to 2,530 km and the term became ten times too weak. Every
+ * continent turned into rainforest -- 44% forest cover against a target of 31%
+ * -- because no interior was ever dry.
+ *
+ * A half-life of about 1,900 km puts the dry heart of a continent the right
+ * distance from its coasts, and now says so in units that do not care how the
+ * world is subdivided.
  */
-export const CONTINENTALITY_PER_CELL = 0.10;
+export const CONTINENTALITY_PER_KM = 0.10 / 277;
+
+/**
+ * How wide a mountain range is, metres. A plate boundary is a line and a
+ * cordillera is a few hundred kilometres across, so the uplift is smeared over
+ * that distance -- however many cells that happens to be at the current
+ * resolution. At 92 regions it is less than one cell and no smearing happens
+ * at all, which is the honest answer: a 2,900 km cell cannot resolve the
+ * Andes.
+ */
+export const MOUNTAIN_RANGE_WIDTH_M = 500000.0;
 
 /** Metres of ascent that doubles rainfall on a windward slope, and metres of
  *  descent that drives a lee slope to its driest, with that floor. Orographic

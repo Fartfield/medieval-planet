@@ -13,7 +13,7 @@
 
 import * as A from './anchors.ts';
 import { SOLDIER_GRAIN_KG_PER_DAY } from './derive.ts';
-import { fromKey, toKey, type Address } from './geo/address.ts';
+import { fromKey, toKey, GROUND_DEPTH, type Address } from './geo/address.ts';
 import { clamp } from './gen/mathx.ts';
 import { Hasher } from './hash.ts';
 import { runEconomy, GRAIN_PER_PERSON_YEAR, type Report } from './economy.ts';
@@ -154,7 +154,9 @@ function applyOrder(world: World, order: Order, playerCount: number): string | n
   } catch {
     return 'malformed address';
   }
-  if (address.length !== 3) return 'orders act on ground tiles';
+  if (address.length !== GROUND_DEPTH + 1) {
+    return `orders act on layer ${GROUND_DEPTH} tiles`;
+  }
 
   let tile;
   try {

@@ -24,6 +24,8 @@ import {
   clear, stockTarget, routeYield, modeBetween, distanceM,
   Transport, type Trader,
 } from '../sim/model/trade.ts';
+import { groundSiteIn, bestFarmSite, yieldAt } from './sites.ts';
+import { GROUND_DEPTH } from '../sim/geo/address.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 const SEED = 20260826;
@@ -162,47 +164,59 @@ suite('specialisation', () => {
   // A barren tile with ore in it, and good farmland near enough to reach it.
   // Searched rather than hard-coded, so this still finds a site if generation
   // ever shifts underneath it.
-  const scout = new World({ seed: SEED, cacheSize: 12 });
-  let found: { region: number; farm: number; mine: number } | null = null;
+  const scout = new World({ seed: SEED });
+  const farm = bestFarmSite(scout);
+  const farmYield = yieldAt(scout, farm);
+  const dir = scout.tile(farm).dir;
 
-  for (let c = 0; c < CELL_COUNT && found === null; c += 7) {
-    if (scout.planet.elevationM[c] <= 50) continue;
-    const map = scout.subMap([c, 4959]);
+  // Searched over a real area rather than one sub-map.
+  //
+  // A sub-map is 91 tiles now, and a tile with workable ore on it turns up on
+  // a couple of per cent of ground -- so a single map very often contains
+  // none at all, and looking only there reported that the planet had no ore
+  // anywhere. Within four kilometres of good farmland there are hundreds.
+  const near = scout.cellsWithin(dir[0], dir[1], dir[2], 4000, GROUND_DEPTH);
+
+  let mine: number[] | null = null;
+  let mineYield = Infinity;
+  let mineOre = 0;
+  for (const mapAddr of near) {
+    const map = scout.subMap(mapAddr);
     const ys = yieldsFor(map);
-    let farmCell = -1;
-    for (let i = 0; i < SUBCELL_COUNT; i++) {
-      if (map.elevationM[i] < 0) continue;
-      if (farmCell < 0 || ys[i] > ys[farmCell]) farmCell = i;
-    }
-    if (farmCell < 0 || ys[farmCell] < 300) continue;
-    for (let i = 0; i < SUBCELL_COUNT; i++) {
-      if (map.elevationM[i] < 0 || ys[i] > ys[farmCell] * 0.12) continue;
-      const ore = scout.tile([c, 4959, i]).deposits.find((d) => d.kind === Mineral.Iron);
-      if (ore === undefined || ore.richness < 0.4) continue;
-      found = { region: c, farm: farmCell, mine: i };
-      break;
+    for (let c = 0; c < SUBCELL_COUNT; c++) {
+      if (map.elevationM[c] < 0) continue;
+      if (ys[c] > farmYield * 0.45) continue;
+      const ore = scout.tile([...mapAddr, c]).deposits.find((d) => d.kind === Mineral.Iron);
+      if (ore === undefined || ore.richness < 0.2) continue;
+      if (ys[c] < mineYield) { mineYield = ys[c]; mineOre = ore.richness; mine = [...mapAddr, c]; }
     }
   }
 
-  assert('the planet has barren ground with ore in it', found !== null);
-  if (found === null) return;
-  measure('specialisation test region', found.region);
-
-  const mine = [found.region, 4959, found.mine];
-  const farm = [found.region, 4959, found.farm];
+  assert('there is barren ground with ore in it near good farmland', mine !== null);
+  if (mine === null) return;
+  measure('farm site yield', farmYield);
+  measure('mine site yield', mineYield);
+  measure('mine site ore richness', mineOre);
+  assert('the mine site is much the poorer ground', mineYield < farmYield * 0.5);
 
   function play(withNeighbour: boolean, years: number): { pop: number; share: number; iron: number; grainIn: number } {
-    const w = new World({ seed: SEED, cacheSize: 48 });
+    const w = new World({ seed: SEED });
     if (withNeighbour) {
-      w.setDelta(farm, { owner: 0, population: 600, populationHealth: 1, grainStock: 600 * 330, farmShare: 1 });
+      w.setDelta(farm, {
+        owner: 0, population: 400, populationHealth: 1,
+        grainStock: 400 * 330, farmShare: 1,
+      });
     }
-    w.setDelta(mine, { owner: 0, population: 60, populationHealth: 1, grainStock: 60 * 30, farmShare: 1 });
+    w.setDelta(mine!, {
+      owner: 0, population: 60, populationHealth: 1,
+      grainStock: 60 * 30, farmShare: 1,
+    });
 
     let last = null;
     const turns = Math.round(years * A.TURNS_PER_YEAR);
     for (let t = 0; t < turns; t++) {
       const res = resolveTurn(w, [], 1);
-      last = res.reports.get(toKey(mine)) ?? null;
+      last = res.reports.get(toKey(mine!)) ?? null;
       if (last === null) break;
     }
     return last === null
@@ -229,11 +243,27 @@ suite('specialisation', () => {
   assert('and it survives doing so', paired.pop > 0);
 
   // Territory: two settlements cannot both farm the same field.
-  const w = new World({ seed: SEED, cacheSize: 48 });
+  //
+  // The rival has to be inside the catchment to take anything from it, and the
+  // mine site above may be four kilometres off -- beyond what 128 sub-maps
+  // reach. So this uses a neighbour picked for being close, which is what the
+  // claim is actually about.
+  const w = new World({ seed: SEED });
+  const catchment = w.catchmentFor(farm, 400);
+  const rivalTile = catchment.candidates.find((t) => t.distanceM > 300 && t.distanceM < 800);
+  assert('there is a tile close enough to put a rival on', rivalTile !== undefined);
+  if (rivalTile === undefined) return;
+
+  const rivalMap = catchment.maps[rivalTile.map];
+  const rival = {
+    x: rivalMap.dirs[rivalTile.cell * 3],
+    y: rivalMap.dirs[rivalTile.cell * 3 + 1],
+    z: rivalMap.dirs[rivalTile.cell * 3 + 2],
+  };
+  measure('rival distance m', rivalTile.distanceM);
+
   const solo = w.harvestFor(farm, 400);
-  const withRival = w.harvestFor(farm, 400, 1, 1, [{
-    x: w.tile(mine).dir[0], y: w.tile(mine).dir[1], z: w.tile(mine).dir[2],
-  }]);
+  const withRival = w.harvestFor(farm, 400, 1, 1, [rival]);
   measure('tiles lost to a neighbour', withRival.tilesLostToNeighbours);
   assert('a neighbour takes land away', withRival.tilesLostToNeighbours > 0);
   assert('and that means less to farm',

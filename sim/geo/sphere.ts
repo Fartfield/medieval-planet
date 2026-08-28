@@ -18,27 +18,40 @@
 //
 // A Goldberg polyhedron is the dual of a geodesic sphere, which means its
 // cells correspond one-for-one to the *vertices* of the geodesic. So we never
-// construct the Goldberg polyhedron directly: we subdivide an icosahedron five
-// times, and the 10,242 vertices that fall out are our 10,242 cell centres.
-// Cell adjacency is geodesic edge adjacency; a cell's outline is the ring of
-// triangle centroids around its vertex.
+// construct the Goldberg polyhedron directly: we subdivide each face of an
+// icosahedron into FREQUENCY^2 smaller triangles, and the 10*F^2 + 2 vertices
+// that fall out are the cell centres. Cell adjacency is geodesic edge
+// adjacency; a cell's outline is the ring of triangle centroids around its
+// vertex.
 //
-// Five levels is not arbitrary. Each level quadruples the triangles and gives
-// 10*4^level + 2 vertices; level 5 gives 10,242, which is the closest this
-// construction comes to the 10,000 regions the design asked for -- 2.4% over.
+// The subdivision is by arbitrary frequency rather than by repeated halving.
+// Halving is simpler -- an edge-midpoint cache and one line of recursion --
+// but it can only ever produce 12, 42, 162, 642, 2562 or 10242 cells, and the
+// design asks for a hundred. Frequency 3 gives 92, which is what "10 by 10"
+// means on a sphere.
 //
 // DETERMINISM
 //
-// Cell ids are assigned in subdivision order from a fixed starting icosahedron,
-// so they are stable across runs and machines without any sorting. Edge
-// midpoints are shared through a cache keyed by the *indices* of their two
-// parents, never by comparing floating-point positions -- two faces computing
-// "the same" midpoint would otherwise produce values differing in the last bit
-// and silently split one cell into two. This is the single most important line
-// in the file and it is the cache below.
+// Vertices are identified by their *position in the subdivision*, never by
+// comparing floating-point coordinates. A point on the edge between two faces
+// is generated twice, once by each face, and the two results differ in the
+// last bit; keyed by geometry they would become two cells and a border would
+// quietly fail to close. Keyed by (which edge, how many steps along it) they
+// are the same cell by construction. This is the single most important thing
+// in the file.
 
-export const SUBDIVISIONS = 5;
-export const CELL_COUNT = 10 * 4 ** SUBDIVISIONS + 2; // 10,242
+/**
+ * How many pieces each icosahedron edge is cut into.
+ *
+ * 3 gives 92 cells: 80 hexagons and the 12 pentagons a sphere cannot avoid.
+ * That is the design's "10 by 10 world map" as closely as a sphere allows.
+ *
+ * Note what that costs: one region in eight is a pentagon. The twelve are a
+ * fixed toll, so the coarser the globe the larger a share of it they are --
+ * at the old frequency of 32 they were 0.12% of the map and nobody noticed.
+ */
+export const FREQUENCY = 3;
+export const CELL_COUNT = 10 * FREQUENCY * FREQUENCY + 2; // 92
 export const PENTAGON_COUNT = 12;
 
 /** Cell centres as unit vectors, packed xyz. Index i is at [3i, 3i+1, 3i+2]. */
@@ -52,7 +65,7 @@ export const centres = new Float64Array(CELL_COUNT * 3);
 export const neighbours = new Int32Array(CELL_COUNT * 6).fill(-1);
 
 /** Triangles of the underlying geodesic, three vertex ids each. */
-let triangles: Int32Array;
+let faceTriangles: Int32Array;
 
 /** Cell outlines, built lazily -- only the client ever needs them. */
 let outlines: Float64Array[] | null = null;
@@ -64,68 +77,107 @@ function build(): void {
 
   // The twelve icosahedron vertices, as three orthogonal golden rectangles.
   // These become cells 0..11 and are precisely the twelve pentagons.
-  let verts: number[] = [
+  const verts: number[] = [
     -1, t, 0, 1, t, 0, -1, -t, 0, 1, -t, 0,
     0, -1, t, 0, 1, t, 0, -1, -t, 0, 1, -t,
     t, 0, -1, t, 0, 1, -t, 0, -1, -t, 0, 1,
   ];
   for (let i = 0; i < 12; i++) normalizeInto(verts, i);
 
-  let faces: number[] = [
+  const faces: number[] = [
     0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11,
     1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8,
     3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9,
     4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1,
   ];
 
-  for (let level = 0; level < SUBDIVISIONS; level++) {
-    const next: number[] = [];
-    // Keyed by the two parent vertex indices, smaller first. Integer keys, so
-    // two faces sharing an edge get the same midpoint by identity rather than
-    // by floating-point luck. Splitting a cell in two here would be invisible
-    // until a border refused to close, a hundred hours later.
-    const midpoints = new Map<number, number>();
+  const m = FREQUENCY;
+  // Shared points, keyed by where they sit in the subdivision rather than by
+  // their coordinates. Corners are the twelve originals; a point on an edge is
+  // named by that edge and how many steps along it, counting from whichever
+  // end has the lower index so both faces agree; interior points belong to one
+  // face and cannot collide.
+  const shared = new Map<string, number>();
+  for (let i = 0; i < 12; i++) shared.set(`c${i}`, i);
 
-    for (let f = 0; f < faces.length; f += 3) {
-      const a = faces[f];
-      const b = faces[f + 1];
-      const c = faces[f + 2];
-      const ab = midpoint(verts, midpoints, a, b);
-      const bc = midpoint(verts, midpoints, b, c);
-      const ca = midpoint(verts, midpoints, c, a);
-      next.push(a, ab, ca, b, bc, ab, c, ca, bc, ab, bc, ca);
+  const triangles: number[] = [];
+
+  for (let f = 0; f < faces.length; f += 3) {
+    const a = faces[f];
+    const b = faces[f + 1];
+    const c = faces[f + 2];
+
+    // Points of this face, by barycentric step (i, j), with k = m - i - j.
+    const local = new Map<number, number>();
+
+    for (let i = 0; i <= m; i++) {
+      for (let j = 0; j <= m - i; j++) {
+        const k = m - i - j;
+        const key = identify(i, j, k, a, b, c, m);
+
+        let id = shared.get(key);
+        if (id === undefined) {
+          id = verts.length / 3;
+          verts.push(
+            (i * verts[a * 3] + j * verts[b * 3] + k * verts[c * 3]) / m,
+            (i * verts[a * 3 + 1] + j * verts[b * 3 + 1] + k * verts[c * 3 + 1]) / m,
+            (i * verts[a * 3 + 2] + j * verts[b * 3 + 2] + k * verts[c * 3 + 2]) / m,
+          );
+          normalizeInto(verts, id);
+          shared.set(key, id);
+        }
+        local.set(i * (m + 1) + j, id);
+      }
     }
-    faces = next;
+
+    const at = (i: number, j: number): number => local.get(i * (m + 1) + j)!;
+    for (let i = 0; i < m; i++) {
+      for (let j = 0; j < m - i; j++) {
+        triangles.push(at(i, j), at(i + 1, j), at(i, j + 1));
+        if (j < m - 1 - i) {
+          triangles.push(at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+        }
+      }
+    }
   }
 
   if (verts.length !== CELL_COUNT * 3) {
-    throw new Error(`icosphere produced ${verts.length / 3} cells, expected ${CELL_COUNT}`);
+    throw new Error(`geodesic produced ${verts.length / 3} cells, expected ${CELL_COUNT}`);
   }
   centres.set(verts);
-  triangles = Int32Array.from(faces);
+  faceTriangles = Int32Array.from(triangles);
 
   buildAdjacency();
 }
 
-function midpoint(
-  verts: number[],
-  cache: Map<number, number>,
-  a: number,
-  b: number,
-): number {
-  const key = a < b ? a * CELL_COUNT + b : b * CELL_COUNT + a;
-  const hit = cache.get(key);
-  if (hit !== undefined) return hit;
+/**
+ * Name a point of the subdivision so that two faces sharing it agree.
+ *
+ * Never a coordinate comparison. The two faces meeting along an edge compute
+ * the same point by different arithmetic and get answers differing in the last
+ * bit; if that decided identity, one cell would silently become two and a
+ * border would fail to close a hundred hours later.
+ */
+function identify(
+  i: number, j: number, k: number,
+  a: number, b: number, c: number, m: number,
+): string {
+  if (i === m) return `c${a}`;
+  if (j === m) return `c${b}`;
+  if (k === m) return `c${c}`;
+  // On an edge: named by the edge and the step count from its lower-indexed
+  // end, so both faces produce the same name.
+  if (k === 0) return edgeKey(a, b, j, m);
+  if (j === 0) return edgeKey(a, c, k, m);
+  if (i === 0) return edgeKey(b, c, k, m);
+  // Interior to this face, so the face is enough to make it unique.
+  return `f${a}.${b}.${c}.${i}.${j}`;
+}
 
-  const i = verts.length / 3;
-  verts.push(
-    (verts[a * 3] + verts[b * 3]) / 2,
-    (verts[a * 3 + 1] + verts[b * 3 + 1]) / 2,
-    (verts[a * 3 + 2] + verts[b * 3 + 2]) / 2,
-  );
-  normalizeInto(verts, i);
-  cache.set(key, i);
-  return i;
+function edgeKey(u: number, v: number, stepsFromU: number, m: number): string {
+  return u < v
+    ? `e${u}.${v}.${stepsFromU}`
+    : `e${v}.${u}.${m - stepsFromU}`;
 }
 
 function normalizeInto(v: number[], i: number): void {
@@ -147,10 +199,10 @@ function buildAdjacency(): void {
     if (count[a] >= 6) throw new Error(`cell ${a} has more than six neighbours`);
     neighbours[a * 6 + count[a]++] = b;
   };
-  for (let f = 0; f < triangles.length; f += 3) {
-    const a = triangles[f];
-    const b = triangles[f + 1];
-    const c = triangles[f + 2];
+  for (let f = 0; f < faceTriangles.length; f += 3) {
+    const a = faceTriangles[f];
+    const b = faceTriangles[f + 1];
+    const c = faceTriangles[f + 2];
     link(a, b); link(b, a);
     link(b, c); link(c, b);
     link(c, a); link(a, c);
@@ -246,10 +298,10 @@ export function outline(cell: number): Float64Array {
 
 function buildOutlines(): Float64Array[] {
   const incident: number[][] = Array.from({ length: CELL_COUNT }, () => []);
-  for (let f = 0; f < triangles.length; f += 3) {
-    incident[triangles[f]].push(f);
-    incident[triangles[f + 1]].push(f);
-    incident[triangles[f + 2]].push(f);
+  for (let f = 0; f < faceTriangles.length; f += 3) {
+    incident[faceTriangles[f]].push(f);
+    incident[faceTriangles[f + 1]].push(f);
+    incident[faceTriangles[f + 2]].push(f);
   }
 
   return incident.map((tris, cell) => {
@@ -273,9 +325,9 @@ function buildOutlines(): Float64Array[] {
     const fz = cx * ey - cy * ex;
 
     const pts = tris.map((f) => {
-      const a = triangles[f];
-      const b = triangles[f + 1];
-      const c = triangles[f + 2];
+      const a = faceTriangles[f];
+      const b = faceTriangles[f + 1];
+      const c = faceTriangles[f + 2];
       let px = (centres[a * 3] + centres[b * 3] + centres[c * 3]) / 3;
       let py = (centres[a * 3 + 1] + centres[b * 3 + 1] + centres[c * 3 + 1]) / 3;
       let pz = (centres[a * 3 + 2] + centres[b * 3 + 2] + centres[c * 3 + 2]) / 3;

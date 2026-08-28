@@ -27,8 +27,8 @@
 // need different neighbour offsets on odd and even rows, and that asymmetry
 // has bitten every hex game that chose it.
 
-export const RADIUS = 57;
-export const SUBCELL_COUNT = 3 * RADIUS * RADIUS + 3 * RADIUS + 1; // 9,919
+export const RADIUS = 5;
+export const SUBCELL_COUNT = 3 * RADIUS * RADIUS + 3 * RADIUS + 1; // 91
 
 const SPAN = RADIUS * 2 + 1;
 

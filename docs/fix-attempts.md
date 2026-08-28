@@ -122,6 +122,69 @@ globally. The test now walks 24 regions.
 
 ---
 
+## Shrinking the map to 10x10 broke five things, and two were real
+
+**Problem.** The world went from 10,242 regions of 9,919 cells to 92 regions of
+91, with eight layers instead of four. Most of the fallout was stale constants
+in tests. Two were genuine bugs the old resolution had been hiding.
+
+* **Continentality was expressed per CELL.** A cell went from 277 km to
+  2,530 km and the term became ten times too weak, so no continental interior
+  was ever dry and forest cover came out at 44% against a target of 31%. It is
+  per kilometre now, which is what it should always have been -- the physics
+  does not care how the world is subdivided. Same for the uplift smearing,
+  which is now scaled to the width of a real mountain range and at this
+  resolution correctly does nothing at all.
+
+* **`cellsWithin` descended one layer too far.** Addresses start at length one
+  and each step adds a number, so reaching length L takes L-1 steps; it ran L.
+  Every area query returned cells a whole layer too fine, generated an entire
+  extra level of sub-maps -- a forty-year run took 126 seconds instead of nine
+  -- and put the annulus filter on the wrong layer, so a founding party asked
+  for somewhere 3.6 km out was handed the thousand tiles nearest its own door
+  and told there was nowhere to go.
+
+**And one that was not a bug but a setting.** The sub-map cache defaulted to 96
+maps, sized for the old 9,919-cell maps. A catchment now touches over a hundred
+maps plus every ancestor, so the cache thrashed and the expansion suite went
+from 15 seconds to over ten minutes -- without ever producing a wrong answer,
+which is what makes that kind of regression hard to notice.
+
+**Three tests were wrong rather than the code**, all for the same reason --
+they encoded the size of the old map. A globe with 92 cells has one cell 12
+degrees from the pole rather than one almost exactly on it; 27 land cells
+cannot reproduce Earth's biome distribution and the climate suite now pools
+twenty seeds; and a metal on 0.2% of the ground cannot be sampled from a
+91-tile map.
+
+---
+
+## The cross-boundary problem, solved for area queries
+
+**Problem.** Deferred since the first commit and finally forced by the smaller
+maps. A settlement could only see cells inside its own sub-map, which at 9,919
+cells was a limitation nobody hit and at 91 cells meant its entire reachable
+world was exactly what it farmed. There was never anywhere to put a daughter
+village, and expansion stopped dead.
+
+* ~~Walk the neighbour graph outward from the home cell.~~ Cannot leave the
+  sub-map. A rim cell has five neighbours and no way to name the sixth.
+
+* **Descend instead of walking.** At the globe every cell is reachable from
+  every other, so take the ones near the point; then inside each of *those*
+  take the sub-cells near the point; and so on down. Boundaries cross for free,
+  because at every level all the parents that reach the disc are considered and
+  not just the one the point sits in.
+
+  Measured: 4,096 cells within 2 km, spread over **60 different parent maps**.
+
+What this does not solve is tile-to-tile adjacency across a boundary -- a rim
+cell still has five neighbours, and rivers still stop at the edge of a sub-map.
+Area queries are the case that catchments, trade and settlement need, and they
+work now.
+
+---
+
 ## Four wrong answers to where a daughter village goes
 
 **Problem.** Settlements had to spread when their land filled, and every

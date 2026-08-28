@@ -16,7 +16,8 @@ A world you can look at, share, settle, trade across, and watch fill up.
 
 | | |
 |---|---|
-| the globe | 10,242 regions on a true icosahedral sphere, with the twelve pentagons a sphere cannot avoid |
+| the globe | 92 regions on a true icosahedral sphere, with the twelve pentagons a sphere cannot avoid |
+| the ladder | eight layers, each a 10×10 hexagon of hexagons, from a 2,922 km region down to a 41 cm pace |
 | generation | plate tectonics to elevation to climate to biome, cascading top-down, reproducible forever from one seed |
 | the lower layers | realm and ground maps, rivers from flow accumulation, soil, ore, timber and game per tile |
 | supply | settlements work the land they can reach; hauling food costs food, and water is 42.7× cheaper than road |
@@ -25,7 +26,7 @@ A world you can look at, share, settle, trade across, and watch fill up.
 | spreading | a town that fills its land throws off daughters, and stops where it meets somebody. Borders are residue |
 | kingdoms | bounded at 393 km, which is what forty days of feudal service and a walking pace multiply out to |
 | multiplayer | a turn server, two clients sharing one world, live desync detection, persistence |
-| verification | 399 measurements diffed run to run, plus an end-to-end run of the real thing |
+| verification | 409 measurements diffed run to run, plus an end-to-end run of the real thing |
 
 Calibration, none of it tuned to hit its target: land cover within 2.6 points of
 Earth's; water:road transport cost 42.7 against Diocletian's 40; best farmland
@@ -62,7 +63,7 @@ node server/main.ts              # then open http://localhost:8787
 node server/main.ts --turn-seconds 10 --seed 1234
 node server/main.ts --turns 50   # headless, no socket in sight
 
-node verify/run_all.ts           # 399 measurements, diffed against the baseline
+node verify/run_all.ts           # 409 measurements, diffed against the baseline
 node verify/run_all.ts --anchor  # accept the current numbers as the new baseline
 node verify/check_app.ts         # a real server and two real clients, end to end
 node verify/calibrate_climate.ts # sweep the climate model against Earth
@@ -79,18 +80,28 @@ daughter villages, and stop when it runs into the second.
 
 ## The scale
 
-| Layer | Cells | Across | Area | What it is |
-|---|---|---|---|---|
-| Region | 10,242 | 277 km | 49,800 km² | the world map |
-| Realm | ×9,919 | 2.8 km | 4.98 km² | kingdom borders are drawn here |
-| Ground | ×9,919 | 28 m | 506 m² | biome, soil, ore, flora, fauna, people |
-| Plot | ×9,919 | 28 cm | 0.05 m² | building interiors |
+Every layer is a "10 by 10" hexagon of hexagons — 91 cells, the nearest
+hexagonal number to a hundred. The globe is a Goldberg polyhedron of frequency
+3: 92 cells, 80 hexagons and the 12 pentagons a sphere cannot avoid.
 
-**1.008 trillion ground tiles.** None of them are stored. A tile is a pure
-function of the world seed and its address, computed the instant somebody
-looks at it; the database holds only the tiles a player has changed. An
-untouched tile costs zero bytes, which is the only reason a trillion of them
-is possible.
+| Layer | Area | Across | Cells in the world |
+|---|---|---|---|
+| region | 5,544,179 km² | 2,922 km | 92 |
+| march | 60,925 km² | 306 km | 8,372 |
+| shire | 670 km² | 32 km | 761,852 |
+| hundred | 7.36 km² | 3.4 km | 69.3 M |
+| parish | 8.09 ha | 353 m | 6.31 G |
+| **plot** | **888 m²** | **37 m** | **574 G** |
+| yard | 9.76 m² | 3.9 m | 52.2 T |
+| pace | 0.107 m² | 41 cm | 4.75 P |
+
+**574 billion plots**, and 4.75 quadrillion cells at the finest layer, where one
+hex is about where a person stands. None of them are stored. A tile is a pure
+function of the world seed and its address, computed the instant somebody looks
+at it; the database holds only the tiles a player has changed.
+
+Opening a tile costs eight generator calls of 91 cells each — **2 ms**, faster
+than the four calls of 9,919 cells it replaced.
 
 ## What crosses the wire
 

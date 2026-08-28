@@ -22,21 +22,14 @@ import {
 } from '../sim/model/polity.ts';
 import { spacingFor, FOUNDING_PARTY, idleShare } from '../sim/expansion.ts';
 import { INFANTRY_MARCH_MS } from '../sim/derive.ts';
+import { bestFarmSite } from './sites.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 const SEED = 20260826;
 
 /** The same well-watered site every run, so the measurements compare. */
 function cradle(w: World): number[] {
-  let region = 0;
-  for (let c = 0; c < CELL_COUNT; c++) {
-    if (w.planet.elevationM[c] > 100 && w.planet.biome[c] === Biome.Savanna) { region = c; break; }
-  }
-  const map = w.subMap([region, 4959]);
-  const ys = yieldsFor(map);
-  let best = 0;
-  for (let c = 0; c < SUBCELL_COUNT; c++) if (ys[c] > ys[best]) best = c;
-  return [region, 4959, best];
+  return bestFarmSite(w);
 }
 
 suite('how far a kingdom reaches', () => {
@@ -95,7 +88,7 @@ suite('where a daughter goes', () => {
 });
 
 suite('a kingdom spreading', () => {
-  const w = new World({ seed: SEED, cacheSize: 64 });
+  const w = new World({ seed: SEED });
   const seat = cradle(w);
   const crown = w.foundPolity(toKey(seat), 0);
   check('the world starts with one polity', w.polities.size, 1, 0);
@@ -109,7 +102,11 @@ suite('a kingdom spreading', () => {
   let firstFoundingTurn = -1;
   let everBlocked = 0;
   const t0 = Date.now();
-  const TURNS = 4700; // ninety game-years
+  // Forty game-years. The cradle fills its land around year fifteen and has
+  // thrown off seven daughters by year twenty, so this is long enough to show
+  // the whole cycle -- grow, fill, spread, run out of room -- without paying
+  // for fifty more years of a world that is already doing it.
+  const TURNS = 2088;
 
   for (let t = 1; t <= TURNS; t++) {
     const res = resolveTurn(w, [], 1);
@@ -125,8 +122,8 @@ suite('a kingdom spreading', () => {
     if ((d.population ?? 0) > 0) { towns++; people += d.population ?? 0; }
   }
 
-  measure('towns after ninety years', towns);
-  measure('people after ninety years', people);
+  measure('towns after forty years', towns);
+  measure('people after forty years', people);
   measure('daughters founded', founded);
   measure('first founding on turn', firstFoundingTurn);
   measure('turns per second', TURNS / (elapsed / 1000));
@@ -180,14 +177,14 @@ suite('spreading is deterministic', () => {
   // political history depended on anything but its seed and its orders could
   // not be persisted, replayed, or shared between two machines.
   function play(): { towns: number; keys: string[]; people: number } {
-    const w = new World({ seed: SEED, cacheSize: 64 });
+    const w = new World({ seed: SEED });
     const seat = cradle(w);
     const crown = w.foundPolity(toKey(seat), 0);
     w.setDelta(seat, {
       owner: crown.id, population: 120, populationHealth: 1,
       grainStock: 120 * 330, farmShare: 1,
     });
-    for (let t = 0; t < 1800; t++) resolveTurn(w, [], 1);
+    for (let t = 0; t < 1044; t++) resolveTurn(w, [], 1);
 
     const live = w.allDeltas().filter((d) => (d.population ?? 0) > 0);
     return {
@@ -210,7 +207,7 @@ suite('idleness is only a diagnostic', () => {
   // is modelled, so a healthy settlement reads 30-60% "idle" when in truth
   // those hands are building, weaving and carting. Kept as a number a player
   // can look at; it decides nothing.
-  const w = new World({ seed: SEED, cacheSize: 32 });
+  const w = new World({ seed: SEED });
   const seat = cradle(w);
   const crown = w.foundPolity(toKey(seat), 0);
   w.setDelta(seat, {

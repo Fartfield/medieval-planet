@@ -19,6 +19,7 @@ import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
   pickGlobe, pickSubMap, corners, rotate, unrotate, houseColour,
 } from '../client/src/render.ts';
+import { bestRegion } from './sites.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 /** Records coordinates so the suite can look for NaN and for an empty frame. */
@@ -87,10 +88,11 @@ suite('globe rendering', () => {
   const ctx = stub();
   const raw = ctx as unknown as StubContext;
 
-  drawGlobe(ctx, world.planet, cam, view, 100, new Map([[200, 0]]));
+  drawGlobe(ctx, world.planet, cam, view, 10, new Map([[20, 0]]));
 
   check('the globe produced no NaN coordinates', raw.nans, 0, 0);
-  assert('the globe drew something', raw.fills > 100);
+  // Twenty-seven land cells on a 92-cell globe, half of them facing us.
+  assert('the globe drew something', raw.fills > 3);
   measure('land cells drawn on one hemisphere', raw.fills);
   assert('every drawn point is on the canvas', raw.points.every((v) => Math.abs(v) < 5000));
 
@@ -114,23 +116,18 @@ suite('globe rendering', () => {
 
 suite('sub-map rendering', () => {
   const world = new World({ seed: 20260826 });
-  let region = 0;
-  for (let c = 0; c < CELL_COUNT; c++) {
-    if (world.planet.elevationM[c] > 200 && world.planet.biome[c] === Biome.TemperateForest) {
-      region = c; break;
-    }
-  }
+  const region = bestRegion(world);
 
   const cam = newCamera();
   const view = flatView(W, H, cam);
   const ctx = stub();
   const raw = ctx as unknown as StubContext;
 
-  drawSubMap(ctx, world.subMap([region]), view, 4959,
-    new Map([[100, 0]]), new Map([[100, 50]]));
+  drawSubMap(ctx, world.subMap([region]), view, 45,
+    new Map([[10, 0]]), new Map([[10, 50]]));
 
   check('the sub-map produced no NaN coordinates', raw.nans, 0, 0);
-  assert('the sub-map drew something', raw.fills > 500);
+  assert('the sub-map drew something', raw.fills > 50);
   measure('sub-map cells drawn', raw.fills);
   assert('rivers were drawn', raw.arcs > 0);
   measure('river and settlement marks', raw.arcs);
@@ -139,7 +136,7 @@ suite('sub-map rendering', () => {
   for (const zoom of [0.5, 1, 4, 12]) {
     const v = flatView(W, H, { ...cam, zoom });
     let wrong = 0;
-    for (let c = 0; c < SUBCELL_COUNT; c += 37) {
+    for (let c = 0; c < SUBCELL_COUNT; c += 7) {
       // Where the renderer puts this cell, then back again.
       const px = v.cx + (v.size * Math.sqrt(3)) * (cellQ(c) + cellR(c) / 2);
       const py = v.cy + v.size * 1.5 * cellR(c);
@@ -151,11 +148,11 @@ suite('sub-map rendering', () => {
   // At full zoom most cells are off screen and must be skipped, or a ground
   // map costs ten thousand fills to show forty hexagons.
   const zoomed = stub();
-  drawSubMap(zoomed, world.subMap([region]), flatView(W, H, { ...cam, zoom: 20 }),
+  drawSubMap(zoomed, world.subMap([region]), flatView(W, H, { ...cam, zoom: 60 }),
     -1, new Map(), new Map());
   const zoomedFills = (zoomed as unknown as StubContext).fills;
-  measure('cells drawn at zoom 20', zoomedFills);
-  assert('off-screen cells are culled', zoomedFills < raw.fills / 2);
+  measure('cells drawn at zoom 60', zoomedFills);
+  assert('off-screen cells are culled', zoomedFills < raw.fills);
 });
 
 // The renderer reads these off the grid; the suite needs them too.

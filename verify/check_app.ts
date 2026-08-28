@@ -25,6 +25,7 @@ import { regionFingerprint } from '../sim/turn.ts';
 import { toKey } from '../sim/geo/address.ts';
 import { CELL_COUNT } from '../sim/geo/sphere.ts';
 import { Biome } from '../sim/model/biome.ts';
+import { groundSiteIn } from './sites.ts';
 import type { ServerMessage, WelcomeMessage, TurnMessage } from '../server/protocol.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -152,8 +153,8 @@ check('both built the same tile count',
 // Pick a land region both can reach, and fingerprint it on both.
 let region = 0;
 for (let c = 0; c < CELL_COUNT; c++) {
-  if (aliceWorld.planet.elevationM[c] > 200
-    && aliceWorld.planet.biome[c] === Biome.TemperateForest) { region = c; break; }
+  if (aliceWorld.planet.elevationM[c] > 0
+    && aliceWorld.planet.nppGm2[c] > aliceWorld.planet.nppGm2[region]) region = c;
 }
 const aliceHash = regionFingerprint(aliceWorld, region);
 const bobHash = regionFingerprint(bobWorld, region);
@@ -174,8 +175,11 @@ check('a wrong fingerprint IS reported as a desync', bob.desyncs === 1,
 
 // --- orders ----------------------------------------------------------------
 
-const aliceTile = [region, 4959, 4959];
-const bobTile = [region, 4959, 5000];
+// Ground addresses are six numbers deep, so they are descended rather than
+// written down. Two neighbours in the same sub-map, so both are reachable.
+const aliceSite = groundSiteIn(aliceWorld, region);
+const aliceTile = aliceSite;
+const bobTile = [...aliceSite.slice(0, -1), (aliceSite[aliceSite.length - 1] + 7) % 91];
 const aliceKey = toKey(aliceTile);
 const bobKey = toKey(bobTile);
 
@@ -223,7 +227,7 @@ const settled = settler.world!.tile(aliceTile);
 check('people are on the tile', settled.population > 0, `${settled.population} people`);
 check('the tile reads as modified', settled.modified);
 check('generated fields are untouched by the delta',
-  settled.biome === aliceWorld.subMap([region, 4959]).biome[4959]);
+  settled.biome === aliceWorld.subMap(aliceTile.slice(0, -1)).biome[aliceTile[aliceTile.length - 1]]);
 
 // Twenty people used to starve here, because a settlement ate only the 506 m2
 // it stood on -- about a tenth of what one person needs. It now works the land

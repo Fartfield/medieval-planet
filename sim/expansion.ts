@@ -145,8 +145,11 @@ export function findSite(
   // never place a daughter, and expansion stopped dead at exactly the moment
   // population pressure was highest. A founding party walks further than a
   // farmer does, because it is not coming back tonight.
-  const searchM = Math.max(spacingM * 1.6, 4000);
-  const { maps, addresses } = world.mapsWithin(parent, searchM);
+  const searchM = Math.max(spacingM * 2.0, 4000);
+  // An annulus starting at the spacing: everywhere nearer is the parent's own
+  // fields, and asking for a disc got the search handed a thousand tiles from
+  // inside them and told there was nowhere to go.
+  const { maps, addresses } = world.mapsWithin(parent, searchM, spacingM * 0.9);
 
   const here = world.tile(parent).dir;
   const spacingChord = spacingM / A.EARTH_RADIUS_M;

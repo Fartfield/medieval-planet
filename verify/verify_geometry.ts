@@ -5,19 +5,22 @@
 // nothing above it can be right. These run first and cost milliseconds.
 
 import {
-  CELL_COUNT, PENTAGON_COUNT, centres, neighbours, neighbourCount,
+  CELL_COUNT, PENTAGON_COUNT, FREQUENCY, centres, neighbours, neighbourCount,
   isPentagon, cellAt, distance, latLon, outline,
 } from '../sim/geo/sphere.ts';
 import {
   RADIUS, SUBCELL_COUNT, subNeighbours, coords, indexOf,
   hexDistance, ringOf, toPixel, fromPixel,
 } from '../sim/geo/hexgrid.ts';
-import { toKey, fromKey, addressSeed, child, parent, equals } from '../sim/geo/address.ts';
+import {
+  toKey, fromKey, addressSeed, child, parent, equals, GROUND_DEPTH, MAX_DEPTH,
+} from '../sim/geo/address.ts';
 import * as A from '../sim/anchors.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 suite('sphere', () => {
-  check('cell count', CELL_COUNT, 10242, 0);
+  check('cell count', CELL_COUNT, 92, 0);
+  check('subdivision frequency', FREQUENCY, 3, 0);
 
   // Euler's formula is why there are twelve pentagons and not zero. If this
   // ever fails the subdivision has produced something that is not a sphere.
@@ -74,8 +77,14 @@ suite('sphere', () => {
   }
   check('cellAt recovers a cell from its own centre', wrong, 0, 0);
 
+  // The nearest cell to the pole, not a cell *at* the pole. At 92 regions a
+  // cell is 2,900 km across, so its centre can be twelve degrees off the pole
+  // and still be the nearest -- the old tolerance of a thousandth of a degree
+  // only passed because 10,242 cells put one almost exactly there.
   const poleCell = cellAt(0, 1, 0);
-  check('north pole latitude', (latLon(poleCell).lat * 180) / Math.PI, 90, 0.001);
+  const poleLat = (latLon(poleCell).lat * 180) / Math.PI;
+  measure('latitude of the cell nearest the pole', poleLat);
+  assert('the cell nearest the pole is in the far north', poleLat > 60);
 
   // Cell area, cross-checked two ways: the sphere's area over the cell count,
   // against the ladder in docs/architecture.md.
@@ -106,9 +115,12 @@ suite('sphere', () => {
 });
 
 suite('sub-map', () => {
-  check('sub-map radius', RADIUS, 57, 0);
-  check('sub-map cell count', SUBCELL_COUNT, 9919, 0);
-  check('sub-map is within 1% of ten thousand', Math.abs(SUBCELL_COUNT - 10000) / 10000, 0, 0.01);
+  check('sub-map radius', RADIUS, 5, 0);
+  check('sub-map cell count', SUBCELL_COUNT, 91, 0);
+  // 91 is the nearest hexagonal number to a hundred: r=5 gives 91, r=6 gives
+  // 127. Nine per cent under is as close as a hexagon of hexagons comes.
+  check('sub-map is within 10% of a hundred',
+    Math.abs(SUBCELL_COUNT - 100) / 100, 0, 0.10);
 
   // Every cell must round-trip through its axial coordinates.
   let badRoundTrip = 0;
@@ -159,13 +171,14 @@ suite('sub-map', () => {
 });
 
 suite('address', () => {
-  const cases: number[][] = [[0], [10241], [4821, 3307], [4821, 3307, 9918], [1, 2, 3, 4]];
+  const cases: number[][] = [[0], [91], [88, 42], [88, 42, 90], [1, 2, 3, 4, 5, 6, 7, 8]];
   let bad = 0;
   for (const a of cases) if (!equals(fromKey(toKey(a)), a)) bad++;
   check('address keys round-trip', bad, 0, 0);
 
-  check('ground key stays short', toKey([10241, 9918, 9918]).length, 11, 1);
-  assert('parent of a child is the original', equals(parent(child([4821, 3307], 55)), [4821, 3307]));
+  // Eight levels of two base-36 characters plus seven dots.
+  check('a full-depth key stays short', toKey([91, 90, 90, 90, 90, 90, 90, 90]).length, 23, 2);
+  assert('parent of a child is the original', equals(parent(child([88, 42], 55)), [88, 42]));
 
   // Address seeds must decorrelate: neighbouring addresses are the common case
   // and must not produce neighbouring seeds, or the terrain will band.
@@ -173,7 +186,7 @@ suite('address', () => {
   let lowBitRuns = 0;
   let prev = -1;
   for (let i = 0; i < 4000; i++) {
-    const s = addressSeed(12345, [4821, 3307, i], 0);
+    const s = addressSeed(12345, [88, 42, 7, 3, 60, i], 0);
     seeds.add(s);
     if (prev >= 0 && (s & 0xff) === (prev & 0xff)) lowBitRuns++;
     prev = s;
@@ -182,7 +195,9 @@ suite('address', () => {
   check('adjacent addresses do not share low bits', lowBitRuns, 0, 40);
 
   // The scale ladder itself, as a measurement rather than a comment.
-  measure('total ground tiles', CELL_COUNT * SUBCELL_COUNT * SUBCELL_COUNT);
-  measure('ground tile area m2',
-    (4 * Math.PI * A.EARTH_RADIUS_M ** 2) / (CELL_COUNT * SUBCELL_COUNT * SUBCELL_COUNT));
+  const groundCells = CELL_COUNT * SUBCELL_COUNT ** GROUND_DEPTH;
+  measure('total ground tiles', groundCells);
+  measure('ground tile area m2', (4 * Math.PI * A.EARTH_RADIUS_M ** 2) / groundCells);
+  measure('finest layer area m2',
+    (4 * Math.PI * A.EARTH_RADIUS_M ** 2) / (CELL_COUNT * SUBCELL_COUNT ** (MAX_DEPTH - 1)));
 });

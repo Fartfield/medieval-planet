@@ -61,7 +61,7 @@ export interface ClimateParams {
   frontCentre: number;
   frontWidth: number;
   backgroundMm: number;
-  /** Rain lost per cell of travel inland. */
+  /** Rain lost per kilometre of travel inland. */
   continentality: number;
   /** Metres of ascent that doubles the rainfall on a windward slope. */
   orographicM: number;
@@ -78,7 +78,7 @@ export const DEFAULT_CLIMATE: ClimateParams = {
   frontCentre: A.PRECIP_POLAR_FRONT_CENTRE,
   frontWidth: A.PRECIP_POLAR_FRONT_WIDTH,
   backgroundMm: A.PRECIP_BACKGROUND_MM,
-  continentality: A.CONTINENTALITY_PER_CELL,
+  continentality: A.CONTINENTALITY_PER_KM,
   orographicM: A.OROGRAPHIC_DOUBLING_M,
   leeM: A.RAIN_SHADOW_M,
   leeFloor: A.RAIN_SHADOW_FLOOR,
@@ -89,15 +89,21 @@ export function generatePlanet(
   radiusM = A.EARTH_RADIUS_M,
   climate: ClimateParams = DEFAULT_CLIMATE,
 ): Planet {
+  // How far apart two neighbouring cell centres are, in km. Everything below
+  // that is expressed as a real distance has to go through this, because the
+  // globe's resolution is a setting and the physics is not.
+  const spacingKm = (Math.sqrt(3) * Math.sqrt(
+    (4 * Math.PI) / CELL_COUNT / ((3 * Math.sqrt(3)) / 2)) * radiusM) / 1000;
   const plate = new Int16Array(CELL_COUNT).fill(-1);
   const plateOceanic = new Uint8Array(PLATES);
   const plateDrift = new Float64Array(PLATES * 3);
 
   seedPlates(seed, plate, plateOceanic, plateDrift);
-  const elevationM = buildElevation(seed, plate, plateOceanic, plateDrift);
+  const elevationM = buildElevation(seed, plate, plateOceanic, plateDrift, spacingKm);
   const oceanDistance = measureOceanDistance(elevationM);
   const temperatureC = buildTemperature(elevationM);
-  const precipMm = buildPrecipitation(seed, elevationM, temperatureC, oceanDistance, climate);
+  const precipMm = buildPrecipitation(
+    seed, elevationM, temperatureC, oceanDistance, climate, spacingKm);
 
   const nppGm2 = new Float32Array(CELL_COUNT);
   const biome = new Uint8Array(CELL_COUNT);
@@ -223,6 +229,7 @@ function buildElevation(
   plate: Int16Array,
   oceanic: Uint8Array,
   drift: Float64Array,
+  spacingKm: number,
 ): Float32Array {
   const elev = new Float32Array(CELL_COUNT);
   const uplift = new Float32Array(CELL_COUNT);
@@ -268,11 +275,18 @@ function buildElevation(
     }
   }
 
-  // Spread the boundary signal inland. Four passes of neighbour-averaging
-  // turns a one-cell line into a range roughly five cells wide, which at 277 km
-  // a cell is about the width of the Andes.
+  // Spread the boundary signal inland, because a plate boundary is a line and
+  // a cordillera is a few hundred kilometres wide.
+  //
+  // How many passes that takes depends on how big a cell is, which is a
+  // setting rather than a fact about mountains. At 240 km a cell it is two
+  // passes; at 2,530 km it is none, and that is the honest answer -- a cell
+  // that wide cannot resolve the Andes and pretending otherwise would smear
+  // uplift across a continent.
+  const passes = Math.max(0, Math.min(6,
+    Math.round(A.MOUNTAIN_RANGE_WIDTH_M / 1000 / Math.max(1, spacingKm))));
   let smoothed = uplift;
-  for (let pass = 0; pass < 4; pass++) {
+  for (let pass = 0; pass < passes; pass++) {
     const next = new Float32Array(CELL_COUNT);
     for (let c = 0; c < CELL_COUNT; c++) {
       let sum = smoothed[c];
@@ -401,6 +415,7 @@ function buildPrecipitation(
   temp: Float32Array,
   oceanDist: Int16Array,
   k: ClimateParams,
+  spacingKm: number,
 ): Float32Array {
   const p = new Float32Array(CELL_COUNT);
 
@@ -420,7 +435,7 @@ function buildPrecipitation(
     mm *= clamp(0.15 + 0.85 * ((temp[c] + 25) / 50), 0.15, 1.35);
 
     // Continentality: rain wrings out as the air travels inland.
-    if (elev[c] >= 0) mm *= dexp(-k.continentality * Math.max(0, oceanDist[c]));
+    if (elev[c] >= 0) mm *= dexp(-k.continentality * Math.max(0, oceanDist[c]) * spacingKm);
 
     // Orographic. Prevailing wind is easterly in the tropics, westerly in the
     // mid-latitudes, easterly again at the poles -- the three-cell structure.
