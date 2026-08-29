@@ -134,23 +134,6 @@ export interface ParentSample {
   elevationM: number;
   precipMm: number;
   upliftM: number;
-  /**
-   * Which side of sea level the layer above says this is, from -1 to +1.
-   *
-   * The classification, interpolated on its own rather than read off the
-   * elevation. Kept apart because the two want opposite things from an
-   * interpolator. Elevation wants a straight average, so that a planar
-   * hillside stays planar; the coastline wants land and sea weighted equally,
-   * so that the crossing sits near the boundary between two cells instead of a
-   * long way inside whichever one is shallower.
-   *
-   * Trying to serve both with one field -- normalising elevation by the mean
-   * land height and mean ocean depth before interpolating -- does place the
-   * coast correctly and puts a 4.4x kink in the gradient at exactly sea level,
-   * which the interpolation then reproduces as a cliff along every shore. Two
-   * fields, one question each.
-   */
-  landness: number;
 }
 
 /**
@@ -159,20 +142,6 @@ export interface ParentSample {
  * a Float32Array or a JSON round trip, so it is capped where it is stored.
  */
 export const STABILITY_CAP = 99;
-
-/**
- * FREE PARAMETER: how far a coastline may wander from where the layer above
- * put it, as a fraction of the way from the cell boundary toward a cell centre.
- *
- * Zero would pin the coast exactly to the boundary the coarse map implies and
- * give it no detail at all; one would let the noise redraw the map. At 0.3 the
- * coast keeps the shape of the continent it was given and gains bays and
- * headlands about a third of a cell deep.
- *
- * No measurement settles this. It is a statement about how much authority each
- * layer has over the one below, and the honest range is wide.
- */
-const COAST_BAND = 0.3;
 
 /** Circumradius of a layer-0 cell in radians, and the ratio per layer down. */
 const L0_RADIUS_RAD = Math.sqrt(
@@ -231,7 +200,7 @@ export function cellContaining(b: Basis, radiusRad: number, x: number, y: number
  */
 export function samplePlanet(planet: Planet, x: number, y: number, z: number): ParentSample {
   const c = cellAt(x, y, z);
-  let we = 0, wp = 0, wu = 0, wl = 0, wsum = 0;
+  let we = 0, wp = 0, wu = 0, wsum = 0;
 
   const add = (cell: number): void => {
     const dx = centres[cell * 3] - x;
@@ -242,7 +211,6 @@ export function samplePlanet(planet: Planet, x: number, y: number, z: number): P
     // zero; at this scale it simply means that cell dominates, which is right.
     const w = 1 / (d2 + 1e-9);
     we += planet.elevationM[cell] * w;
-    wl += (planet.elevationM[cell] >= 0 ? 1 : -1) * w;
     wp += planet.precipMm[cell] * w;
     wu += upliftProxy(planet, cell) * w;
     wsum += w;
@@ -257,7 +225,6 @@ export function samplePlanet(planet: Planet, x: number, y: number, z: number): P
     elevationM: we / wsum,
     precipMm: wp / wsum,
     upliftM: wu / wsum,
-    landness: wl / wsum,
   };
 }
 
@@ -351,7 +318,6 @@ export function sampleSubMap(
       elevationM: map.elevationM[mid],
       precipMm: map.precipMm[mid],
       upliftM: map.upliftM[mid],
-      landness: map.elevationM[mid] >= 0 ? 1 : -1,
     };
   }
 
@@ -375,8 +341,6 @@ export function sampleSubMap(
   // linear field exactly -- the only thing that changes is that the point sits
   // outside the triangle rather than inside it -- and the gradient carries on
   // across the rim instead of flattening against it.
-  const side = (v: number): number => (v >= 0 ? 1 : -1);
-
   for (let i = 0; i < 6; i++) {
     const na = subNeighbours[c * 6 + i];
     const nb = subNeighbours[c * 6 + ((i + 1) % 6)];
@@ -397,9 +361,6 @@ export function sampleSubMap(
       elevationM: w0 * map.elevationM[c] + w1 * map.elevationM[na] + w2 * map.elevationM[nb],
       precipMm: w0 * map.precipMm[c] + w1 * map.precipMm[na] + w2 * map.precipMm[nb],
       upliftM: w0 * map.upliftM[c] + w1 * map.upliftM[na] + w2 * map.upliftM[nb],
-      landness: w0 * side(map.elevationM[c])
-        + w1 * side(map.elevationM[na])
-        + w2 * side(map.elevationM[nb]),
     };
   }
 
@@ -474,9 +435,6 @@ function crossTriangle(
       elevationM: w0 * map.elevationM[c] + w1 * va.elevationM + w2 * vb.elevationM,
       precipMm: w0 * map.precipMm[c] + w1 * va.precipMm + w2 * vb.precipMm,
       upliftM: w0 * map.upliftM[c] + w1 * va.upliftM + w2 * vb.upliftM,
-      landness: w0 * side(map.elevationM[c])
-        + w1 * side(va.elevationM)
-        + w2 * side(vb.elevationM),
     };
   }
   return null;
@@ -530,12 +488,10 @@ function planeAt(
   ly: number,
 ): ParentSample {
   let sxx = 0, sxy = 0, syy = 0;
-  let sxe = 0, sye = 0, sxp = 0, syp = 0, sxu = 0, syu = 0, sxl = 0, syl = 0;
-  const side = (v: number): number => (v >= 0 ? 1 : -1);
+  let sxe = 0, sye = 0, sxp = 0, syp = 0, sxu = 0, syu = 0;
   const e0 = map.elevationM[c];
   const pr0 = map.precipMm[c];
   const u0 = map.upliftM[c];
-  const l0 = side(e0);
 
   for (let i = 0; i < 6; i++) {
     const n = subNeighbours[c * 6 + i];
@@ -547,7 +503,6 @@ function planeAt(
     sxe += dx * (map.elevationM[n] - e0); sye += dy * (map.elevationM[n] - e0);
     sxp += dx * (map.precipMm[n] - pr0); syp += dy * (map.precipMm[n] - pr0);
     sxu += dx * (map.upliftM[n] - u0); syu += dy * (map.upliftM[n] - u0);
-    sxl += dx * (side(map.elevationM[n]) - l0); syl += dy * (side(map.elevationM[n]) - l0);
   }
 
   const det = sxx * syy - sxy * sxy;
@@ -556,7 +511,7 @@ function planeAt(
   if (det === 0) {
     // Collinear neighbours, which a hex lattice does not produce. Total rather
     // than reachable.
-    return { elevationM: e0, precipMm: pr0, upliftM: u0, landness: l0 };
+    return { elevationM: e0, precipMm: pr0, upliftM: u0 };
   }
 
   const at = (sx: number, sy: number, base: number): number => {
@@ -569,7 +524,6 @@ function planeAt(
     elevationM: at(sxe, sye, e0),
     precipMm: at(sxp, syp, pr0),
     upliftM: at(sxu, syu, u0),
-    landness: clamp(at(sxl, syl, l0), -1, 1),
   };
 }
 
@@ -674,34 +628,43 @@ export function generateSubMap(
     const detailAmp = localRelief * reliefScale;
 
     let e = parent.elevationM + rolling * detailAmp + crest * gate * detailAmp * 0.8;
-    // The coastline belongs to the layer that solved sea level for it, and
-    // detail may only move it inside the band where the two genuinely compete
-    // -- the continental shelf, which is ground that has been dry land within
-    // the last glacial cycle.
+    // NO COASTLINE GUARD. There was one, twice, and both did more harm than
+    // the problem they were for.
     //
-    // THIS RULE USED TO RUN ONE WAY ONLY. Its own comment said "or the
-    // reverse" and the code did not: sea could not become land, and land could
-    // drown freely. The leak compounds at every layer, because each one adds
-    // its own noise to whatever survived the last. Measured: the planet is
-    // calibrated to Earth's 29% land and came out at 30.4%, and by the march
-    // layer that was 12.1% and by the shire layer 8.8%. Two thirds of the
-    // world's land drowned on the way down, and what it left behind was a
-    // fringe of speckled islands -- land that appears at the edge of a hex and
-    // does not continue, because there was nothing left of it to continue.
-    // Well inside a cell the layer above has already decided, and detail may
-    // not overrule it. Near a boundary the two cells disagree, landness passes
-    // through zero, and there the noise decides -- which is where a coastline
-    // gets its shape.
+    // The problem was real: a planet solved for Earth's 29% land came out at
+    // 12% one layer down and 9% the next, because detail noise drowned low
+    // ground faster than it raised shallow sea. But that was measured on a
+    // 92-cell world map, where a continent was three cells across and most of
+    // a land cell's neighbours were abyss. At 192 cells a continent's interior
+    // cells are surrounded by other land, and the drowning very largely stops
+    // on its own: 29.7% -> 23.6% -> 25.6%, which is stable rather than
+    // collapsing.
     //
-    // Read from landness rather than from metres because metres are not
-    // symmetric about a coast: land stands 840 m up on average and the sea
-    // floor lies 3,688 m down, so a threshold in metres protects the ocean far
-    // more strictly than the land, and the noise eats the difference at every
-    // layer. Measured before this: a planet solved for 29% land came out at
-    // 12% one layer down and 9% the next.
-    if (parent.landness > COAST_BAND) e = Math.max(e, 1);
-    else if (parent.landness < -COAST_BAND) e = Math.min(e, -1);
-    elevationM[c] = e;
+    // What the guards cost was worse than the six points they were saving.
+    // As a CLAMP -- land forced to at least +1 m -- it is a discontinuity by
+    // construction: two neighbours straddling the threshold get one snapped to
+    // +1 and the other left wherever it was, and the step between them is
+    // however deep the second happened to be. Measured on a coastal ground
+    // map, 147 m across a 22 m cell, with the noise contributing nothing. The
+    // clamped value is then inherited, so the next layer starts from a field
+    // whose median is exactly 1 m and builds its own cliffs on that.
+    //
+    // As a smooth PULL toward the layer above's classification it made the
+    // land fraction worse rather than better -- 21.6% against 23.6% for no
+    // guard at all -- because it leans on sea as hard as on land and there is
+    // more sea. It also inflated the relief it was added to.
+    //
+    // So: nothing. The coastline is where the elevation says it is.
+    //
+    // The one bound kept is the planet's own: no point on Earth is above
+    // Everest or below Challenger Deep, and both are anchored. Relief is
+    // extrapolated from a ten-kilometre baseline by the Hurst exponent, and
+    // over a 184 km cell that extrapolation overshoots -- it asked for 12 km
+    // of relief inside one region where the real world manages about eight.
+    // Terrain is only self-affine over a range, and a mountain belt has a
+    // finite height; clamping to the measured extremes says so without
+    // pretending to model why.
+    elevationM[c] = clamp(e, A.MAX_DEPTH_M, A.MAX_ELEVATION_M);
   }
 
   // --- slope, from the neighbours we have -----------------------------------

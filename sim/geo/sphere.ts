@@ -1,227 +1,171 @@
-// The globe: 10,242 cells on a sphere, twelve of which are pentagons.
+// The world map: a hex grid wrapped around the sphere, with no pentagons in it.
 //
-// WHY TWELVE
+// WHY THIS IS NOT A GOLDBERG POLYHEDRON ANY MORE
 //
-// You cannot tile a sphere with hexagons. Euler's formula forbids it: for any
-// polyhedron V - E + F = 2, and if every face had six sides the arithmetic
-// gives 2 = 0. Working it through, a sphere covered in hexagons needs exactly
-// twelve pentagons, no matter how many hexagons you add. Every hex-globe game
-// has them; the honest thing is to know where they are rather than pretend.
+// It was, and a Goldberg polyhedron carries exactly twelve pentagons. That is
+// not a choice anyone made, it is Euler: with three faces meeting at every
+// vertex, F hexagons give E = 3F edges and V = 2F vertices, so V - E + F = 0
+// where a closed surface of genus zero requires 2. Admit pentagons and the
+// same arithmetic returns P = 12 exactly, whatever H is. Twelve however fine
+// the grid gets, which is why a football has twelve however many hexagons are
+// sewn around them.
 //
-// Ours sit at the twelve vertices of the icosahedron we start from, and the
-// generator treats them as ordinary cells with five neighbours instead of six.
-// They are the only irregularity in the entire world, and they exist on this
-// layer alone -- every layer below is a flat hex field with no pentagons at
-// all, because at 250 km across an L0 cell is flat to within 0.06%.
+// At 92 cells the twelve were 13% of the world map -- one region in eight --
+// and the highest-variance thing on screen. So the tiling changed instead: a
+// hex grid that wraps east to west has no pentagons at all, because a cylinder
+// has Euler characteristic zero rather than two.
 //
-// HOW IT IS BUILT
+// THE PROJECTION IS THE WHOLE TRICK
 //
-// A Goldberg polyhedron is the dual of a geodesic sphere, which means its
-// cells correspond one-for-one to the *vertices* of the geodesic. So we never
-// construct the Goldberg polyhedron directly: we subdivide each face of an
-// icosahedron into FREQUENCY^2 smaller triangles, and the 10*F^2 + 2 vertices
-// that fall out are the cell centres. Cell adjacency is geodesic edge
-// adjacency; a cell's outline is the ring of triangle centroids around its
-// vertex.
+// The grid is laid out in (longitude, sine of latitude) -- the Lambert
+// cylindrical projection -- and Lambert is EQUAL-AREA. The area element on a
+// sphere is cos(lat)·dlat·dlon, and d(sin lat) = cos(lat)·dlat, so equal area
+// in the projection is exactly equal area on the sphere. Not approximately.
 //
-// The subdivision is by arbitrary frequency rather than by repeated halving.
-// Halving is simpler -- an edge-midpoint cache and one line of recursion --
-// but it can only ever produce 12, 42, 162, 642, 2562 or 10242 cells, and the
-// design asks for a hundred. Frequency 3 gives 92, which is what "10 by 10"
-// means on a sphere.
+// That is what makes this a change of tiling rather than a rewrite. Cells are
+// still points on the unit sphere, still equal-area, still measured with
+// great-circle distances -- so tangent frames, sub-maps, catchments, supply
+// ranges and every calibrated number below this layer are untouched. Only
+// which points are cell centres has changed.
 //
-// DETERMINISM
+// WHAT IT COSTS
 //
-// Vertices are identified by their *position in the subdivision*, never by
-// comparing floating-point coordinates. A point on the edge between two faces
-// is generated twice, once by each face, and the two results differ in the
-// last bit; keyed by geometry they would become two cells and a border would
-// quietly fail to close. Keyed by (which edge, how many steps along it) they
-// are the same cell by construction. This is the single most important thing
-// in the file.
+// A sphere still will not be tiled by hexagons and this does not tile one: the
+// grid covers the band between the polar circles, and the two caps beyond it
+// are not gridded at all. Twelve pentagons have become two ice caps, which is
+// a better trade than it sounds -- the defects moved from twelve places
+// scattered through the temperate world to the two places nobody farms.
+//
+// Cells also stretch towards the poles. Equal-area guarantees the area and
+// says nothing about the shape, so a cell at 60 degrees is taller and narrower
+// than one at the equator. That is the distortion every cylindrical map has,
+// and it lands on the rows least likely to be looked at.
+
+const SQRT3 = Math.sqrt(3);
 
 /**
- * How many pieces each icosahedron edge is cut into.
+ * Rows of cells between the caps, and columns around the world.
  *
- * 3 gives 92 cells: 80 hexagons and the 12 pentagons a sphere cannot avoid.
- * That is the design's "10 by 10 world map" as closely as a sphere allows.
+ * COLS is three times ROWS, and that ratio is not chosen for looks: it is what
+ * makes the band reach the polar circle, and it drops out of the wrap
+ * arithmetic rather than being imposed. See BAND_SIN_LIMIT.
  *
- * Note what that costs: one region in eight is a pentagon. The twelve are a
- * fixed toll, so the coarser the globe the larger a share of it they are --
- * at the old frequency of 32 they were 0.12% of the map and nobody noticed.
+ * 24 by 8 puts 192 cells on the world map against the Goldberg globe's 92.
+ * Six rows was closer to the old cell count and too coarse to hold a climate:
+ * with only six latitude bands one of them lands squarely on the subtropical
+ * desert belt, and the world came out 33.3% desert -- which is exactly two
+ * rows in six, and the giveaway. Eight rows straddle the belt instead and the
+ * figure falls to 27%, against a target of 19 +/- 10.
  */
-export const FREQUENCY = 3;
-export const CELL_COUNT = 10 * FREQUENCY * FREQUENCY + 2; // 92
-export const PENTAGON_COUNT = 12;
+export const ROWS = 8;
+export const COLS = 3 * ROWS;
+export const CELL_COUNT = COLS * ROWS;
+
+/** None. That is the point of this module. */
+export const PENTAGON_COUNT = 0;
+
+/**
+ * A cell's circumradius in projection units, solved from the wrap.
+ *
+ * The band has to close on itself exactly going east, so COLS cells of
+ * horizontal spacing sqrt(3)·r must come to 2π. Nothing here is free.
+ */
+export const CELL_R = (2 * Math.PI) / (COLS * SQRT3);
+
+/**
+ * How far the grid reaches from the equator, as a sine of latitude.
+ *
+ * ROWS rows of vertical spacing 1.5·r, half above the equator and half below.
+ * With COLS = 3·ROWS the ratio cancels and this is 0.9069 whatever ROWS is,
+ * which is latitude 65.05 degrees. **The polar circle is at 66.56 degrees**,
+ * set by Earth's 23.44-degree axial tilt -- so the grid ends within a degree
+ * and a half of the real boundary of the polar day.
+ *
+ * That is a coincidence of the arithmetic rather than something imposed, and
+ * it is worth saying so plainly. The grid does not stop there because the
+ * Arctic is there. It stops there because a hex grid that closes on itself
+ * around a sphere, with cells about as tall as they are wide, reaches about
+ * that far. The two agreeing is luck, and convenient luck.
+ */
+export const BAND_SIN_LIMIT = (ROWS * 1.5 * CELL_R) / 2;
 
 /** Cell centres as unit vectors, packed xyz. Index i is at [3i, 3i+1, 3i+2]. */
 export const centres = new Float64Array(CELL_COUNT * 3);
 
 /**
- * Neighbour ids, six per cell, packed. The twelve pentagons use only the first
- * five slots and store -1 in the sixth -- kept fixed-width so that iteration
- * over neighbours never allocates and never branches on cell shape.
+ * Neighbour ids, six per cell, packed in the order E, NE, NW, W, SW, SE.
+ *
+ * A -1 means the ice cap, and only the top and bottom rows have any: two each.
+ * Every other cell has six, which is the entire point of the exercise.
  */
 export const neighbours = new Int32Array(CELL_COUNT * 6).fill(-1);
 
-/** Triangles of the underlying geodesic, three vertex ids each. */
-let faceTriangles: Int32Array;
-
-/** Cell outlines, built lazily -- only the client ever needs them. */
-let outlines: Float64Array[] | null = null;
-
 build();
 
+// ---------------------------------------------------------------------------
+
+/** Where a cell sits in the projection: longitude, and sine of latitude. */
+function projected(cell: number): { lon: number; sinLat: number } {
+  const row = Math.floor(cell / COLS);
+  const col = cell % COLS;
+  // Odd rows sit half a cell east, which is what makes a hex grid a hex grid.
+  const lon = (col + (row & 1) * 0.5) * SQRT3 * CELL_R;
+  const sinLat = -BAND_SIN_LIMIT + (row + 0.5) * 1.5 * CELL_R;
+  return { lon, sinLat };
+}
+
+/** A projection point to a unit vector. Latitude is the arcsine of y. */
+function toVector(lon: number, sinLat: number, out: Float64Array, at: number): void {
+  const s = Math.max(-1, Math.min(1, sinLat));
+  const cosLat = Math.sqrt(1 - s * s);
+  out[at] = cosLat * Math.cos(lon);
+  out[at + 1] = s;
+  out[at + 2] = cosLat * Math.sin(lon);
+}
+
 function build(): void {
-  const t = (1 + Math.sqrt(5)) / 2;
-
-  // The twelve icosahedron vertices, as three orthogonal golden rectangles.
-  // These become cells 0..11 and are precisely the twelve pentagons.
-  const verts: number[] = [
-    -1, t, 0, 1, t, 0, -1, -t, 0, 1, -t, 0,
-    0, -1, t, 0, 1, t, 0, -1, -t, 0, 1, -t,
-    t, 0, -1, t, 0, 1, -t, 0, -1, -t, 0, 1,
-  ];
-  for (let i = 0; i < 12; i++) normalizeInto(verts, i);
-
-  const faces: number[] = [
-    0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11,
-    1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8,
-    3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9,
-    4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1,
-  ];
-
-  const m = FREQUENCY;
-  // Shared points, keyed by where they sit in the subdivision rather than by
-  // their coordinates. Corners are the twelve originals; a point on an edge is
-  // named by that edge and how many steps along it, counting from whichever
-  // end has the lower index so both faces agree; interior points belong to one
-  // face and cannot collide.
-  const shared = new Map<string, number>();
-  for (let i = 0; i < 12; i++) shared.set(`c${i}`, i);
-
-  const triangles: number[] = [];
-
-  for (let f = 0; f < faces.length; f += 3) {
-    const a = faces[f];
-    const b = faces[f + 1];
-    const c = faces[f + 2];
-
-    // Points of this face, by barycentric step (i, j), with k = m - i - j.
-    const local = new Map<number, number>();
-
-    for (let i = 0; i <= m; i++) {
-      for (let j = 0; j <= m - i; j++) {
-        const k = m - i - j;
-        const key = identify(i, j, k, a, b, c, m);
-
-        let id = shared.get(key);
-        if (id === undefined) {
-          id = verts.length / 3;
-          verts.push(
-            (i * verts[a * 3] + j * verts[b * 3] + k * verts[c * 3]) / m,
-            (i * verts[a * 3 + 1] + j * verts[b * 3 + 1] + k * verts[c * 3 + 1]) / m,
-            (i * verts[a * 3 + 2] + j * verts[b * 3 + 2] + k * verts[c * 3 + 2]) / m,
-          );
-          normalizeInto(verts, id);
-          shared.set(key, id);
-        }
-        local.set(i * (m + 1) + j, id);
-      }
-    }
-
-    const at = (i: number, j: number): number => local.get(i * (m + 1) + j)!;
-    for (let i = 0; i < m; i++) {
-      for (let j = 0; j < m - i; j++) {
-        triangles.push(at(i, j), at(i + 1, j), at(i, j + 1));
-        if (j < m - 1 - i) {
-          triangles.push(at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
-        }
-      }
-    }
+  for (let cell = 0; cell < CELL_COUNT; cell++) {
+    const p = projected(cell);
+    toVector(p.lon, p.sinLat, centres, cell * 3);
   }
 
-  if (verts.length !== CELL_COUNT * 3) {
-    throw new Error(`geodesic produced ${verts.length / 3} cells, expected ${CELL_COUNT}`);
-  }
-  centres.set(verts);
-  faceTriangles = Int32Array.from(triangles);
+  // Offset-grid adjacency. The half-cell shift on odd rows moves the two
+  // diagonals above and the two below with the row's parity, which is the one
+  // place an offset layout is fiddlier than an axial one. It earns that here,
+  // because the wrap is then a modulo on the column and nothing else.
+  for (let row = 0; row < ROWS; row++) {
+    const shift = row & 1;
+    for (let col = 0; col < COLS; col++) {
+      const cell = row * COLS + col;
+      const east = (col + 1) % COLS;
+      const west = (col + COLS - 1) % COLS;
+      const near = (col + shift) % COLS;
+      const far = (col + shift + COLS - 1) % COLS;
 
-  buildAdjacency();
-}
+      const up = row + 1 < ROWS ? row + 1 : -1;
+      const down = row - 1 >= 0 ? row - 1 : -1;
 
-/**
- * Name a point of the subdivision so that two faces sharing it agree.
- *
- * Never a coordinate comparison. The two faces meeting along an edge compute
- * the same point by different arithmetic and get answers differing in the last
- * bit; if that decided identity, one cell would silently become two and a
- * border would fail to close a hundred hours later.
- */
-function identify(
-  i: number, j: number, k: number,
-  a: number, b: number, c: number, m: number,
-): string {
-  if (i === m) return `c${a}`;
-  if (j === m) return `c${b}`;
-  if (k === m) return `c${c}`;
-  // On an edge: named by the edge and the step count from its lower-indexed
-  // end, so both faces produce the same name.
-  if (k === 0) return edgeKey(a, b, j, m);
-  if (j === 0) return edgeKey(a, c, k, m);
-  if (i === 0) return edgeKey(b, c, k, m);
-  // Interior to this face, so the face is enough to make it unique.
-  return `f${a}.${b}.${c}.${i}.${j}`;
-}
-
-function edgeKey(u: number, v: number, stepsFromU: number, m: number): string {
-  return u < v
-    ? `e${u}.${v}.${stepsFromU}`
-    : `e${v}.${u}.${m - stepsFromU}`;
-}
-
-function normalizeInto(v: number[], i: number): void {
-  const x = v[i * 3];
-  const y = v[i * 3 + 1];
-  const z = v[i * 3 + 2];
-  const len = Math.sqrt(x * x + y * y + z * z);
-  v[i * 3] = x / len;
-  v[i * 3 + 1] = y / len;
-  v[i * 3 + 2] = z / len;
-}
-
-function buildAdjacency(): void {
-  const count = new Uint8Array(CELL_COUNT);
-  const link = (a: number, b: number): void => {
-    for (let i = 0; i < count[a]; i++) {
-      if (neighbours[a * 6 + i] === b) return;
-    }
-    if (count[a] >= 6) throw new Error(`cell ${a} has more than six neighbours`);
-    neighbours[a * 6 + count[a]++] = b;
-  };
-  for (let f = 0; f < faceTriangles.length; f += 3) {
-    const a = faceTriangles[f];
-    const b = faceTriangles[f + 1];
-    const c = faceTriangles[f + 2];
-    link(a, b); link(b, a);
-    link(b, c); link(c, b);
-    link(c, a); link(a, c);
-  }
-  for (let i = 0; i < CELL_COUNT; i++) {
-    const n = count[i];
-    if (n !== 6 && !(n === 5 && i < 12)) {
-      throw new Error(`cell ${i} has ${n} neighbours; only cells 0-11 may have five`);
+      neighbours[cell * 6 + 0] = row * COLS + east;
+      neighbours[cell * 6 + 1] = up < 0 ? -1 : up * COLS + near;
+      neighbours[cell * 6 + 2] = up < 0 ? -1 : up * COLS + far;
+      neighbours[cell * 6 + 3] = row * COLS + west;
+      neighbours[cell * 6 + 4] = down < 0 ? -1 : down * COLS + far;
+      neighbours[cell * 6 + 5] = down < 0 ? -1 : down * COLS + near;
     }
   }
 }
 
-/** The twelve pentagons are exactly the original icosahedron vertices. */
-export function isPentagon(cell: number): boolean {
-  return cell < PENTAGON_COUNT;
+// ---------------------------------------------------------------------------
+
+/** There are none. Kept so the layers above need not know that. */
+export function isPentagon(_cell: number): boolean {
+  return false;
 }
 
 export function neighbourCount(cell: number): number {
-  return isPentagon(cell) ? 5 : 6;
+  let n = 0;
+  for (let i = 0; i < 6; i++) if (neighbours[cell * 6 + i] >= 0) n++;
+  return n;
 }
 
 export function centre(cell: number, out: Float64Array): Float64Array {
@@ -232,50 +176,54 @@ export function centre(cell: number, out: Float64Array): Float64Array {
 }
 
 /**
- * The cell containing a direction, by greedy descent.
+ * Which cell holds a direction.
  *
- * Start anywhere and repeatedly step to whichever neighbour is closer to the
- * target. On a sphere whose cells come from a Delaunay triangulation this
- * cannot get stuck in a local minimum, so it always lands on the true nearest
- * cell -- in about 50 steps rather than the 10,242 a linear scan would take.
+ * Inverted directly rather than searched. The projection says which row and
+ * column a point lands in; the only care needed is that a hex grid's rows
+ * interleave, so the nearest centre may be in the row above or below the one
+ * the arithmetic gives. Three rows and two columns each is six candidates and
+ * settles it exactly.
+ *
+ * A point over a cap belongs to no cell. The nearest edge cell is returned
+ * rather than a failure, because everything upstream wants an answer and the
+ * caps are ice: the honest reply at the pole is "the northernmost cell", not
+ * "nowhere".
  */
 export function cellAt(x: number, y: number, z: number): number {
   const len = Math.sqrt(x * x + y * y + z * z);
   if (len === 0) return 0;
-  const nx = x / len;
-  const ny = y / len;
-  const nz = z / len;
+  const nx = x / len, ny = y / len, nz = z / len;
+
+  let lon = Math.atan2(nz, nx);
+  if (lon < 0) lon += 2 * Math.PI;
+  const rowF = (ny + BAND_SIN_LIMIT) / (1.5 * CELL_R) - 0.5;
 
   let best = 0;
-  let bestDot = dot(0, nx, ny, nz);
-  for (let step = 0; step < 64; step++) {
-    let moved = false;
-    for (let i = 0; i < 6; i++) {
-      const n = neighbours[best * 6 + i];
-      if (n < 0) continue;
-      const d = dot(n, nx, ny, nz);
-      if (d > bestDot) {
-        bestDot = d;
-        best = n;
-        moved = true;
-      }
+  let bestDot = -2;
+  for (let dr = -1; dr <= 1; dr++) {
+    const row = Math.max(0, Math.min(ROWS - 1, Math.round(rowF) + dr));
+    const shift = (row & 1) * 0.5;
+    const colF = lon / (SQRT3 * CELL_R) - shift;
+    for (let dc = 0; dc <= 1; dc++) {
+      const col = (((Math.round(colF) + dc) % COLS) + COLS) % COLS;
+      const cell = row * COLS + col;
+      const d = centres[cell * 3] * nx
+        + centres[cell * 3 + 1] * ny
+        + centres[cell * 3 + 2] * nz;
+      if (d > bestDot) { bestDot = d; best = cell; }
     }
-    if (!moved) return best;
   }
   return best;
 }
 
-function dot(cell: number, x: number, y: number, z: number): number {
-  return centres[cell * 3] * x + centres[cell * 3 + 1] * y + centres[cell * 3 + 2] * z;
-}
-
-/** Great-circle distance between two cells, in metres, on a given radius. */
+/** Great-circle distance between two cell centres. */
 export function distance(a: number, b: number, radiusM: number): number {
-  const d = Math.max(-1, Math.min(1, dot(a, centres[b * 3], centres[b * 3 + 1], centres[b * 3 + 2])));
-  return Math.acos(d) * radiusM;
+  const d = centres[a * 3] * centres[b * 3]
+    + centres[a * 3 + 1] * centres[b * 3 + 1]
+    + centres[a * 3 + 2] * centres[b * 3 + 2];
+  return Math.acos(Math.max(-1, Math.min(1, d))) * radiusM;
 }
 
-/** Latitude and longitude of a cell centre, in radians. Drives climate. */
 export function latLon(cell: number): { lat: number; lon: number } {
   const x = centres[cell * 3];
   const y = centres[cell * 3 + 1];
@@ -283,70 +231,34 @@ export function latLon(cell: number): { lat: number; lon: number } {
   return { lat: Math.asin(y), lon: Math.atan2(z, x) };
 }
 
+/** Cell outlines, built lazily -- only the client ever needs them. */
+let outlines: (Float64Array | null)[] | null = null;
+
 /**
- * The cell's outline: the ring of triangle centroids around its vertex, in
- * order. This is the Goldberg face -- the hexagon (or pentagon) a player sees.
+ * A cell's outline, as six points on the sphere.
  *
- * Built lazily and cached, because only the renderer needs it. The ordering
- * uses atan2 in the cell's tangent plane, which is fine here in a way it would
- * not be inside the simulation: an outline is a picture, not state.
+ * The hexagon is regular in the projection, and that is what makes neighbours
+ * share their corners exactly: two cells that touch compute the same corner
+ * from the same arithmetic, so the tiling closes by construction rather than
+ * by tolerance.
+ *
+ * On the sphere it comes out stretched towards the poles. That is the
+ * equal-area projection being honest that you cannot have both the area and
+ * the shape, and it is the price of having no pentagons.
  */
 export function outline(cell: number): Float64Array {
-  if (outlines === null) outlines = buildOutlines();
-  return outlines[cell];
-}
+  if (outlines === null) outlines = new Array(CELL_COUNT).fill(null);
+  const known = outlines[cell];
+  if (known !== null && known !== undefined) return known;
 
-function buildOutlines(): Float64Array[] {
-  const incident: number[][] = Array.from({ length: CELL_COUNT }, () => []);
-  for (let f = 0; f < faceTriangles.length; f += 3) {
-    incident[faceTriangles[f]].push(f);
-    incident[faceTriangles[f + 1]].push(f);
-    incident[faceTriangles[f + 2]].push(f);
+  const p = projected(cell);
+  const poly = new Float64Array(18);
+  for (let i = 0; i < 6; i++) {
+    // Pointy-top: vertices at 30, 90, 150 degrees and their opposites, so the
+    // flat sides face the cell's east and west neighbours.
+    const a = ((60 * i + 30) * Math.PI) / 180;
+    toVector(p.lon + CELL_R * Math.cos(a), p.sinLat + CELL_R * Math.sin(a), poly, i * 3);
   }
-
-  return incident.map((tris, cell) => {
-    const cx = centres[cell * 3];
-    const cy = centres[cell * 3 + 1];
-    const cz = centres[cell * 3 + 2];
-
-    // Any two perpendicular directions in the tangent plane will do; pick the
-    // axis least aligned with the normal so the cross product stays stable.
-    const ax = Math.abs(cx) < Math.abs(cy) && Math.abs(cx) < Math.abs(cz) ? 0 : Math.abs(cy) < Math.abs(cz) ? 1 : 2;
-    const ux = ax === 0 ? 1 : 0;
-    const uy = ax === 1 ? 1 : 0;
-    const uz = ax === 2 ? 1 : 0;
-    let ex = uy * cz - uz * cy;
-    let ey = uz * cx - ux * cz;
-    let ez = ux * cy - uy * cx;
-    const el = Math.sqrt(ex * ex + ey * ey + ez * ez);
-    ex /= el; ey /= el; ez /= el;
-    const fx = cy * ez - cz * ey;
-    const fy = cz * ex - cx * ez;
-    const fz = cx * ey - cy * ex;
-
-    const pts = tris.map((f) => {
-      const a = faceTriangles[f];
-      const b = faceTriangles[f + 1];
-      const c = faceTriangles[f + 2];
-      let px = (centres[a * 3] + centres[b * 3] + centres[c * 3]) / 3;
-      let py = (centres[a * 3 + 1] + centres[b * 3 + 1] + centres[c * 3 + 1]) / 3;
-      let pz = (centres[a * 3 + 2] + centres[b * 3 + 2] + centres[c * 3 + 2]) / 3;
-      const l = Math.sqrt(px * px + py * py + pz * pz);
-      px /= l; py /= l; pz /= l;
-      const angle = Math.atan2(
-        px * fx + py * fy + pz * fz,
-        px * ex + py * ey + pz * ez,
-      );
-      return { px, py, pz, angle };
-    });
-
-    pts.sort((p, q) => p.angle - q.angle);
-    const out = new Float64Array(pts.length * 3);
-    for (let i = 0; i < pts.length; i++) {
-      out[i * 3] = pts[i].px;
-      out[i * 3 + 1] = pts[i].py;
-      out[i * 3 + 2] = pts[i].pz;
-    }
-    return out;
-  });
+  outlines[cell] = poly;
+  return poly;
 }

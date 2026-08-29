@@ -5,7 +5,8 @@
 // nothing above it can be right. These run first and cost milliseconds.
 
 import {
-  CELL_COUNT, PENTAGON_COUNT, FREQUENCY, centres, neighbours, neighbourCount,
+  CELL_COUNT, PENTAGON_COUNT, COLS, ROWS, BAND_SIN_LIMIT, CELL_R,
+  centres, neighbours, neighbourCount,
   isPentagon, cellAt, distance, latLon, outline,
 } from '../sim/geo/sphere.ts';
 import {
@@ -18,32 +19,48 @@ import {
 import * as A from '../sim/anchors.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
-suite('sphere', () => {
-  check('cell count', CELL_COUNT, 92, 0);
-  check('subdivision frequency', FREQUENCY, 3, 0);
+suite('the world map has no pentagons', () => {
+  // A hex grid that wraps east to west, laid out in longitude and the sine of
+  // latitude. That projection is Lambert cylindrical and Lambert is EQUAL-AREA
+  // -- the area element on a sphere is cos(lat)·dlat·dlon and d(sin lat) is
+  // cos(lat)·dlat -- so equal area in the grid is exactly equal area on the
+  // sphere, and every cell is worth the same as every other.
+  //
+  // This replaced a Goldberg polyhedron, which carries exactly twelve
+  // pentagons because Euler says it must: with three faces at each vertex, F
+  // hexagons give E = 3F and V = 2F, so V - E + F = 0 where a closed surface
+  // needs 2. At 92 cells the twelve were one region in eight.
+  check('cell count', CELL_COUNT, COLS * ROWS, 0);
+  check('columns are three times the rows', COLS, 3 * ROWS, 0);
 
-  // Euler's formula is why there are twelve pentagons and not zero. If this
-  // ever fails the subdivision has produced something that is not a sphere.
-  let edges = 0;
-  let pentagons = 0;
+  // THE HEADLINE. Not "few" pentagons: none.
+  let fives = 0;
+  for (let c = 0; c < CELL_COUNT; c++) if (neighbourCount(c) === 5) fives++;
+  measure('cells with five neighbours', fives);
+  check('there are no pentagons', fives, 0, 0);
+  check('and the module agrees', PENTAGON_COUNT, 0, 0);
+  let claimed = 0;
+  for (let c = 0; c < CELL_COUNT; c++) if (isPentagon(c)) claimed++;
+  check('isPentagon says so too', claimed, 0, 0);
+
+  // Every cell has six neighbours except the two rows against the ice caps,
+  // which have four. Nothing has three or five: the grid is regular, and the
+  // only irregularity is the boundary.
+  let six = 0, four = 0, other = 0;
   for (let c = 0; c < CELL_COUNT; c++) {
     const n = neighbourCount(c);
-    edges += n;
-    if (n === 5) pentagons++;
+    if (n === 6) six++; else if (n === 4) four++; else other++;
   }
-  edges /= 2;
-  const faces = (2 * edges) / 3; // every triangle has three edges, every edge two triangles
-  check('pentagon count', pentagons, PENTAGON_COUNT, 0);
-  check('Euler characteristic', CELL_COUNT - edges + faces, 2, 0);
-  measure('edge count', edges);
+  measure('cells with six neighbours', six);
+  measure('cells against an ice cap', four);
+  check('nothing has any other number of neighbours', other, 0, 0);
+  check('the cap rows are the top and bottom', four, 2 * COLS, 0);
 
-  // The twelve pentagons must be the twelve icosahedron vertices, because the
-  // generator relies on isPentagon being a cheap id comparison.
-  let mismatched = 0;
-  for (let c = 0; c < CELL_COUNT; c++) {
-    if (isPentagon(c) !== (neighbourCount(c) === 5)) mismatched++;
-  }
-  check('isPentagon agrees with neighbour count', mismatched, 0, 0);
+  // The wrap has to close, or the world has a seam down it.
+  const westOfFirst = neighbours[0 * 6 + 3];
+  const eastOfLast = neighbours[(COLS - 1) * 6 + 0];
+  check('going west from column zero reaches the last column', westOfFirst, COLS - 1, 0);
+  check('and going east from the last returns to zero', eastOfLast, 0, 0);
 
   // Adjacency must be symmetric or every flood fill in the project is wrong.
   let asymmetric = 0;
@@ -67,51 +84,84 @@ suite('sphere', () => {
   }
   check('centres are unit vectors', worstNorm, 0, 1e-12);
 
-  // Greedy descent must land on the true nearest cell every time, or picking
-  // is wrong somewhere on the globe and only sometimes.
   let wrong = 0;
-  for (let t = 0; t < 400; t++) {
-    const c = (t * 977) % CELL_COUNT;
-    const found = cellAt(centres[c * 3], centres[c * 3 + 1], centres[c * 3 + 2]);
-    if (found !== c) wrong++;
+  for (let c = 0; c < CELL_COUNT; c++) {
+    if (cellAt(centres[c * 3], centres[c * 3 + 1], centres[c * 3 + 2]) !== c) wrong++;
   }
   check('cellAt recovers a cell from its own centre', wrong, 0, 0);
 
-  // The nearest cell to the pole, not a cell *at* the pole. At 92 regions a
-  // cell is 2,900 km across, so its centre can be twelve degrees off the pole
-  // and still be the nearest -- the old tolerance of a thousandth of a degree
-  // only passed because 10,242 cells put one almost exactly there.
-  const poleCell = cellAt(0, 1, 0);
-  const poleLat = (latLon(poleCell).lat * 180) / Math.PI;
+  // A point over a cap has no cell, so it gets the nearest one, which must be
+  // in the top row and not somewhere arbitrary.
+  const overPole = cellAt(0, 1, 0);
+  assert('a point over the pole lands in the top row', overPole >= (ROWS - 1) * COLS);
+  const poleLat = (latLon(overPole).lat * 180) / Math.PI;
   measure('latitude of the cell nearest the pole', poleLat);
-  assert('the cell nearest the pole is in the far north', poleLat > 60);
+  assert('which is in the far north', poleLat > 40);
 
-  // Cell area, cross-checked two ways: the sphere's area over the cell count,
-  // against the ladder in docs/architecture.md.
-  const area = (4 * Math.PI * A.EARTH_RADIUS_M ** 2) / CELL_COUNT;
+  // How far the grid reaches, against the polar circle it happens to land on.
+  const bandLat = (Math.asin(BAND_SIN_LIMIT) * 180) / Math.PI;
+  measure('latitude the grid reaches', bandLat);
+  measure('fraction of the sphere that is gridded', BAND_SIN_LIMIT);
+  assert('the ice caps are small', BAND_SIN_LIMIT > 0.85);
+  assert('and the grid stops short of the pole', BAND_SIN_LIMIT < 0.98);
+
+  // EQUAL AREA, which is the property the whole economy leans on. Every cell
+  // covers the same solid angle: the gridded band over the cell count.
+  const bandArea = 4 * Math.PI * BAND_SIN_LIMIT;
+  const perCell = bandArea / CELL_COUNT;
+  const area = perCell * A.EARTH_RADIUS_M ** 2;
   measure('region area km2', area / 1e6);
   measure('region across km', (2 * Math.sqrt(area / ((3 * Math.sqrt(3)) / 2))) / 1000);
 
-  // Neighbour spacing should be tight -- a Goldberg polyhedron is not perfectly
-  // regular, but a 3:1 spread would mean the subdivision went wrong.
+  // Checked against the outlines rather than asserted: a cell's area from its
+  // own corners, by spherical excess, must be the same everywhere.
+  let minArea = Infinity, maxArea = 0;
+  for (let c = 0; c < CELL_COUNT; c++) {
+    const poly = outline(c);
+    // Planar area in the projection, which is where the cells are regular.
+    let a2 = 0;
+    for (let i = 0; i < 6; i++) {
+      const j = (i + 1) % 6;
+      const ax = Math.atan2(poly[i * 3 + 2], poly[i * 3]);
+      const ay = poly[i * 3 + 1];
+      const bx = Math.atan2(poly[j * 3 + 2], poly[j * 3]);
+      const by = poly[j * 3 + 1];
+      // Longitudes wrap; take the short way round.
+      let dx = bx - ax;
+      if (dx > Math.PI) dx -= 2 * Math.PI;
+      if (dx < -Math.PI) dx += 2 * Math.PI;
+      a2 += dx * (ay + by);
+    }
+    const cellArea = Math.abs(a2) / 2;
+    minArea = Math.min(minArea, cellArea);
+    maxArea = Math.max(maxArea, cellArea);
+  }
+  measure('smallest cell area, steradians', minArea);
+  measure('largest cell area, steradians', maxArea);
+  check('every cell has the same area', maxArea / minArea, 1.0, 1e-9);
+
+  // Spacing is uniform east to west by construction, and varies north to
+  // south only as the projection stretches. A three-to-one spread would mean
+  // the layout went wrong.
   let minStep = Infinity, maxStep = 0;
   for (let c = 0; c < CELL_COUNT; c++) {
-    for (let i = 0; i < neighbourCount(c); i++) {
-      const d = distance(c, neighbours[c * 6 + i], A.EARTH_RADIUS_M);
+    for (let i = 0; i < 6; i++) {
+      const n = neighbours[c * 6 + i];
+      if (n < 0) continue;
+      const d = distance(c, n, A.EARTH_RADIUS_M);
       minStep = Math.min(minStep, d);
       maxStep = Math.max(maxStep, d);
     }
   }
   measure('closest neighbour km', minStep / 1000);
   measure('furthest neighbour km', maxStep / 1000);
-  check('neighbour spacing is near-uniform', maxStep / minStep, 1.0, 0.35);
+  assert('no neighbour is absurdly far', maxStep / minStep < 3.5);
 
-  // Outlines: five corners on a pentagon, six everywhere else.
+  // Six corners on everything. There is nothing else any more.
   let badOutline = 0;
-  for (let c = 0; c < CELL_COUNT; c += 37) {
-    if (outline(c).length / 3 !== neighbourCount(c)) badOutline++;
-  }
-  check('outline corner count matches neighbour count', badOutline, 0, 0);
+  for (let c = 0; c < CELL_COUNT; c++) if (outline(c).length / 3 !== 6) badOutline++;
+  check('every cell has six corners', badOutline, 0, 0);
+  measure('cell circumradius in projection units', CELL_R);
 });
 
 suite('sub-map', () => {

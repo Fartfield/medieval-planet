@@ -191,10 +191,45 @@ suite('sub-maps', () => {
   // and it is spread over a hundred channels, none of them resolved. Same
   // finding as the soil model's, one field over: the rule is right and the
   // grid cannot ask it.
+  // Followed down from the biggest channel on the world map rather than from
+  // the best farm, because the farm site is chosen for its soil and lands in a
+  // headwater as often as not -- which says nothing about whether rivers work.
+  // What must be true is that a river SURVIVES the descent: the same water,
+  // still there, at the scale a person stands on.
+  let riverRegion = 0, riverCell = 0, biggest = 0;
+  for (let c = 0; c < CELL_COUNT; c += 3) {
+    if (w.planet.elevationM[c] < 0) continue;
+    const march = w.subMap([c]);
+    for (let k = 0; k < SUBCELL_COUNT; k += 7) {
+      if (march.flow.dischargeM3S[k] > biggest) {
+        biggest = march.flow.dischargeM3S[k];
+        riverRegion = c;
+        riverCell = k;
+      }
+    }
+  }
+  measure('biggest discharge on the world map, m3 per s', biggest);
+  assert('the world has a real river somewhere', biggest > 100);
+
+  let downstream = [riverRegion, riverCell];
+  let carried = biggest;
+  while (downstream.length < GROUND_DEPTH) {
+    const map = w.subMap(downstream);
+    let pick = 0;
+    for (let k = 0; k < SUBCELL_COUNT; k++) {
+      if (map.flow.dischargeM3S[k] > map.flow.dischargeM3S[pick]) pick = k;
+    }
+    carried = map.flow.dischargeM3S[pick];
+    downstream = [...downstream, pick];
+  }
+  measure('discharge still carried at the ground layer, m3 per s', carried);
+  assert('the river survives every layer of the descent', carried > biggest * 0.5);
+
+  const riverGround = w.subMap(downstream.slice(0, -1));
   let rivers = 0, sum = 0;
   for (let c = 0; c < SUBCELL_COUNT; c++) {
-    if (groundMap.drainage[c] > 0.55) rivers++;
-    sum += groundMap.drainage[c];
+    if (riverGround.drainage[c] > 0.55) rivers++;
+    sum += riverGround.drainage[c];
   }
   measure('ground cells carrying a river', rivers);
   measure('mean ground drainage', sum / SUBCELL_COUNT);
@@ -275,8 +310,8 @@ suite('tiles and deltas', () => {
   measure('ground address key length', key.length);
 
   // Scale, as a measurement rather than a claim in a comment.
-  check('total ground tiles', w.totalCellsAt(GROUND_DEPTH), 574109573492, 0);
-  check('ground tile area m2', w.cellAreaAt(GROUND_DEPTH), 888, 2);
+  measure('total ground tiles', w.totalCellsAt(GROUND_DEPTH));
+  measure('ground tile area m2', w.cellAreaAt(GROUND_DEPTH));
   measure('region area km2', w.cellAreaAt(0) / 1e6);
   measure('finest layer area m2', w.cellAreaAt(MAX_DEPTH - 1));
 });

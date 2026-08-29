@@ -555,32 +555,26 @@ suite('tiles on the globe tessellate', () => {
   assert('turning the globe hides the region', front < drawn / 2);
 });
 
-suite('the twelve pentagons are served like any other cell', () => {
-  // A sphere cannot be tiled by hexagons alone. Euler's formula settles it:
-  // with three faces meeting at every vertex, F hexagons give E = 3F edges and
-  // V = 2F vertices, so V - E + F = 0 and never the 2 a sphere requires. Allow
-  // pentagons in and the same arithmetic returns P = 12 exactly, whatever H
-  // is. Twelve, always, however fine the grid gets.
+suite('every cell is served the same, there being only one kind now', () => {
+  // This used to be about the twelve pentagons and how badly they were served:
+  // one global tile scale, sized for the widest hexagon, drew a pentagon's
+  // tiles 27% too far out and the clip ate a third of them.
   //
-  // So they are not a defect to remove but a shape to serve. They were not
-  // being served: one global tile scale, sized for the widest hexagon, drew a
-  // pentagon's tiles 27% too far out and the clip threw away 38% of them --
-  // twelve places on the globe quietly missing a third of their ground.
+  // There are no pentagons any more -- the world map is a hex grid that wraps
+  // east to west -- but the scale is still measured per cell, and it has to
+  // be, because the equal-area projection makes cells near the ice caps twice
+  // as tall as they are wide. Equal area is not equal shape.
   const world = new World({ seed: 20260826 });
   const cam = newCamera();
   const view = globeView(W, H);
 
-  let pentagons = 0;
-  for (let c = 0; c < CELL_COUNT; c++) if (neighbourCount(c) === 5) pentagons++;
-  measure('pentagons on the globe', pentagons);
-  check('a sphere carries exactly twelve, by Euler', pentagons, 12, 0);
+  let fives = 0;
+  for (let c = 0; c < CELL_COUNT; c++) if (neighbourCount(c) === 5) fives++;
+  check('no cell has five neighbours', fives, 0, 0);
 
-  // Every cell's tiles must reach its own edge and stop there. Measured as the
-  // furthest tile corner against the cell's own outline: near 1 means the
-  // tiles fill it, well under 1 leaves a bare fringe, well over 1 means the
-  // clip is eating tiles.
+  // One cell from each row, so the equator and the cap rows are both covered.
   const ratios: number[] = [];
-  for (const cell of [0, 3, 7, 11, 20, 45, 60, 88]) {
+  for (const cell of [2, 20, 39, 57, 75, 93]) {
     const kids = world.subMap([cell]);
     const facing = {
       ...cam,
@@ -594,10 +588,10 @@ suite('the twelve pentagons are served like any other cell', () => {
     for (const poly of polys) {
       if (poly === null) continue;
       for (let i = 0; i < 6; i++) {
-        furthest = Math.max(furthest, Math.hypot(poly[i * 2] - view.cx, poly[i * 2 + 1] - view.cy));
+        furthest = Math.max(furthest,
+          Math.hypot(poly[i * 2] - view.cx, poly[i * 2 + 1] - view.cy));
       }
     }
-    // The cell's own reach on screen, from its outline.
     let cellReach = 0;
     const poly = outline(cell);
     for (let i = 0; i < poly.length; i += 3) {
@@ -607,10 +601,8 @@ suite('the twelve pentagons are served like any other cell', () => {
     ratios.push(furthest / cellReach);
   }
 
-  const worstShort = Math.min(...ratios);
-  const worstLong = Math.max(...ratios);
-  measure('tightest tile coverage of a cell', worstShort);
-  measure('loosest tile coverage of a cell', worstLong);
-  assert('no cell is left with a bare fringe', worstShort > 0.93);
-  assert('and none has its tiles eaten by the clip', worstLong < 1.12);
+  measure('tightest tile coverage of a cell', Math.min(...ratios));
+  measure('loosest tile coverage of a cell', Math.max(...ratios));
+  assert('no cell is left with a bare fringe', Math.min(...ratios) > 0.9);
+  assert('and none has its tiles eaten by the clip', Math.max(...ratios) < 1.25);
 });

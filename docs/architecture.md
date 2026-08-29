@@ -59,37 +59,61 @@ crude.
 to a real distance now rather than a number of passes, and at this resolution
 that works out to no smearing at all, which is the honest answer.
 
-## Why the top layer is a sphere and the rest are not
+## Why the top layer has no pentagons
 
-**You cannot tile a sphere with hexagons.** Euler's formula forbids it: for any
-polyhedron `V - E + F = 2`, and if every face had six sides that reduces to
-`2 = 0`. Any hex-covered sphere needs exactly twelve pentagons, however many
-hexagons you add. Every hex-globe game has them.
+It used to have twelve, because it was a Goldberg polyhedron and a Goldberg
+polyhedron cannot have any other number. That is Euler, not a choice: with
+three faces meeting at each vertex, F hexagons give E = 3F edges and V = 2F
+vertices, so V − E + F = 0 where a closed surface of genus zero requires 2.
+Admit pentagons and the same arithmetic returns **P = 12 exactly**, whatever H
+is. A football has twelve however many hexagons are sewn around them.
 
-Ours are the twelve vertices of the icosahedron the globe is subdivided from,
-and they are cells 0–11 so that `isPentagon` is an integer comparison. The
-globe is a Goldberg polyhedron GP(32,0): 10,230 hexagons and 12 pentagons,
-which is the closest this construction comes to the 10,000 regions the design
-called for.
+At 92 cells the twelve were 13% of the world map — one region in eight — and
+the highest-variance thing on screen.
 
-We never build the Goldberg polyhedron directly. A Goldberg polyhedron is the
-*dual* of a geodesic sphere, so its cells correspond one-for-one to the
-geodesic's **vertices** — cut each icosahedron edge into three, and the 92
-vertices that fall out are the 92 cell centres. Adjacency is geodesic edge
-adjacency; a cell's outline is the ring of triangle centroids around its vertex.
+**So the tiling changed. A hex grid that wraps east to west has no pentagons at
+all**, because a cylinder's Euler characteristic is zero rather than two.
 
-The subdivision takes an arbitrary frequency rather than repeated halving.
-Halving is simpler but can only produce 12, 42, 162, 642, 2562 or 10242 cells,
-and the design asks for a hundred.
+### The projection is the whole trick
 
-**Below the globe, everything is flat.** Curvature over one sub-map is far
-below the rounding in any number the economy uses, so layers 1 and below are
-ordinary flat hex fields: no pentagons, no seams, no projection, exact
-arithmetic. **The pentagon problem exists on exactly one layer and never
-propagates downward.** That is worth more than it sounds.
+The grid is laid out in (longitude, sine of latitude) — the Lambert cylindrical
+projection — and **Lambert is equal-area**. The area element on a sphere is
+`cos(lat)·dlat·dlon`, and `d(sin lat) = cos(lat)·dlat`, so equal area in the
+grid is exactly equal area on the sphere. Not approximately.
 
-A rhombus of hexes would nest badly — a diamond floating inside a hexagon, with
-ragged corners. A hexagon of hexagons nests the way the eye expects.
+That is what makes it a change of tiling rather than a rewrite. Cells are still
+points on the unit sphere, still equal-area, still measured with great-circle
+distances — so tangent frames, sub-maps, catchments, supply ranges and every
+calibrated number below this layer are untouched. Only which points are cell
+centres changed.
+
+### What it costs
+
+**The poles are not gridded.** The band runs to 65.05°, which is the polar
+circle to within a degree and a half, and beyond it are two ice caps that are
+not cells. Twelve pentagons became two ice caps: the defects moved from twelve
+places scattered through the temperate world to the two places nobody farms.
+
+**Cells stretch towards the poles.** Equal area guarantees the area and says
+nothing about the shape, so a cell at ±52° is 2.7 times taller than it is wide.
+That is the distortion every cylindrical map has, and it lands on the rows
+least likely to be looked at. It is a *metric* distortion rather than a
+*topological* one, which is the important difference: the cells still tessellate
+exactly, every corner still shared, no cell has five neighbours.
+
+**Twenty-four by eight, and eight rows is not negotiable.** Six rows was closer
+to the old cell count and too coarse to hold a climate: one band lands squarely
+on the subtropical desert belt and the world comes out 33.3% desert — which is
+exactly two rows in six, and the giveaway. Eight rows straddle the belt.
+
+| | Goldberg globe | wrapped band |
+|---|---|---|
+| cells | 92 | 192 |
+| pentagons | 12 (13%) | **0** |
+| cell shape | near-regular | up to 2.7:1 at ±52° |
+| poles | gridded | ice caps, ungridded |
+| region | 5.54M km² | 2.41M km² |
+| plot layer | 888 m² | 386 m² |
 
 ## Generation cascades downward
 

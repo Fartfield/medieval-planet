@@ -289,6 +289,78 @@ right and the grid cannot ask it.
 
 ---
 
+## ## The twelve pentagons are gone, and two guards went with them
+
+**Problem.** "The pentagons are the problem. We need a hexagon only projection.
+Or just do a full spherical wrap."
+
+A hexagon-only *closed sphere* is impossible and that is a theorem. A
+hexagon-only *wrapped grid* is ordinary, and the question was really asking for
+the second.
+
+* ~~Raise the subdivision frequency so the twelve are a smaller share.~~ Works
+  and does not answer it: twelve is twelve at any resolution, and the cost is
+  the whole ladder shrinking underneath.
+
+* ~~Keep the sphere and force all twelve pentagons into deep ocean.~~ Cheap --
+  3 of 40 seeds do it by chance -- and it hides the problem rather than
+  removing it.
+
+* **Lay the grid in (longitude, sine of latitude) and wrap it east to west.**
+  That projection is Lambert cylindrical and Lambert is EQUAL-AREA, so cells
+  are exactly equal-area on the sphere; and a cylinder has Euler
+  characteristic zero, so no pentagons are required. Cells stay points on the
+  unit sphere measured by great-circle distance, which is why nothing below
+  the top layer had to change.
+
+  Measured: 192 cells, **zero** with five neighbours, 156 with six and 36
+  against the ice caps with four, adjacency symmetric, and the wrap closing
+  exactly -- column 0's western neighbour is column 23.
+
+**Eight rows, not six.** Six was closer to the old cell count and could not
+hold a climate: with six latitude bands one lands squarely on the subtropical
+desert belt and the world came out **33.3% desert, which is exactly two rows in
+six** and the giveaway. Eight rows straddle the belt and it falls to 27%.
+
+**And then two guards had to go**, both of which had been holding up something
+that was no longer falling.
+
+The coastline guard existed because a planet solved for 29% land came out at
+12% one layer down. That was measured on a **92-cell** world map, where a
+continent was three cells across and most of a land cell's neighbours were
+abyss. At 192 cells a continent's interior cells are surrounded by other land
+and the drowning largely stops on its own: 29.7% → 23.6% → 25.6%, stable.
+
+What the guard cost was worse than the six points it saved. As a **clamp** --
+land forced to at least +1 m -- it is a discontinuity by construction: two
+neighbours straddling the threshold get one snapped to +1 and the other left
+wherever it was. Measured on a coastal ground map, **147 m across one 22 m
+cell**, with the noise contributing nothing at all, and the clamped value then
+inherited so the next layer's median was exactly 1 m. Rewritten as a smooth
+**pull** toward the layer above's classification it made the land fraction
+*worse* -- 21.6% against 23.6% for no guard at all -- because it leans on sea
+as hard as on land and there is more sea.
+
+So: no guard. The `landness` field it was the only consumer of went with it.
+
+**One bound was kept**, and it is measured rather than invented: no point on
+Earth is above Everest or below Challenger Deep, both already anchored. Relief
+is extrapolated from a ten-kilometre baseline by the Hurst exponent, and over a
+184 km cell that overshoots -- it asked for 12 km of relief where the real
+world manages about eight. Terrain is only self-affine over a range.
+
+**Three tests were asking questions the new world cannot answer as posed**, and
+were re-aimed rather than loosened. Tundra and ice are a fifth of Earth's land
+and almost all of that fifth is poleward of 65°, which is now outside the grid.
+"No cliff is near vertical" is a claim about landscapes, so it is asserted down
+to the plot layer and measured below it, where a cell is 22 cm and a vertical
+step is a stream bank. And the river test descended to the best *farm*, which
+lands in a headwater as often as not; it now follows the biggest channel on the
+world map down, and finds 11,691 m³/s still there at the ground layer, out of
+11,767 at the top.
+
+---
+
 ## ## Twelve pentagons were quietly missing a third of their ground
 
 **Problem.** "The world is not just hexagons, but pentagons as well. Can we

@@ -8,7 +8,9 @@
 // Below the globe every layer is a flat hex field, so the same routine draws
 // realm and ground with nothing but a scale change.
 
-import { CELL_COUNT, centres, outline } from '../../sim/geo/sphere.ts';
+import {
+  CELL_COUNT, centres, outline, BAND_SIN_LIMIT, CELL_R, COLS, ROWS,
+} from '../../sim/geo/sphere.ts';
 import {
   RADIUS, SUBCELL_COUNT, coords, DIRECTIONS, toPixel, fromPixel,
 } from '../../sim/geo/hexgrid.ts';
@@ -158,6 +160,7 @@ export const GRID_MIN_PX = 8;
  */
 const CHILD_SCALE = 1 / (Math.sqrt(3) * RADIUS);
 const CHILD_TURN_DEG = 30;
+const SQRT3 = Math.sqrt(3);
 const COS30 = Math.sqrt(3) / 2;
 const SIN30 = 0.5;
 
@@ -291,6 +294,12 @@ export function drawGlobe(
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fill();
 
+  // Then the ice, before the cells, so the cells paint over its inner edge and
+  // no gap can open between them. The grid is a band that stops short of the
+  // poles -- that is what buys a world with no pentagons in it -- and what
+  // lies beyond it is not a hole in the map, it is the ice cap.
+  drawIceCaps(ctx, cam, view);
+
   // Three ways to paint a cell, by how big it is on screen: out of its own
   // children, as their average, or flat. The ladder is what keeps a zoomed-out
   // globe from asking for ten thousand sub-maps to fill a dozen shapes.
@@ -397,6 +406,75 @@ export function drawGlobe(
 }
 
 /**
+ * The two ice caps: everything poleward of where the hex band stops.
+ *
+ * Drawn as a fan of triangles from the pole out to the band's edge, keeping
+ * only those facing the viewer. A cap is a spherical cap and its outline
+ * crosses the limb at most latitudes, so filling it as one polygon means
+ * handling that crossing; a fan sidesteps it entirely, because each triangle
+ * is small enough to be wholly in front or wholly behind.
+ *
+ * The inner edge is drawn from the top row's CENTRE latitude rather than from
+ * the band limit, so it runs under the cells rather than up to them. The band
+ * edge is a zigzag -- hexagons have corners -- and matching a zigzag with a
+ * circle leaves a row of little gaps.
+ */
+function drawIceCaps(ctx: CanvasRenderingContext2D, cam: Camera, view: GlobeView): void {
+  const { cx, cy, radius } = view;
+  const rowCentre = BAND_SIN_LIMIT - 0.75 * CELL_R;
+  const step = SQRT3 * CELL_R;
+
+  for (const pole of [1, -1]) {
+    const [ax, ay, az] = rotate(cam, 0, pole, 0);
+    const notch = rowCentre + 0.5 * CELL_R;
+
+    // The cap is drawn down to the NOTCH -- the lower of the two heights the
+    // band's upper edge takes, where two hexagons meet shoulder to shoulder --
+    // and the cells are drawn afterwards over the top of it.
+    //
+    // The band's edge is a zigzag rather than a circle, because a pointy-top
+    // hexagon reaches its full radius at its top vertex and only half of it at
+    // the two upper corners. Fanning the ice to that zigzag is exactly right
+    // and looks wrong: near the pole the projection stretches half a cell
+    // radius into ten degrees of latitude, so the ice runs down into every
+    // notch and the pole wears a spiked crown.
+    //
+    // Taking the notch line instead, the ice is a clean disc and the hexagons
+    // poke their top vertices into it. Same boundary, opposite colour on the
+    // in-between bit, and no gap either way.
+    const edge: number[] = [];
+    for (let col = 0; col < COLS * 3; col++) {
+      edge.push((col / (COLS * 3)) * 2 * Math.PI, notch);
+    }
+
+    const points = edge.length / 2;
+    for (let i = 0; i < points; i++) {
+      const a0 = i * 2;
+      const a1 = ((i + 1) % points) * 2;
+      const s0 = edge[a0 + 1] * pole;
+      const s1 = edge[a1 + 1] * pole;
+      const c0 = Math.sqrt(Math.max(0, 1 - s0 * s0));
+      const c1 = Math.sqrt(Math.max(0, 1 - s1 * s1));
+      const [b0x, b0y, b0z] = rotate(cam, c0 * Math.cos(edge[a0]), s0, c0 * Math.sin(edge[a0]));
+      const [b1x, b1y, b1z] = rotate(cam, c1 * Math.cos(edge[a1]), s1, c1 * Math.sin(edge[a1]));
+      // Wholly behind the limb: skip. A sliver this narrow never straddles it
+      // by enough to matter.
+      if (az + b0z + b1z < 0) continue;
+
+      ctx.beginPath();
+      ctx.moveTo(cx + ax * radius, cy - ay * radius);
+      ctx.lineTo(cx + b0x * radius, cy - b0y * radius);
+      ctx.lineTo(cx + b1x * radius, cy - b1y * radius);
+      ctx.closePath();
+      // Lit the way the ground is, so the cap belongs to the same ball.
+      const lambert = 0.55 + 0.45 * Math.max(0, (az + b0z + b1z) / 3);
+      ctx.fillStyle = shade(BIOME_COLOURS[1], lambert);
+      ctx.fill();
+    }
+  }
+}
+
+/**
  * The polar axis and the equator.
  *
  * The globe turns about its poles -- yaw spins it around the axis and pitch
@@ -470,12 +548,40 @@ function globeCellPath(
   const poly = outline(cell);
   ctx.beginPath();
   for (let i = 0; i < poly.length; i += 3) {
-    const [px, py] = rotate(cam, poly[i], poly[i + 1], poly[i + 2]);
+    const [ox, oy, oz] = flattenToBand(poly[i], poly[i + 1], poly[i + 2]);
+    const [px, py] = rotate(cam, ox, oy, oz);
     const sx = cx + px * radius;
     const sy = cy - py * radius;
     if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
   }
   ctx.closePath();
+}
+
+/**
+ * The band's top edge, flattened to a circle for drawing.
+ *
+ * A pointy-top hexagon reaches its full radius at its top vertex and half of
+ * it at the two upper corners, so the outermost row ends in a zigzag. Near the
+ * pole the equal-area projection stretches that half-radius into ten degrees
+ * of latitude, and the ice cap meeting it comes out as a crown of white spikes
+ * between dark tips -- correct, and unreadable.
+ *
+ * Trimming the outermost corners back to the notch line gives the band a flat
+ * edge for the ice to meet. It is a drawing decision and lives here rather
+ * than in `outline`, because the simulation's cells really are that shape:
+ * they are equal-area, the geometry suite measures them, and a renderer's
+ * convenience has no business changing what a cell IS.
+ */
+function flattenToBand(x: number, y: number, z: number): [number, number, number] {
+  const cap = BAND_SIN_LIMIT - 0.25 * CELL_R;
+  if (Math.abs(y) <= cap) return [x, y, z];
+  const clamped = y > 0 ? cap : -cap;
+  // Back onto the sphere: keep the longitude, take the latitude down to the
+  // cap, and rescale what is left in the equatorial plane.
+  const was = Math.sqrt(Math.max(1e-12, 1 - y * y));
+  const now = Math.sqrt(Math.max(0, 1 - clamped * clamped));
+  const k = now / was;
+  return [x * k, clamped, z * k];
 }
 
 /**
