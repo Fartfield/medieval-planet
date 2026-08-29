@@ -26,10 +26,12 @@ import {
   SUBCELL_COUNT, RADIUS, subNeighbours, coords, DIRECTIONS,
   toPixel, pixelOfAxial, fromPixel, ringOf,
 } from '../geo/hexgrid.ts';
-import { CELL_COUNT, centres, neighbours, neighbourCount, cellAt } from '../geo/sphere.ts';
+import {
+  CELL_COUNT, CELL_R, centres, neighbours, neighbourCount, cellAt,
+} from '../geo/sphere.ts';
 import { addressSeed, SALT, type Address } from '../geo/address.ts';
 import { fbm3, ridged3 } from './noise.ts';
-import { clamp, smoothstep, dpow, lerp } from './mathx.ts';
+import { clamp, smoothstep, dpow, lerp, dsin, dcos, datan2, PI } from './mathx.ts';
 import {
   routeWater, runoffM as runoffDepthM, drainageOf, alluvialFraction,
   type Boundary, type Flow,
@@ -47,11 +49,47 @@ import {
 } from '../model/soil.ts';
 import type { Planet } from './planet.ts';
 
-/** A local frame: origin on the sphere, plus east and north in its tangent plane. */
+/**
+ * A local frame, in the units the world map itself is laid out in.
+ *
+ * Not a tangent plane. The world map is a hex grid in (longitude, sine of
+ * latitude) -- see geo/sphere.ts -- so a cell up there is a regular hexagon in
+ * THAT space and a stretched one on the sphere: at 53 degrees it is 2.7 times
+ * taller than it is wide. Children laid out isotropically in a tangent plane
+ * therefore cannot tile it, and did not. Measured: at the equator 85 of a
+ * region's 91 children fell inside their own parent, which is the same as a
+ * flat sub-map manages and is fine; at 53 degrees only 61 did. A third of
+ * every polar region's tiles belonged somewhere else.
+ *
+ * So the axes carry the projection's own scale factors. A step of one unit
+ * east is one radian of LONGITUDE, which is cos(lat) radians of arc; a step of
+ * one unit north is one unit of SINE OF LATITUDE, which is 1/cos(lat) radians
+ * of arc. Offsets handed to `toDirection` are then projection offsets, the
+ * children land in the same space their parent is drawn in, and the nesting
+ * closes at every latitude for the same reason it always did on flat maps.
+ *
+ * The projection is applied EXACTLY rather than linearised into scaled axes.
+ * A first attempt did the latter -- east times cos(lat), north over cos(lat),
+ * and the usual `origin + x·east + y·north` -- which is correct to first order
+ * and nowhere near good enough here, because a region spans 2,500 km and the
+ * scale factor it linearises is precisely what varies across that span. It
+ * left one cell's tiles reaching 76% of its own outline, and dropped the
+ * relief between two layers by a factor of 124 where the ladder should lose
+ * about five.
+ *
+ * So the frame carries its anchor in projection coordinates. `toDirection`
+ * adds the offset there and converts once, and `cellContaining` converts back
+ * the same way. The east and north vectors are kept because a few callers want
+ * a direction rather than a coordinate, and for those a first-order frame is
+ * exactly right.
+ */
 export interface Basis {
   ox: number; oy: number; oz: number;
   ex: number; ey: number; ez: number;
   nx: number; ny: number; nz: number;
+  /** The anchor, in the projection the world map is laid out in. */
+  lon: number;
+  sinLat: number;
 }
 
 export interface SubMap {
@@ -144,13 +182,22 @@ export interface ParentSample {
 export const STABILITY_CAP = 99;
 
 /** Circumradius of a layer-0 cell in radians, and the ratio per layer down. */
-const L0_RADIUS_RAD = Math.sqrt(
-  (4 * Math.PI) / CELL_COUNT / ((3 * Math.sqrt(3)) / 2),
-);
+/**
+ * A layer-0 cell's circumradius, in the projection's units.
+ *
+ * Taken from the world grid itself rather than derived from an equal-area
+ * hexagon, because the world grid IS the definition now: CELL_R is what makes
+ * the band close on itself going east.
+ *
+ * Every layer divides it by the square root of the child count, which keeps
+ * the AREA exactly right -- 91 children of a ninety-first the area. It leaves
+ * the arrangement spanning 90.8% of the parent, which is the stepped edge a
+ * hexagon of hexagons always has and which the flat maps have always had.
+ */
 const SHRINK = Math.sqrt(SUBCELL_COUNT);
 
 export function cellRadiusRad(depth: number): number {
-  let r = L0_RADIUS_RAD;
+  let r = CELL_R;
   for (let i = 0; i < depth; i++) r /= SHRINK;
   return r;
 }
@@ -158,35 +205,46 @@ export function cellRadiusRad(depth: number): number {
 /** Build a tangent frame at a point on the sphere. */
 export function basisAt(ox: number, oy: number, oz: number): Basis {
   // East is the pole crossed with the position. At a pole that degenerates, so
-  // fall back to another axis -- the twelve pentagons include the poles and
-  // this would otherwise produce a NaN basis on exactly those cells.
+  // fall back to another axis; nothing sits exactly on a pole now that the
+  // caps are ungridded, but a NaN basis is not worth risking for one branch.
   let ex = oz, ey = 0, ez = -ox;
   let len = Math.sqrt(ex * ex + ez * ez);
   if (len < 1e-9) { ex = 1; ey = 0; ez = 0; len = 1; }
   ex /= len; ey /= len; ez /= len;
+
+  const nx = oy * ez - oz * ey;
+  const ny = oz * ex - ox * ez;
+  const nz = ox * ey - oy * ex;
+
   return {
-    ox, oy, oz, ex, ey, ez,
-    nx: oy * ez - oz * ey,
-    ny: oz * ex - ox * ez,
-    nz: ox * ey - oy * ex,
+    ox, oy, oz, ex, ey, ez, nx, ny, nz,
+    lon: datan2(oz, ox),
+    sinLat: oy,
   };
 }
 
 /** Local tangent-plane offset, in radians, back to a direction on the sphere. */
 export function toDirection(b: Basis, x: number, y: number, out: Float64Array, at: number): void {
-  const dx = b.ox + x * b.ex + y * b.nx;
-  const dy = b.oy + x * b.ey + y * b.ny;
-  const dz = b.oz + x * b.ez + y * b.nz;
-  const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-  out[at] = dx / len;
-  out[at + 1] = dy / len;
-  out[at + 2] = dz / len;
+  // Offsets are in the world map's own projection: x is longitude, y is the
+  // sine of latitude. Converted here rather than approximated, so a cell lands
+  // where the layer above draws it however far from the equator it is.
+  const lon = b.lon + x;
+  const s = Math.max(-1, Math.min(1, b.sinLat + y));
+  const cosLat = Math.sqrt(1 - s * s);
+  out[at] = cosLat * dcos(lon);
+  out[at + 1] = s;
+  out[at + 2] = cosLat * dsin(lon);
 }
 
 /** A direction on the sphere back to the sub-map cell containing it, or -1. */
 export function cellContaining(b: Basis, radiusRad: number, x: number, y: number, z: number): number {
-  const lx = x * b.ex + y * b.ey + z * b.ez;
-  const ly = x * b.nx + y * b.ny + z * b.nz;
+  // Back through the same projection. Longitude is taken the short way round,
+  // so a map straddling the wrap does not read its own cells as half a world
+  // away.
+  let lx = datan2(z, x) - b.lon;
+  if (lx > PI) lx -= 2 * PI;
+  if (lx < -PI) lx += 2 * PI;
+  const ly = y - b.sinLat;
   return fromPixel(lx, ly, radiusRad);
 }
 

@@ -289,6 +289,74 @@ right and the grid cannot ask it.
 
 ---
 
+## ## The world map was the only layer laid out in a different space
+
+**Problem.** "World is the only one whose tiles are not a clean mosaic of their
+constituent hexes." Every other layer nests cleanly; the world map did not, and
+the same function builds them all.
+
+**Measured, and the number is the whole story.** How many of a region's 91
+children have their centre inside that region?
+
+| latitude | before | after |
+|---|---|---|
+| ±7° | 85 | 85 |
+| ±20° | 81 | 85 |
+| ±35° | 77 | 87 |
+| ±53° | **61** | 83 |
+| a flat sub-map | 85 | 85 |
+
+A third of every polar region's tiles belonged to a different region. And the
+equator was already right, which is the clue: **whatever was wrong got worse
+with latitude.**
+
+**Because the world map is a hex grid in (longitude, sine of latitude) and the
+ladder below it was not.** A cell up there is a regular hexagon in the
+projection and a stretched one on the sphere -- 2.7 times taller than wide at
+53 degrees. Children were laid out isotropically in a tangent plane, which
+cannot tile a stretched hexagon, and the mismatch is exactly the projection's
+scale factor. At the equator that factor is one, which is why the equator
+looked fine and why this was invisible until the world map stopped being a
+Goldberg polyhedron.
+
+* ~~Scale the tile cover per cell to match each region's own reach.~~ That was
+  already there, from the pentagon fix, and it is a plaster: it stretches the
+  arrangement to the cell's LONG axis, so the short axis over-covers and the
+  clip eats it. It cannot fix a shape mismatch with one number.
+
+* ~~Give the basis the projection's scale factors -- east times cos(lat),
+  north over cos(lat) -- and keep the usual `origin + x·east + y·north`.~~
+  Correct to first order and nowhere near good enough: a region spans 2,500 km
+  and the scale factor being linearised is precisely what varies across that
+  span. One cell's tiles reached 76% of its own outline, and the relief between
+  two layers fell by a factor of 124 where the ladder should lose about five.
+
+* **Carry the anchor in projection coordinates and convert exactly.** A map's
+  basis holds its (longitude, sine of latitude); `toDirection` adds the offset
+  there and converts once; `cellContaining` converts back the same way. The
+  children are then laid out in the same space their parent is drawn in, at
+  every latitude, and the nesting comes out flat: 83 to 87 against a flat map's
+  85.
+
+**Two things fell out of it.** The per-cell tile cover collapsed to a single
+constant -- `sqrt(91)/(sqrt(3)·RADIUS)`, the reciprocal of the 90.8% a hexagon
+of hexagons spans -- which is exactly the number the flat maps have always
+used. And the layer-0 cell radius is now taken from the world grid's own
+`CELL_R` rather than derived from an equal-area hexagon, because the world grid
+is the definition.
+
+**And one thing had to be built.** Doing the projection exactly means calling
+sine, cosine and arctangent on every cell centre in the world, and `Math.sin`
+is only approximated by the spec -- two engines disagreeing in the last bit
+would put a cell boundary in a different place and hand two players different
+worlds. `sim/angle.ts` was no help: that is a fixed-point system on 1024 steps
+to a turn, built for how a soldier faces, and a tenth of a degree is an
+eighteen-kilometre error on a coastline. So `mathx.ts` gained `dsin`, `dcos`
+and `datan2`, range-reduced with fixed term counts like `dexp` beside them, and
+agreeing with `Math` to within 9e-16 across the tested range.
+
+---
+
 ## ## A region border is a line drawn across a continent
 
 **Problem.** "The detail of constituent hexes works great on every level except

@@ -164,56 +164,26 @@ const SQRT3 = Math.sqrt(3);
 const COS30 = Math.sqrt(3) / 2;
 const SIN30 = 0.5;
 
-/** Angular circumradius of a layer-0 cell, for sizing children on the globe. */
-const L0_RADIUS_RAD = Math.sqrt(
-  (4 * Math.PI) / CELL_COUNT / ((3 * Math.sqrt(3)) / 2),
-);
-
 /**
- * How far a region's tiles are stretched so that they cover it, PER CELL.
+ * How far a region's tiles are drawn beyond their own size, so that they cover
+ * the region rather than leaving a fringe of flat colour round its edge.
  *
- * Ninety-one tiles have exactly their region's area -- that is how the ladder
- * is built -- but not its shape, and not every region is the same shape. A
- * hexagon of hexagons is not a Goldberg cell, and twelve of the cells are not
- * even hexagons: a sphere cannot be tiled by hexagons alone, so it carries
- * exactly twelve pentagons however many hexagons are added around them.
+ * A CONSTANT now, and that is the news. It used to be measured per cell,
+ * because one global number sized for the widest cell drew a pentagon's tiles
+ * 27% too far out -- and later, because the equal-area projection makes cells
+ * near the ice caps two and a half times taller than they are wide, so no
+ * single number could serve both a squat cell and a stretched one.
  *
- * One scale for every cell is therefore wrong, and it was wrong by a lot. Set
- * to cover the widest hexagon at 0.242 radians, it drew a pentagon's tiles 27%
- * too far out -- a pentagon only reaches 0.191 -- so the clip threw away 38%
- * of the area they were drawn over and **the pentagon showed 56 of its 91
- * tiles.** Twelve places on the globe were quietly missing a third of their
- * ground, which is the sort of thing that reads as "errors around the edges"
- * without ever looking like a specific bug.
- *
- * Measured per cell instead: each region's tiles reach exactly as far as that
- * region does. The scale stays uniform within a cell, so the tiling is still a
- * tiling, and it is a drawing decision only -- a tile's real position is what
- * the generator says, and picking works off the region outline.
+ * Both of those were the same bug seen twice: the tiles were being laid out in
+ * a tangent plane while their parent lived in the projection. Now that a map's
+ * basis carries the projection's own scale factors, a child arrangement is the
+ * same shape as its parent at every latitude, and the only gap left is the one
+ * every hexagon of hexagons has: 91 tiles at a ninety-first the area span
+ * sqrt(3)·RADIUS/sqrt(91) = 90.8% of the parent's radius. The reciprocal of
+ * that is this number, and it is exactly what the flat maps have always used.
  */
-const coverScale = new Float64Array(CELL_COUNT);
+const COVER = Math.sqrt(SUBCELL_COUNT) / (Math.sqrt(3) * RADIUS);
 
-function coverFor(cell: number): number {
-  const known = coverScale[cell];
-  if (known > 0) return known;
-
-  // The arrangement's own reach: 91 tiles of the layer below, laid out as a
-  // hexagon of radius RADIUS.
-  const arrangement = Math.sqrt(3) * RADIUS * (L0_RADIUS_RAD / Math.sqrt(SUBCELL_COUNT));
-
-  // How far this particular cell reaches, from its own outline.
-  const poly = outline(cell);
-  const ox = centres[cell * 3], oy = centres[cell * 3 + 1], oz = centres[cell * 3 + 2];
-  let reach = 0;
-  for (let i = 0; i < poly.length; i += 3) {
-    const dot = poly[i] * ox + poly[i + 1] * oy + poly[i + 2] * oz;
-    reach = Math.max(reach, Math.acos(Math.min(1, dot)));
-  }
-
-  const scale = reach / arrangement;
-  coverScale[cell] = scale;
-  return scale;
-}
 
 /**
  * Below this many pixels across, a cell is not worth asking about.
@@ -308,7 +278,7 @@ export function drawGlobe(
   // How wide a tile is on screen, for deciding whether its edge is worth
   // drawing. Only a threshold now -- the tiles' actual size and shape come
   // from the lattice itself rather than from a number computed here.
-  const childPx = (radius * L0_RADIUS_RAD) / Math.sqrt(SUBCELL_COUNT);
+  const childPx = (radius * CELL_R) / Math.sqrt(SUBCELL_COUNT);
   const childEdges = childPx * 2 >= GRID_MIN_PX;
 
   for (let c = 0; c < CELL_COUNT; c++) {
@@ -350,7 +320,7 @@ export function drawGlobe(
         // Clipped to the parent, so the cell keeps a clean hexagonal
         // silhouette however ragged the tiling inside it is.
         ctx.clip();
-        drawGlobeChildren(ctx, kids, cam, view, c, lambert, childEdges);
+        drawGlobeChildren(ctx, kids, cam, view, lambert, childEdges);
         ctx.restore();
       }
     }
@@ -615,11 +585,7 @@ export interface ChildFrame {
   dirs: Float64Array;
   biome: Uint8Array;
   elevationM: Float32Array;
-  basis: {
-    ox: number; oy: number; oz: number;
-    ex: number; ey: number; ez: number;
-    nx: number; ny: number; nz: number;
-  };
+  basis: { lon: number; sinLat: number };
   cellRadiusRad: number;
 }
 
@@ -649,12 +615,10 @@ export function tilePolygons(
   kids: ChildFrame,
   cam: Camera,
   view: GlobeView,
-  cell: number,
 ): (Float64Array | null)[] {
   const { cx, cy, radius } = view;
   const b = kids.basis;
   const r = kids.cellRadiusRad;
-  const cover = coverFor(cell);
 
   // Every lattice point the region needs, one ring wider than the map itself
   // so the outermost tiles have corners to be built from. The halo points are
@@ -672,13 +636,14 @@ export function tilePolygons(
       // Lattice position, then onto the sphere, then onto the screen: the same
       // three steps the generator used to place the cell, so a corner lands
       // exactly where the cell that owns it thinks it is.
-      const lx = cover * r * Math.sqrt(3) * (q + rr / 2);
-      const ly = cover * r * 1.5 * rr;
-      const dx = b.ox + lx * b.ex + ly * b.nx;
-      const dy = b.oy + lx * b.ey + ly * b.ny;
-      const dz = b.oz + lx * b.ez + ly * b.nz;
-      const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      const [rx, ry] = rotate(cam, dx / len, dy / len, dz / len);
+      // Through the projection, the same way the generator placed the cell,
+      // so a drawn corner lands exactly where the cell that owns it thinks it
+      // is. Approximating this with a linear frame is what put one cell's
+      // tiles at 76% of its own outline.
+      const lon = b.lon + COVER * r * Math.sqrt(3) * (q + rr / 2);
+      const sinLat = Math.max(-1, Math.min(1, b.sinLat + COVER * r * 1.5 * rr));
+      const cosLat = Math.sqrt(1 - sinLat * sinLat);
+      const [rx, ry] = rotate(cam, cosLat * Math.cos(lon), sinLat, cosLat * Math.sin(lon));
       const i = at(q, rr);
       px[i] = cx + rx * radius;
       py[i] = cy - ry * radius;
@@ -715,11 +680,10 @@ function drawGlobeChildren(
   kids: ChildFrame,
   cam: Camera,
   view: GlobeView,
-  cell: number,
   lambert: number,
   drawEdges: boolean,
 ): void {
-  const polys = tilePolygons(kids, cam, view, cell);
+  const polys = tilePolygons(kids, cam, view);
 
   if (drawEdges) {
     ctx.strokeStyle = 'rgba(10,16,24,0.35)';

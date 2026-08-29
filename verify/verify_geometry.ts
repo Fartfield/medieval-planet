@@ -17,6 +17,8 @@ import {
   toKey, fromKey, addressSeed, child, parent, equals, GROUND_DEPTH, MAX_DEPTH,
 } from '../sim/geo/address.ts';
 import * as A from '../sim/anchors.ts';
+import { World } from '../sim/world.ts';
+import { cellContaining } from '../sim/gen/submap.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 suite('the world map has no pentagons', () => {
@@ -250,4 +252,64 @@ suite('address', () => {
   measure('ground tile area m2', (4 * Math.PI * A.EARTH_RADIUS_M ** 2) / groundCells);
   measure('finest layer area m2',
     (4 * Math.PI * A.EARTH_RADIUS_M ** 2) / (CELL_COUNT * SUBCELL_COUNT ** (MAX_DEPTH - 1)));
+});
+
+suite('the ladder nests the same at every latitude', () => {
+  // A region's children must belong to that region, and to the same degree
+  // wherever the region is. Not all 91 of them: a hexagon of hexagons has a
+  // stepped edge, so a handful always sit just outside their parent, and the
+  // flat maps have always run at about 85 of 91. What must not happen is for
+  // that figure to depend on WHERE the region is.
+  //
+  // It did. The world map is a hex grid in (longitude, sine of latitude), so a
+  // cell up there is a regular hexagon in the projection and a stretched one
+  // on the sphere -- 2.7 times taller than wide at 53 degrees. Children were
+  // being laid out isotropically in a tangent plane, which cannot tile that,
+  // and at 53 degrees only 61 of 91 fell inside their own parent. A third of
+  // every polar region's tiles belonged somewhere else, and the world map was
+  // the only layer that did not look like a clean mosaic of the layer below.
+  //
+  // The fix was to give a map's basis the projection's own anchor and convert
+  // through it exactly, so children are laid out in the same space their
+  // parent is drawn in.
+  const w = new World({ seed: 20260826 });
+  const inside: number[] = [];
+
+  for (let row = 0; row < ROWS; row++) {
+    const cell = row * COLS + 3;
+    const map = w.subMap([cell]);
+    let n = 0;
+    for (let k = 0; k < SUBCELL_COUNT; k++) {
+      if (cellAt(map.dirs[k * 3], map.dirs[k * 3 + 1], map.dirs[k * 3 + 2]) === cell) n++;
+    }
+    inside.push(n);
+    measure(`children inside their parent, row ${row}`, n);
+  }
+
+  const worst = Math.min(...inside);
+  const best = Math.max(...inside);
+  measure('worst nesting of any row', worst);
+  measure('best nesting of any row', best);
+
+  assert('most of a region’s children are inside it', worst > SUBCELL_COUNT * 0.85);
+  // The claim that failed before: it must not matter where you are.
+  assert('and it does not matter which latitude the region is at',
+    best - worst <= SUBCELL_COUNT * 0.08);
+
+  // The same question of a flat map, which is the standard the world map is
+  // being held to -- they should now agree.
+  const parent = w.subMap([100]);
+  let flat = 0;
+  for (let k = 0; k < SUBCELL_COUNT; k++) {
+    const kid = w.subMap([100, k]);
+    for (let j = 0; j < SUBCELL_COUNT; j++) {
+      const c = cellContaining(parent.basis, parent.cellRadiusRad,
+        kid.dirs[j * 3], kid.dirs[j * 3 + 1], kid.dirs[j * 3 + 2]);
+      if (c === k) flat++;
+    }
+  }
+  const flatAvg = flat / SUBCELL_COUNT;
+  measure('children inside their parent on a flat map', flatAvg);
+  assert('the world map nests as well as a flat one does',
+    worst >= flatAvg - SUBCELL_COUNT * 0.05);
 });

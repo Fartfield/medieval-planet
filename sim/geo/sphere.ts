@@ -41,6 +41,8 @@
 // than one at the equator. That is the distortion every cylindrical map has,
 // and it lands on the rows least likely to be looked at.
 
+import { dsin, dcos, datan2, PI } from '../gen/mathx.ts';
+
 const SQRT3 = Math.sqrt(3);
 
 /**
@@ -118,9 +120,11 @@ function projected(cell: number): { lon: number; sinLat: number } {
 function toVector(lon: number, sinLat: number, out: Float64Array, at: number): void {
   const s = Math.max(-1, Math.min(1, sinLat));
   const cosLat = Math.sqrt(1 - s * s);
-  out[at] = cosLat * Math.cos(lon);
+  // Deterministic trig, because these are cell CENTRES: the whole world is a
+  // pure function of them, and Math.cos is only approximated by the spec.
+  out[at] = cosLat * dcos(lon);
   out[at + 1] = s;
-  out[at + 2] = cosLat * Math.sin(lon);
+  out[at + 2] = cosLat * dsin(lon);
 }
 
 function build(): void {
@@ -194,8 +198,8 @@ export function cellAt(x: number, y: number, z: number): number {
   if (len === 0) return 0;
   const nx = x / len, ny = y / len, nz = z / len;
 
-  let lon = Math.atan2(nz, nx);
-  if (lon < 0) lon += 2 * Math.PI;
+  let lon = datan2(nz, nx);
+  if (lon < 0) lon += 2 * PI;
   const rowF = (ny + BAND_SIN_LIMIT) / (1.5 * CELL_R) - 0.5;
 
   let best = 0;
@@ -256,7 +260,7 @@ export function outline(cell: number): Float64Array {
   for (let i = 0; i < 6; i++) {
     // Pointy-top: vertices at 30, 90, 150 degrees and their opposites, so the
     // flat sides face the cell's east and west neighbours.
-    const a = ((60 * i + 30) * Math.PI) / 180;
+    const a = ((60 * i + 30) * PI) / 180;
     toVector(p.lon + CELL_R * Math.cos(a), p.sinLat + CELL_R * Math.sin(a), poly, i * 3);
   }
   outlines[cell] = poly;
