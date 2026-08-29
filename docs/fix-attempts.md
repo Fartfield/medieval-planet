@@ -289,6 +289,37 @@ right and the grid cannot ask it.
 
 ---
 
+## ## A region border is a line drawn across a continent
+
+**Problem.** "The detail of constituent hexes works great on every level except
+World." The world view's continents looked coarse where every layer below
+looked fine, and the same code draws both.
+
+Measured first, because the obvious guess -- that the detail was not there --
+was wrong. **103 of 192 regions have a coastline running through them**, and a
+region holds three to eight distinct biomes. The tiles were being generated,
+were varied, and were being drawn.
+
+**What was wrong was a line.** A region is 2,500 km across, so its outline is
+wider than most countries, and drawn at the weight it needs to be visible when
+there is nothing else, it beats everything inside it. Every landmass came out
+as a honeycomb of enormous hexagons with the real coastline -- which the tiles
+were drawing perfectly well -- demoted to texture inside the facets.
+
+The fix is one condition: **once the tiles are being drawn, they are the grid**,
+and the region border stands down. Borders still appear where they carry
+information -- ownership, and the selection -- but not merely to say where one
+administrative hexagon stops.
+
+Worth keeping because of what it was NOT. It was not a resolution problem, and
+going a second layer down would not have helped: 192 regions by 91 by 91 is 1.6
+million cells against about 1.4 million pixels of globe, so the mosaic is
+already at the screen's limit and the extra work would have been invisible even
+if it had been affordable. The detail was all present. Something was drawn on
+top of it.
+
+---
+
 ## ## The twelve pentagons are gone, and two guards went with them
 
 **Problem.** "The pentagons are the problem. We need a hexagon only projection.

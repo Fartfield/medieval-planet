@@ -367,7 +367,17 @@ export function drawGlobe(
       ctx.strokeStyle = houseColour(owner);
       ctx.lineWidth = 1.5;
       ctx.stroke();
-    } else if (regionPx >= GRID_MIN_PX) {
+    } else if (!wantMosaic && regionPx >= GRID_MIN_PX) {
+      // ONLY WHEN THERE IS NO MOSAIC. A region is 2,500 km across, so its
+      // outline is a line drawn across a continent -- and at that weight it
+      // wins. Every landmass came out as a honeycomb of enormous hexagons with
+      // the real coastline, which the tiles inside were drawing perfectly
+      // well, reduced to texture inside the facets.
+      //
+      // The tile grid is the grid the player is looking at once it is being
+      // drawn. Region borders still appear where they carry information --
+      // ownership below, and the selection -- but not merely to say where one
+      // administrative hexagon stops.
       globeCellPath(ctx, c, cam, view);
       // Fainter towards the limb, where cells are edge-on and their outlines
       // crowd into a solid band that reads as a rim rather than as a grid.

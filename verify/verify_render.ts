@@ -464,6 +464,26 @@ suite('the hex grid is drawn on the globe', () => {
   assert('the axis is drawn even when tiny', smallRaw.strokes > 0);
   check('neither produced a NaN', bigRaw.nans + smallRaw.nans, 0, 0);
 
+  // A REGION OUTLINE IS A LINE DRAWN ACROSS A CONTINENT. At 2,500 km a
+  // region's border is wider than most countries, and at the weight it needs
+  // to be visible when there is nothing else it buries the tiles inside it:
+  // every landmass came out as a honeycomb of enormous hexagons, with the real
+  // coastline -- which the tiles were drawing perfectly well -- demoted to
+  // texture inside the facets. So once the tiles are being drawn, they are the
+  // grid, and the region border stands down.
+  const mosaicked = stub();
+  drawGlobe(mosaicked, world.planet, cam, globeView(W, H), -1, new Map(), null,
+    (c) => world.subMap([c]));
+  const mosaicRaw = mosaicked as unknown as StubContext;
+  const tiles = mosaicRaw.fills - bigRaw.fills;
+  measure('tiles drawn on a mosaicked globe', tiles);
+  assert('the tiles are drawn', tiles > 500);
+  // Every stroke should belong to a tile, not to a region: at most one per
+  // tile drawn, and nowhere near one per region on top of that.
+  measure('strokes on a mosaicked globe', mosaicRaw.strokes);
+  assert('no region is outlined once its tiles are',
+    mosaicRaw.strokes <= tiles + 4);
+
   // A house border replaces the grid line on an owned cell rather than adding
   // a second stroke over it.
   const owned = new Map<number, number>();
