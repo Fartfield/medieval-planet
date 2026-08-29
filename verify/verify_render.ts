@@ -13,7 +13,7 @@
 
 import { World } from '../sim/world.ts';
 import { MAX_DEPTH } from '../sim/geo/address.ts';
-import { CELL_COUNT } from '../sim/geo/sphere.ts';
+import { CELL_COUNT, centres, outline, neighbourCount } from '../sim/geo/sphere.ts';
 import {
   RADIUS, SUBCELL_COUNT, toPixel, indexOf, subNeighbours,
 } from '../sim/geo/hexgrid.ts';
@@ -494,7 +494,7 @@ suite('tiles on the globe tessellate', () => {
   const cam = newCamera();
   const view = globeView(W, H);
   const kids = world.subMap([4]);
-  const polys = tilePolygons(kids, cam, view);
+  const polys = tilePolygons(kids, cam, view, 4);
 
   let drawn = 0;
   for (const poly of polys) if (poly !== null) drawn++;
@@ -548,9 +548,69 @@ suite('tiles on the globe tessellate', () => {
 
   // Round the back is null rather than folded onto the front.
   const behind = tilePolygons(world.subMap([4]),
-    { ...cam, yaw: cam.yaw + Math.PI }, view);
+    { ...cam, yaw: cam.yaw + Math.PI }, view, 4);
   let front = 0;
   for (const poly of behind) if (poly !== null) front++;
   measure('tiles facing us with the globe turned away', front);
   assert('turning the globe hides the region', front < drawn / 2);
+});
+
+suite('the twelve pentagons are served like any other cell', () => {
+  // A sphere cannot be tiled by hexagons alone. Euler's formula settles it:
+  // with three faces meeting at every vertex, F hexagons give E = 3F edges and
+  // V = 2F vertices, so V - E + F = 0 and never the 2 a sphere requires. Allow
+  // pentagons in and the same arithmetic returns P = 12 exactly, whatever H
+  // is. Twelve, always, however fine the grid gets.
+  //
+  // So they are not a defect to remove but a shape to serve. They were not
+  // being served: one global tile scale, sized for the widest hexagon, drew a
+  // pentagon's tiles 27% too far out and the clip threw away 38% of them --
+  // twelve places on the globe quietly missing a third of their ground.
+  const world = new World({ seed: 20260826 });
+  const cam = newCamera();
+  const view = globeView(W, H);
+
+  let pentagons = 0;
+  for (let c = 0; c < CELL_COUNT; c++) if (neighbourCount(c) === 5) pentagons++;
+  measure('pentagons on the globe', pentagons);
+  check('a sphere carries exactly twelve, by Euler', pentagons, 12, 0);
+
+  // Every cell's tiles must reach its own edge and stop there. Measured as the
+  // furthest tile corner against the cell's own outline: near 1 means the
+  // tiles fill it, well under 1 leaves a bare fringe, well over 1 means the
+  // clip is eating tiles.
+  const ratios: number[] = [];
+  for (const cell of [0, 3, 7, 11, 20, 45, 60, 88]) {
+    const kids = world.subMap([cell]);
+    const facing = {
+      ...cam,
+      yaw: Math.atan2(centres[cell * 3], centres[cell * 3 + 2]),
+      pitch: Math.atan2(centres[cell * 3 + 1],
+        Math.hypot(centres[cell * 3], centres[cell * 3 + 2])),
+    };
+    const polys = tilePolygons(kids, facing, view, cell);
+
+    let furthest = 0;
+    for (const poly of polys) {
+      if (poly === null) continue;
+      for (let i = 0; i < 6; i++) {
+        furthest = Math.max(furthest, Math.hypot(poly[i * 2] - view.cx, poly[i * 2 + 1] - view.cy));
+      }
+    }
+    // The cell's own reach on screen, from its outline.
+    let cellReach = 0;
+    const poly = outline(cell);
+    for (let i = 0; i < poly.length; i += 3) {
+      const [px, py] = rotate(facing, poly[i], poly[i + 1], poly[i + 2]);
+      cellReach = Math.max(cellReach, Math.hypot(px * view.radius, py * view.radius));
+    }
+    ratios.push(furthest / cellReach);
+  }
+
+  const worstShort = Math.min(...ratios);
+  const worstLong = Math.max(...ratios);
+  measure('tightest tile coverage of a cell', worstShort);
+  measure('loosest tile coverage of a cell', worstLong);
+  assert('no cell is left with a bare fringe', worstShort > 0.93);
+  assert('and none has its tiles eaten by the clip', worstLong < 1.12);
 });

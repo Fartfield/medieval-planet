@@ -289,6 +289,53 @@ right and the grid cannot ask it.
 
 ---
 
+## ## Twelve pentagons were quietly missing a third of their ground
+
+**Problem.** "The world is not just hexagons, but pentagons as well. Can we
+make a sphere out of only hexagons?"
+
+**No, and it is a theorem rather than a limitation.** With three faces meeting
+at each vertex, F hexagons give E = 3F edges and V = 2F vertices, so
+V - E + F = 0 -- and a sphere requires 2. Allow pentagons in and the same
+arithmetic returns **P = 12 exactly**, whatever H is. Twelve, always, however
+fine the grid gets. It is why a football has twelve however many hexagons are
+sewn around them, and why every fullerene has twelve.
+
+So the pentagons cannot go. But the question was pointing at something real,
+and it was ours rather than the sphere's.
+
+**The tile cover was one global number sized for the widest hexagon.** Ninety-
+one tiles have their region's area but not its shape, so they are drawn
+slightly large and clipped to the cell -- and the scale for that was measured
+once, against the widest hexagon at 0.242 radians. A pentagon only reaches
+0.191. Measured: its tiles were drawn **27% too far out**, the clip threw away
+**38% of the area they covered**, and the pentagon showed **56 of its 91
+tiles**. Twelve places on the globe were missing a third of their ground.
+
+That reads as "errors around the edges" without ever looking like a specific
+bug, because nothing was NaN, nothing was missing from the draw list, and the
+other eighty cells were fine.
+
+**Measured per cell instead**: each region's tiles reach exactly as far as that
+region does, from its own outline. Coverage across a sample of pentagons and
+hexagons went from 0.79-1.00 to a uniform 1.07-1.08.
+
+The fraction of the world that is pentagon is a free choice and worth writing
+down, because it is the one dial the theorem leaves:
+
+| frequency | cells | pentagons | region | plot layer |
+|---|---|---|---|---|
+| 3 (now) | 92 | 13.0% | 5.54M km² | 888 m² |
+| 4 | 162 | 7.4% | 3.15M | 505 m² |
+| 6 | 362 | 3.3% | 1.41M | 226 m² |
+| 8 | 642 | 1.9% | 0.79M | 127 m² |
+| 16 | 2562 | 0.47% | 0.20M | 32 m² |
+
+More regions means smaller regions, so the whole ladder shrinks under them --
+which is the trade, not the pentagons.
+
+---
+
 ## ## The tiles on the globe could not tessellate, and no measurement said so
 
 **Problem.** Reported from the screen: "there are errors around the edges and

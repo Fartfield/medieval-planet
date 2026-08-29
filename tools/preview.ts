@@ -23,7 +23,7 @@
 import { deflateSync } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
 import { World } from '../sim/world.ts';
-import { CELL_COUNT } from '../sim/geo/sphere.ts';
+import { CELL_COUNT, centres, neighbourCount } from '../sim/geo/sphere.ts';
 import { SUBCELL_COUNT } from '../sim/geo/hexgrid.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
@@ -277,6 +277,17 @@ const raster = new Raster(W, H, '#0a0e14');
 const ctx = raster as unknown as CanvasRenderingContext2D;
 const cam = newCamera();
 cam.zoom = zoom;
+
+// --face <cell>: turn the globe until that cell is dead centre. Solving for
+// the camera rather than eyeballing it, because the twelve pentagons are the
+// interesting cells and they are not where you would guess.
+const face = arg('face', '');
+if (face !== '') {
+  const c = Number(face);
+  const x = centres[c * 3], y = centres[c * 3 + 1], z = centres[c * 3 + 2];
+  cam.yaw = Math.atan2(x, z);
+  cam.pitch = Math.atan2(y, Math.sqrt(x * x + z * z));
+}
 
 if (sub === '') {
   drawGlobe(ctx, world.planet, cam, globeView(W, H), -1, new Map(), null,

@@ -167,24 +167,50 @@ const L0_RADIUS_RAD = Math.sqrt(
 );
 
 /**
- * How far the drawn tiles are stretched so that they cover their region.
+ * How far a region's tiles are stretched so that they cover it, PER CELL.
  *
  * Ninety-one tiles have exactly their region's area -- that is how the ladder
- * is built -- but not its shape. A hexagon of hexagons is not a Goldberg cell,
- * and for the twelve pentagons it does not even have the same number of sides.
- * Measured: the arrangement reaches 0.208 radians from the centre where the
- * widest cell reaches 0.242, so tiles drawn at their true size leave a seventh
- * of the region's radius bare, all the way round. That bare ring is the fringe
- * of flat colour that made the mosaic look like a patch laid on the globe
- * rather than the surface of it.
+ * is built -- but not its shape, and not every region is the same shape. A
+ * hexagon of hexagons is not a Goldberg cell, and twelve of the cells are not
+ * even hexagons: a sphere cannot be tiled by hexagons alone, so it carries
+ * exactly twelve pentagons however many hexagons are added around them.
  *
- * 1.163 is the ratio of those two measurements, so the widest cell is exactly
- * covered and every other is over-covered and trimmed by the clip. The scale
- * is uniform, so the tiling stays a tiling -- and it is a drawing decision
- * only. Nothing downstream reads it: a tile's real position is what the
- * generator says, and picking works off the region outline.
+ * One scale for every cell is therefore wrong, and it was wrong by a lot. Set
+ * to cover the widest hexagon at 0.242 radians, it drew a pentagon's tiles 27%
+ * too far out -- a pentagon only reaches 0.191 -- so the clip threw away 38%
+ * of the area they were drawn over and **the pentagon showed 56 of its 91
+ * tiles.** Twelve places on the globe were quietly missing a third of their
+ * ground, which is the sort of thing that reads as "errors around the edges"
+ * without ever looking like a specific bug.
+ *
+ * Measured per cell instead: each region's tiles reach exactly as far as that
+ * region does. The scale stays uniform within a cell, so the tiling is still a
+ * tiling, and it is a drawing decision only -- a tile's real position is what
+ * the generator says, and picking works off the region outline.
  */
-const COVER = 1.163;
+const coverScale = new Float64Array(CELL_COUNT);
+
+function coverFor(cell: number): number {
+  const known = coverScale[cell];
+  if (known > 0) return known;
+
+  // The arrangement's own reach: 91 tiles of the layer below, laid out as a
+  // hexagon of radius RADIUS.
+  const arrangement = Math.sqrt(3) * RADIUS * (L0_RADIUS_RAD / Math.sqrt(SUBCELL_COUNT));
+
+  // How far this particular cell reaches, from its own outline.
+  const poly = outline(cell);
+  const ox = centres[cell * 3], oy = centres[cell * 3 + 1], oz = centres[cell * 3 + 2];
+  let reach = 0;
+  for (let i = 0; i < poly.length; i += 3) {
+    const dot = poly[i] * ox + poly[i + 1] * oy + poly[i + 2] * oz;
+    reach = Math.max(reach, Math.acos(Math.min(1, dot)));
+  }
+
+  const scale = reach / arrangement;
+  coverScale[cell] = scale;
+  return scale;
+}
 
 /**
  * Below this many pixels across, a cell is not worth asking about.
@@ -315,7 +341,7 @@ export function drawGlobe(
         // Clipped to the parent, so the cell keeps a clean hexagonal
         // silhouette however ragged the tiling inside it is.
         ctx.clip();
-        drawGlobeChildren(ctx, kids, cam, view, lambert, childEdges);
+        drawGlobeChildren(ctx, kids, cam, view, c, lambert, childEdges);
         ctx.restore();
       }
     }
@@ -507,10 +533,12 @@ export function tilePolygons(
   kids: ChildFrame,
   cam: Camera,
   view: GlobeView,
+  cell: number,
 ): (Float64Array | null)[] {
   const { cx, cy, radius } = view;
   const b = kids.basis;
   const r = kids.cellRadiusRad;
+  const cover = coverFor(cell);
 
   // Every lattice point the region needs, one ring wider than the map itself
   // so the outermost tiles have corners to be built from. The halo points are
@@ -528,8 +556,8 @@ export function tilePolygons(
       // Lattice position, then onto the sphere, then onto the screen: the same
       // three steps the generator used to place the cell, so a corner lands
       // exactly where the cell that owns it thinks it is.
-      const lx = COVER * r * Math.sqrt(3) * (q + rr / 2);
-      const ly = COVER * r * 1.5 * rr;
+      const lx = cover * r * Math.sqrt(3) * (q + rr / 2);
+      const ly = cover * r * 1.5 * rr;
       const dx = b.ox + lx * b.ex + ly * b.nx;
       const dy = b.oy + lx * b.ey + ly * b.ny;
       const dz = b.oz + lx * b.ez + ly * b.nz;
@@ -571,10 +599,11 @@ function drawGlobeChildren(
   kids: ChildFrame,
   cam: Camera,
   view: GlobeView,
+  cell: number,
   lambert: number,
   drawEdges: boolean,
 ): void {
-  const polys = tilePolygons(kids, cam, view);
+  const polys = tilePolygons(kids, cam, view, cell);
 
   if (drawEdges) {
     ctx.strokeStyle = 'rgba(10,16,24,0.35)';
