@@ -133,6 +133,17 @@ export type ChildLookup = (cell: number) => {
 export const MOSAIC_MIN_PX = 34;
 
 /**
+ * How wide a shape must be on screen before its outline is worth drawing.
+ *
+ * A grid line costs more than the shape it bounds -- a stroked hexagon is six
+ * segments with joins, against one fill -- and below a few pixels the line IS
+ * the shape: outlining a 3 px hexagon paints over everything it was supposed
+ * to bound and the map turns into a mesh. Eight pixels is where a hexagon has
+ * an inside worth showing.
+ */
+export const GRID_MIN_PX = 8;
+
+/**
  * A child hexagon's circumradius against its parent's, and the turn that makes
  * their edges parallel.
  *
@@ -285,6 +296,11 @@ export function drawGlobe(
       }
     }
 
+    // The grid itself. Every cell gets an edge, because the hexagons ARE the
+    // map -- a filled cell with no outline reads as a colour field, and the
+    // player is choosing between cells rather than between colours. A house
+    // border replaces it rather than adding to it, so ownership reads as the
+    // strongest line on the globe.
     const owner = owned.get(c);
     if (owner !== undefined) {
       // The path was consumed by the mosaic, so lay it down again.
@@ -292,11 +308,11 @@ export function drawGlobe(
       ctx.strokeStyle = houseColour(owner);
       ctx.lineWidth = 1.5;
       ctx.stroke();
-    } else if (wantMosaic) {
-      // And a hairline on every cell once it has structure inside it, or the
-      // eye loses where one region stops and the next begins.
+    } else if (regionPx >= GRID_MIN_PX) {
       globeCellPath(ctx, c, cam, view);
-      ctx.strokeStyle = 'rgba(12,20,30,0.55)';
+      // Fainter towards the limb, where cells are edge-on and their outlines
+      // crowd into a solid band that reads as a rim rather than as a grid.
+      ctx.strokeStyle = `rgba(12,20,30,${(0.2 + 0.45 * cz).toFixed(3)})`;
       ctx.lineWidth = 1;
       ctx.stroke();
     }
@@ -320,12 +336,70 @@ export function drawGlobe(
     }
   }
 
+  drawAxis(ctx, cam, view);
+
   // The limb, so the sphere has an edge.
   ctx.strokeStyle = '#2c3038';
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.stroke();
+}
+
+/**
+ * The polar axis and the equator.
+ *
+ * The globe turns about its poles -- yaw spins it around the axis and pitch
+ * tilts the axis toward or away -- and without something drawn on it that is
+ * hard to see, because a hexagon looks much like any other hexagon and there
+ * is nothing to fix the eye on while it moves. The axis and the equator give
+ * the rotation something to be relative to.
+ *
+ * The spindle is drawn past the surface at both ends the way a globe on a
+ * stand has one, and only the near half of the equator is solid: the far half
+ * is the same circle behind the sphere, and drawing it faintly is what makes
+ * the ball read as a ball rather than as a disc.
+ */
+function drawAxis(ctx: CanvasRenderingContext2D, cam: Camera, view: GlobeView): void {
+  const { cx, cy, radius } = view;
+  const project = (x: number, y: number, z: number): [number, number, number] => {
+    const [px, py, pz] = rotate(cam, x, y, z);
+    return [cx + px * radius, cy - py * radius, pz];
+  };
+
+  // The equator, in two passes so the far half can be fainter.
+  const STEPS = 128;
+  for (const near of [false, true]) {
+    ctx.beginPath();
+    let drawing = false;
+    for (let i = 0; i <= STEPS; i++) {
+      const t = (i / STEPS) * Math.PI * 2;
+      const [sx, sy, sz] = project(Math.cos(t), 0, Math.sin(t));
+      if ((sz >= 0) !== near) { drawing = false; continue; }
+      if (!drawing) { ctx.moveTo(sx, sy); drawing = true; } else ctx.lineTo(sx, sy);
+    }
+    ctx.strokeStyle = near ? 'rgba(201,162,39,0.30)' : 'rgba(201,162,39,0.10)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // The spindle, out past the surface at both poles.
+  const OVERHANG = 1.12;
+  const [nx, ny, nz] = project(0, OVERHANG, 0);
+  const [sx2, sy2] = project(0, -OVERHANG, 0);
+  ctx.beginPath();
+  ctx.moveTo(nx, ny);
+  ctx.lineTo(sx2, sy2);
+  ctx.strokeStyle = 'rgba(201,162,39,0.28)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // A cap on whichever pole is facing us, so the near end is legible.
+  const [tx, ty] = nz >= 0 ? [nx, ny] : [sx2, sy2];
+  ctx.beginPath();
+  ctx.arc(tx, ty, 3, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(201,162,39,0.55)';
+  ctx.fill();
 }
 
 /**
@@ -381,6 +455,14 @@ function drawGlobeChildren(
 ): void {
   const { cx, cy, radius } = view;
   const shape = corners(childPx);
+  // The tile grid, once a tile is big enough to have an inside.
+  const wantEdges = childPx * 2 >= GRID_MIN_PX;
+  if (wantEdges) {
+    // Set once for all ninety-one, because assigning a stroke style per shape
+    // is most of the cost of drawing one.
+    ctx.strokeStyle = 'rgba(10,16,24,0.35)';
+    ctx.lineWidth = 0.5;
+  }
 
   for (let k = 0; k < SUBCELL_COUNT; k++) {
     const [px, py, pz] = rotate(cam, kids.dirs[k * 3], kids.dirs[k * 3 + 1], kids.dirs[k * 3 + 2]);
@@ -398,6 +480,7 @@ function drawGlobeChildren(
     for (let i = 1; i < 6; i++) ctx.lineTo(x + shape[i].x, y + shape[i].y);
     ctx.closePath();
     ctx.fill();
+    if (wantEdges) ctx.stroke();
   }
 }
 

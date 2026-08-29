@@ -19,7 +19,8 @@ import { Biome } from '../sim/model/biome.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
   pickGlobe, pickSubMap, corners, rotate, unrotate, houseColour,
-  blendColours, TINT_MIN_PX, MOSAIC_MIN_PX, type CellTint, type ChildLookup,
+  blendColours, TINT_MIN_PX, MOSAIC_MIN_PX, GRID_MIN_PX,
+  type CellTint, type ChildLookup,
 } from '../client/src/render.ts';
 import { bestRegion } from './sites.ts';
 import { check, measure, assert, suite } from './harness.ts';
@@ -383,4 +384,91 @@ suite('tint from one layer below', () => {
   assert('a sub-map asks for tints', subAsked.length > 0);
   check('a tinted sub-map produced no NaN', subRaw.nans, 0, 0);
   measure('max depth', MAX_DEPTH);
+});
+
+suite('the globe turns on its poles', () => {
+  // A globe on a stand: yaw spins it about its own axis and must not move the
+  // poles at all, pitch tilts the axis toward or away. The alternative -- free
+  // rotation about two screen axes -- lets the world tumble, and a tumbled
+  // world has no up, so nobody can say where they are.
+  const view = { cx: 600, cy: 400, radius: 300 };
+  const at = (yaw: number, pitch: number, x: number, y: number, z: number): number[] => {
+    const [px, py, pz] = rotate({ yaw, pitch, panX: 0, panY: 0, zoom: 1 }, x, y, z);
+    return [view.cx + px * view.radius, view.cy - py * view.radius, pz];
+  };
+
+  // Spinning must leave the poles exactly where they were.
+  const base = at(0, 0.35, 0, 1, 0);
+  let worst = 0;
+  for (let i = 1; i <= 12; i++) {
+    const spun = at((i * Math.PI) / 6, 0.35, 0, 1, 0);
+    worst = Math.max(worst, Math.hypot(spun[0] - base[0], spun[1] - base[1]));
+  }
+  measure('how far the pole moves over a full spin, px', worst);
+  check('spinning does not move the pole', worst, 0, 1e-9);
+
+  // But the ground does move, or nothing is turning.
+  const g0 = at(0, 0.35, 1, 0, 0);
+  const g1 = at(Math.PI / 2, 0.35, 1, 0, 0);
+  measure('how far the equator moves over a quarter turn, px', Math.hypot(g1[0] - g0[0], g1[1] - g0[1]));
+  assert('spinning does move the ground', Math.hypot(g1[0] - g0[0], g1[1] - g0[1]) > 100);
+
+  // Upright, the north pole is straight above the centre and the south below.
+  const north = at(0, 0, 0, 1, 0);
+  const south = at(0, 0, 0, -1, 0);
+  check('upright, the north pole is above the centre', north[0], view.cx, 1e-9);
+  assert('and it is above rather than below', north[1] < view.cy);
+  check('the south pole is directly opposite', south[0], view.cx, 1e-9);
+  assert('and below', south[1] > view.cy);
+
+  // Tilting brings a pole toward the viewer and eventually past the horizon,
+  // which is what the pitch clamp in the client is there to stop short of.
+  assert('tilting turns the north pole away', at(0, -1.4, 0, 1, 0)[2] < 0);
+  assert('and the other way brings it forward', at(0, 1.4, 0, 1, 0)[2] > 0);
+
+  // The whole thing is a rotation, so nothing stretches.
+  let worstNorm = 0;
+  for (let i = 0; i < 24; i++) {
+    const t = (i / 24) * Math.PI * 2;
+    const [x, y, z] = rotate({ yaw: 0.7, pitch: -0.4, panX: 0, panY: 0, zoom: 1 },
+      Math.cos(t), 0.3, Math.sin(t));
+    worstNorm = Math.max(worstNorm, Math.abs(Math.hypot(x, y, z) - Math.hypot(Math.cos(t), 0.3, Math.sin(t))));
+  }
+  measure('worst length change under rotation', worstNorm);
+  check('rotation preserves length', worstNorm, 0, 1e-12);
+});
+
+suite('the hex grid is drawn on the globe', () => {
+  const world = new World({ seed: 20260826 });
+  const cam = newCamera();
+
+  // Big enough to see: every visible cell gets an outline, so the map reads as
+  // hexagons rather than as a colour field.
+  const big = stub();
+  drawGlobe(big, world.planet, cam, globeView(W, H), -1, new Map(), null, null);
+  const bigRaw = big as unknown as StubContext;
+  measure('strokes on a large globe', bigRaw.strokes);
+  assert('cells are outlined', bigRaw.strokes > 10);
+
+  // Small enough that an outline would be the whole shape: no grid.
+  const small = stub();
+  drawGlobe(small, world.planet, cam, { cx: 60, cy: 60, radius: 20 }, -1, new Map(), null, null);
+  const smallRaw = small as unknown as StubContext;
+  measure('strokes on a tiny globe', smallRaw.strokes);
+  assert('a tiny globe is not drawn as a mesh', smallRaw.strokes < bigRaw.strokes / 2);
+
+  // The axis and equator are drawn at every size, because they are what the
+  // rotation is read against.
+  assert('the axis is drawn even when tiny', smallRaw.strokes > 0);
+  check('neither produced a NaN', bigRaw.nans + smallRaw.nans, 0, 0);
+
+  // A house border replaces the grid line on an owned cell rather than adding
+  // a second stroke over it.
+  const owned = new Map<number, number>();
+  for (let c = 0; c < CELL_COUNT; c++) if (world.planet.elevationM[c] >= 0) { owned.set(c, 0); break; }
+  const bordered = stub();
+  drawGlobe(bordered, world.planet, cam, globeView(W, H), -1, owned, null, null);
+  measure('strokes with one owned cell', (bordered as unknown as StubContext).strokes);
+  check('an owned cell does not stroke twice',
+    (bordered as unknown as StubContext).strokes, bigRaw.strokes, 0);
 });
