@@ -96,3 +96,19 @@ automatically. Use `suite()` to group, `check()` to assert with a tolerance,
 
 A tolerance of exactly `0` means identical, which is what the determinism
 checks want — there, near enough is precisely not good enough.
+
+## Looking at the renderer
+
+`node tools/preview.ts` runs the real renderer against a software rasteriser
+and writes a PNG. `--sub 4` draws a sub-map instead of the globe, `--zoom`,
+`--seed`, `--width`, `--height` and `--out` do what they say.
+
+It exists because the renderer is the one part of this project where every
+measurement can pass and the output still be visibly wrong. The suite checks
+what the renderer was *asked* to draw -- how many shapes, whether any
+coordinate is NaN, whether the arithmetic is exact -- and none of that notices
+that the hexagons do not fit together. When tiles on the globe turned out not
+to tessellate at all, the suite was entirely green and one image was enough.
+
+No antialiasing, deliberately: a jagged edge in the output is a jagged edge in
+the geometry rather than a smoothing artefact hiding one.

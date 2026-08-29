@@ -14,12 +14,14 @@
 import { World } from '../sim/world.ts';
 import { MAX_DEPTH } from '../sim/geo/address.ts';
 import { CELL_COUNT } from '../sim/geo/sphere.ts';
-import { RADIUS, SUBCELL_COUNT, toPixel, indexOf } from '../sim/geo/hexgrid.ts';
+import {
+  RADIUS, SUBCELL_COUNT, toPixel, indexOf, subNeighbours,
+} from '../sim/geo/hexgrid.ts';
 import { Biome } from '../sim/model/biome.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
   pickGlobe, pickSubMap, corners, rotate, unrotate, houseColour,
-  blendColours, TINT_MIN_PX, MOSAIC_MIN_PX, GRID_MIN_PX,
+  blendColours, tilePolygons, TINT_MIN_PX, MOSAIC_MIN_PX, GRID_MIN_PX,
   type CellTint, type ChildLookup,
 } from '../client/src/render.ts';
 import { bestRegion } from './sites.ts';
@@ -471,4 +473,84 @@ suite('the hex grid is drawn on the globe', () => {
   measure('strokes with one owned cell', (bordered as unknown as StubContext).strokes);
   check('an owned cell does not stroke twice',
     (bordered as unknown as StubContext).strokes, bigRaw.strokes, 0);
+});
+
+suite('tiles on the globe tessellate', () => {
+  // The property no count of shapes can see, and the one that was wrong.
+  //
+  // Tiles used to be drawn as fixed-size, fixed-orientation hexagons dropped at
+  // each projected centre. Every measurement passed -- the right number of
+  // shapes, no NaN, the arithmetic exact -- and the globe was visibly wrong:
+  // the tiles were upright wherever they sat while the lattice under them was
+  // rotated and foreshortened by the projection, so the background showed
+  // through between them and the grid did not follow the curve.
+  //
+  // ADJACENT TILES MUST SHARE THEIR CORNERS. Two tiles that merely land near
+  // each other leave a gap, and the gaps were the whole complaint. Building
+  // each corner as the centroid of a triple of touching cells makes two
+  // neighbours compute the same corner from the same three cells, so it holds
+  // by construction rather than by tolerance.
+  const world = new World({ seed: 20260826 });
+  const cam = newCamera();
+  const view = globeView(W, H);
+  const kids = world.subMap([4]);
+  const polys = tilePolygons(kids, cam, view);
+
+  let drawn = 0;
+  for (const poly of polys) if (poly !== null) drawn++;
+  measure('tiles with geometry on a facing region', drawn);
+  assert('a facing region yields tiles', drawn > 40);
+
+  let pairs = 0;
+  let sharing = 0;
+  let worstGap = 0;
+  for (let a = 0; a < SUBCELL_COUNT; a++) {
+    const pa = polys[a];
+    if (pa === null) continue;
+    for (let d = 0; d < 6; d++) {
+      const b = subNeighbours[a * 6 + d];
+      if (b < 0 || b < a) continue;
+      const pb = polys[b];
+      if (pb === null) continue;
+      pairs++;
+      let matched = 0;
+      let nearest = Infinity;
+      for (let i = 0; i < 6; i++) {
+        for (let j = 0; j < 6; j++) {
+          const dist = Math.hypot(pa[i * 2] - pb[j * 2], pa[i * 2 + 1] - pb[j * 2 + 1]);
+          if (dist < 1e-9) matched++;
+          nearest = Math.min(nearest, dist);
+        }
+      }
+      if (matched === 2) sharing++; else worstGap = Math.max(worstGap, nearest);
+    }
+  }
+  measure('adjacent tile pairs', pairs);
+  measure('pairs sharing exactly two corners', sharing);
+  measure('worst gap between tiles that do not, px', worstGap);
+  assert('there are pairs to check', pairs > 100);
+  check('every adjacent pair shares its edge exactly', sharing, pairs, 0);
+
+  // A hexagon, not a sliver: the corners must go round in order and enclose
+  // real area. A degenerate polygon fills nothing and would pass a corner test.
+  let smallest = Infinity;
+  for (const poly of polys) {
+    if (poly === null) continue;
+    let area2 = 0;
+    for (let i = 0; i < 6; i++) {
+      const j = (i + 1) % 6;
+      area2 += poly[i * 2] * poly[j * 2 + 1] - poly[j * 2] * poly[i * 2 + 1];
+    }
+    smallest = Math.min(smallest, Math.abs(area2) / 2);
+  }
+  measure('smallest tile area on screen, px2', smallest);
+  assert('no tile is degenerate', smallest > 1);
+
+  // Round the back is null rather than folded onto the front.
+  const behind = tilePolygons(world.subMap([4]),
+    { ...cam, yaw: cam.yaw + Math.PI }, view);
+  let front = 0;
+  for (const poly of behind) if (poly !== null) front++;
+  measure('tiles facing us with the globe turned away', front);
+  assert('turning the globe hides the region', front < drawn / 2);
 });

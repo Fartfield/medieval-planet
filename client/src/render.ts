@@ -9,7 +9,9 @@
 // realm and ground with nothing but a scale change.
 
 import { CELL_COUNT, centres, outline } from '../../sim/geo/sphere.ts';
-import { RADIUS, SUBCELL_COUNT, toPixel, fromPixel } from '../../sim/geo/hexgrid.ts';
+import {
+  RADIUS, SUBCELL_COUNT, coords, DIRECTIONS, toPixel, fromPixel,
+} from '../../sim/geo/hexgrid.ts';
 import { BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import type { Planet } from '../../sim/gen/planet.ts';
 import type { SubMap } from '../../sim/gen/submap.ts';
@@ -109,11 +111,7 @@ export type CellTint = (cell: number) => string | null;
  *
  * Returning null is always safe: the cell keeps its own colour.
  */
-export type ChildLookup = (cell: number) => {
-  dirs: Float64Array;
-  biome: Uint8Array;
-  elevationM: Float32Array;
-} | null;
+export type ChildLookup = (cell: number) => ChildFrame | null;
 
 /**
  * How wide a cell must be on screen before it is worth drawing its children.
@@ -167,6 +165,26 @@ const SIN30 = 0.5;
 const L0_RADIUS_RAD = Math.sqrt(
   (4 * Math.PI) / CELL_COUNT / ((3 * Math.sqrt(3)) / 2),
 );
+
+/**
+ * How far the drawn tiles are stretched so that they cover their region.
+ *
+ * Ninety-one tiles have exactly their region's area -- that is how the ladder
+ * is built -- but not its shape. A hexagon of hexagons is not a Goldberg cell,
+ * and for the twelve pentagons it does not even have the same number of sides.
+ * Measured: the arrangement reaches 0.208 radians from the centre where the
+ * widest cell reaches 0.242, so tiles drawn at their true size leave a seventh
+ * of the region's radius bare, all the way round. That bare ring is the fringe
+ * of flat colour that made the mosaic look like a patch laid on the globe
+ * rather than the surface of it.
+ *
+ * 1.163 is the ratio of those two measurements, so the widest cell is exactly
+ * covered and every other is over-covered and trimmed by the clip. The scale
+ * is uniform, so the tiling stays a tiling -- and it is a drawing decision
+ * only. Nothing downstream reads it: a tile's real position is what the
+ * generator says, and picking works off the region outline.
+ */
+const COVER = 1.163;
 
 /**
  * Below this many pixels across, a cell is not worth asking about.
@@ -252,11 +270,11 @@ export function drawGlobe(
   // globe from asking for ten thousand sub-maps to fill a dozen shapes.
   const regionPx = (2 * radius) / Math.sqrt(CELL_COUNT);
   const wantMosaic = children !== null && regionPx >= MOSAIC_MIN_PX;
-  const wantTint = !wantMosaic && tint !== null && regionPx >= TINT_MIN_PX;
-  // A child's own circumradius on screen. Nudged up a little because the
-  // sphere's projection compresses cells away from the centre, and a gap
-  // between children reads far worse than an overlap the clip will trim.
-  const childPx = ((radius * L0_RADIUS_RAD) / Math.sqrt(SUBCELL_COUNT)) * 1.08;
+  // How wide a tile is on screen, for deciding whether its edge is worth
+  // drawing. Only a threshold now -- the tiles' actual size and shape come
+  // from the lattice itself rather than from a number computed here.
+  const childPx = (radius * L0_RADIUS_RAD) / Math.sqrt(SUBCELL_COUNT);
+  const childEdges = childPx * 2 >= GRID_MIN_PX;
 
   for (let c = 0; c < CELL_COUNT; c++) {
     const [, cyy, cz] = rotate(cam, centres[c * 3], centres[c * 3 + 1], centres[c * 3 + 2]);
@@ -277,7 +295,13 @@ export function drawGlobe(
     const altitude = 1 + Math.min(0.5, Math.max(0, planet.elevationM[c]) / 6000);
 
     globeCellPath(ctx, c, cam, view);
-    const base = (wantTint ? tint(c) : null) ?? BIOME_COLOURS[planet.biome[c]];
+    // Under a mosaic this is the blend of the very tiles about to be drawn on
+    // top, so the sliver between a hexagon-of-hexagons and the Goldberg cell
+    // holding it -- they are not the same shape, and for the twelve pentagons
+    // not even the same number of sides -- reads as part of the ground rather
+    // than as a rim of some other colour.
+    const base = (tint !== null && regionPx >= TINT_MIN_PX ? tint(c) : null)
+      ?? BIOME_COLOURS[planet.biome[c]];
     // Filled whether or not a mosaic follows. The union of 91 hexagons has a
     // serrated edge, and without a solid parent under it the ocean shows
     // through every notch.
@@ -291,7 +315,7 @@ export function drawGlobe(
         // Clipped to the parent, so the cell keeps a clean hexagonal
         // silhouette however ragged the tiling inside it is.
         ctx.clip();
-        drawGlobeChildren(ctx, kids, cam, view, childPx, lambert);
+        drawGlobeChildren(ctx, kids, cam, view, lambert, childEdges);
         ctx.restore();
       }
     }
@@ -445,30 +469,121 @@ function globeCellPath(
  * one surface facing one way, with texture on it, rather than as ninety-one
  * separate things that happen to be adjacent.
  */
-function drawGlobeChildren(
-  ctx: CanvasRenderingContext2D,
-  kids: { dirs: Float64Array; biome: Uint8Array; elevationM: Float32Array },
+export interface ChildFrame {
+  dirs: Float64Array;
+  biome: Uint8Array;
+  elevationM: Float32Array;
+  basis: {
+    ox: number; oy: number; oz: number;
+    ex: number; ey: number; ez: number;
+    nx: number; ny: number; nz: number;
+  };
+  cellRadiusRad: number;
+}
+
+/**
+ * Where every tile of a region sits on screen, as six corners each.
+ *
+ * Separated from the painting so the geometry can be checked rather than
+ * eyeballed. The property that matters is not visible in any count of shapes:
+ * ADJACENT TILES MUST SHARE THEIR CORNERS. Two tiles that merely happen to be
+ * near each other leave a gap between them, and a gap is what the whole globe
+ * looked like.
+ *
+ * The corners are the centroids of each triple of touching cells -- the same
+ * dual construction sphere.ts uses to outline a Goldberg cell, and the reason
+ * it is right here: two neighbouring tiles compute the SAME triple, so they
+ * arrive at the same corner and the tiling closes exactly.
+ *
+ * What this replaced was a fixed-size, fixed-orientation hexagon dropped at
+ * each projected centre. That cannot tessellate on a sphere and did not: the
+ * tiles were upright wherever they sat while the lattice under them was
+ * rotated and foreshortened by the projection, so the background showed
+ * through between them and the grid did not follow the curve.
+ *
+ * Entries are null for tiles round the back of the globe.
+ */
+export function tilePolygons(
+  kids: ChildFrame,
   cam: Camera,
   view: GlobeView,
-  childPx: number,
-  lambert: number,
-): void {
+): (Float64Array | null)[] {
   const { cx, cy, radius } = view;
-  const shape = corners(childPx);
-  // The tile grid, once a tile is big enough to have an inside.
-  const wantEdges = childPx * 2 >= GRID_MIN_PX;
-  if (wantEdges) {
-    // Set once for all ninety-one, because assigning a stroke style per shape
-    // is most of the cost of drawing one.
+  const b = kids.basis;
+  const r = kids.cellRadiusRad;
+
+  // Every lattice point the region needs, one ring wider than the map itself
+  // so the outermost tiles have corners to be built from. The halo points are
+  // positions only -- no data, and none needed: a corner is a position.
+  const SPAN = 2 * (RADIUS + 1) + 1;
+  const px = new Float64Array(SPAN * SPAN);
+  const py = new Float64Array(SPAN * SPAN);
+  const ok = new Uint8Array(SPAN * SPAN);
+  const at = (q: number, rr: number): number => (q + RADIUS + 1) * SPAN + (rr + RADIUS + 1);
+
+  for (let q = -(RADIUS + 1); q <= RADIUS + 1; q++) {
+    for (let rr = -(RADIUS + 1); rr <= RADIUS + 1; rr++) {
+      const ss = -q - rr;
+      if (ss < -(RADIUS + 1) || ss > RADIUS + 1) continue;
+      // Lattice position, then onto the sphere, then onto the screen: the same
+      // three steps the generator used to place the cell, so a corner lands
+      // exactly where the cell that owns it thinks it is.
+      const lx = COVER * r * Math.sqrt(3) * (q + rr / 2);
+      const ly = COVER * r * 1.5 * rr;
+      const dx = b.ox + lx * b.ex + ly * b.nx;
+      const dy = b.oy + lx * b.ey + ly * b.ny;
+      const dz = b.oz + lx * b.ez + ly * b.nz;
+      const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const [rx, ry] = rotate(cam, dx / len, dy / len, dz / len);
+      const i = at(q, rr);
+      px[i] = cx + rx * radius;
+      py[i] = cy - ry * radius;
+      ok[i] = 1;
+    }
+  }
+
+  const out: (Float64Array | null)[] = new Array(SUBCELL_COUNT).fill(null);
+  for (let k = 0; k < SUBCELL_COUNT; k++) {
+    const [, , pz] = rotate(cam, kids.dirs[k * 3], kids.dirs[k * 3 + 1], kids.dirs[k * 3 + 2]);
+    if (pz < 0) continue;
+
+    const q = coords[k * 2];
+    const rr = coords[k * 2 + 1];
+    const self = at(q, rr);
+    const poly = new Float64Array(12);
+    let usable = true;
+    for (let d = 0; d < 6; d++) {
+      const da = DIRECTIONS[d];
+      const db = DIRECTIONS[(d + 1) % 6];
+      const ia = at(q + da[0], rr + da[1]);
+      const ib = at(q + db[0], rr + db[1]);
+      if (ok[ia] === 0 || ok[ib] === 0) { usable = false; break; }
+      poly[d * 2] = (px[self] + px[ia] + px[ib]) / 3;
+      poly[d * 2 + 1] = (py[self] + py[ia] + py[ib]) / 3;
+    }
+    if (usable) out[k] = poly;
+  }
+  return out;
+}
+
+function drawGlobeChildren(
+  ctx: CanvasRenderingContext2D,
+  kids: ChildFrame,
+  cam: Camera,
+  view: GlobeView,
+  lambert: number,
+  drawEdges: boolean,
+): void {
+  const polys = tilePolygons(kids, cam, view);
+
+  if (drawEdges) {
     ctx.strokeStyle = 'rgba(10,16,24,0.35)';
     ctx.lineWidth = 0.5;
   }
 
   for (let k = 0; k < SUBCELL_COUNT; k++) {
-    const [px, py, pz] = rotate(cam, kids.dirs[k * 3], kids.dirs[k * 3 + 1], kids.dirs[k * 3 + 2]);
-    if (pz < 0) continue;
-    const x = cx + px * radius;
-    const y = cy - py * radius;
+    const poly = polys[k];
+    if (poly === null) continue;
 
     const alt = 1 + Math.min(0.5, Math.max(0, kids.elevationM[k]) / 6000);
     ctx.fillStyle = kids.elevationM[k] < 0
@@ -476,11 +591,11 @@ function drawGlobeChildren(
       : shade(BIOME_COLOURS[kids.biome[k]], lambert * alt);
 
     ctx.beginPath();
-    ctx.moveTo(x + shape[0].x, y + shape[0].y);
-    for (let i = 1; i < 6; i++) ctx.lineTo(x + shape[i].x, y + shape[i].y);
+    ctx.moveTo(poly[0], poly[1]);
+    for (let i = 1; i < 6; i++) ctx.lineTo(poly[i * 2], poly[i * 2 + 1]);
     ctx.closePath();
     ctx.fill();
-    if (wantEdges) ctx.stroke();
+    if (drawEdges) ctx.stroke();
   }
 }
 
@@ -553,6 +668,10 @@ export function drawSubMap(
   // them. Flat coordinates, so this is exact -- no projection, no lookup.
   const childSize = size * CHILD_SCALE;
   const childShape = corners(childSize, -30 + CHILD_TURN_DEG);
+  // Tile edges, on the same terms as the globe's. Without them a run of tiles
+  // sharing a biome merges into one flat area and the grid disappears exactly
+  // where the ground is uniform -- which is most of a map.
+  const childEdges = childSize * 2 >= GRID_MIN_PX;
 
   let lo = Infinity;
   let hi = -Infinity;
@@ -588,6 +707,10 @@ export function drawSubMap(
       if (kids !== null) {
         ctx.save();
         ctx.clip();
+        if (childEdges) {
+          ctx.strokeStyle = 'rgba(10,16,24,0.30)';
+          ctx.lineWidth = 0.5;
+        }
         for (let k = 0; k < SUBCELL_COUNT; k++) {
           const q = toPixel(k, childSize);
           // The thirty-degree turn, applied to the layout as well as to the
@@ -605,6 +728,7 @@ export function drawSubMap(
           for (let i = 1; i < 6; i++) ctx.lineTo(kx + childShape[i].x, ky + childShape[i].y);
           ctx.closePath();
           ctx.fill();
+          if (childEdges) ctx.stroke();
         }
         ctx.restore();
 

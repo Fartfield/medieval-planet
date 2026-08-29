@@ -289,6 +289,62 @@ right and the grid cannot ask it.
 
 ---
 
+## ## The tiles on the globe could not tessellate, and no measurement said so
+
+**Problem.** Reported from the screen: "there are errors around the edges and
+the hexes don't fit together neatly", and -- the detail that located it -- "only
+an issue on world map, the smaller maps are all well aligned".
+
+Every measurement passed. The right number of shapes, no NaN coordinates, the
+flat-map alignment arithmetic exact to 1e-9. **The suite was checking what the
+renderer was asked to draw and not what it looks like once drawn.**
+
+So the first thing built was a way to look: `tools/preview.ts` runs the real
+renderer against a software rasteriser and writes a PNG. It is about two
+hundred lines and it found the bug in one image.
+
+**The tiles were fixed-size, fixed-orientation hexagons dropped at each
+projected centre.** On a flat map that is exactly right, which is why the
+smaller maps were fine. On a sphere it cannot work: the projection rotates and
+foreshortens the lattice by a different amount at every point, so the tiles sat
+upright wherever they were while the grid under them turned, and the background
+showed through the gaps.
+
+* **Build each corner as the centroid of a triple of touching cells.** The same
+  dual construction `sphere.ts` already uses to outline a Goldberg cell, and
+  the reason it is the right one: two neighbouring tiles compute the SAME
+  triple, so they arrive at the same corner and the tiling closes by
+  construction rather than by tolerance. Rotation, foreshortening and per-tile
+  scale all come out of it for free, because the corners are positions rather
+  than an offset from a centre.
+
+  Measured: 240 of 240 adjacent pairs share exactly two corners, to 1e-9.
+
+  The outermost ring needs corners from cells one step beyond the map. Those
+  are positions and nothing else -- the lattice runs on past the edge of the
+  array -- so no sibling map has to be consulted for them.
+
+**And then a fringe.** Ninety-one tiles have exactly their region's area, which
+is how the ladder is built, but not its shape: a hexagon of hexagons is not a
+Goldberg cell, and for the twelve pentagons it does not even have the same
+number of sides. Measured, the arrangement reaches 0.208 radians from the
+centre where the widest cell reaches 0.242 -- so a seventh of every region's
+radius was bare, all the way round, and read as a ring of flat colour that made
+each mosaic look like a patch laid on the globe rather than the surface of it.
+
+The tiles are drawn at 1.163x, the ratio of those two measurements, so the
+widest cell is exactly covered and every other is over-covered and trimmed by
+the clip. Uniform, so the tiling stays a tiling, and a drawing decision only:
+nothing downstream reads it, a tile's real position is what the generator says,
+and picking works off the region outline.
+
+**The lesson is the tool, not the fix.** A renderer is the one part of this
+project where the measurements can all be green and the thing still be wrong,
+because the output is an image and the suite never looked at one. `preview.ts`
+is cheap to keep and it is the only reason this was a twenty-minute problem.
+
+---
+
 ## ## Ninety-one tiles in a hexagon, three ways
 
 **Problem.** Each hex should show the tiles that make it up, one layer down, so
