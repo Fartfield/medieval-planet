@@ -14,12 +14,12 @@
 import { World } from '../sim/world.ts';
 import { MAX_DEPTH } from '../sim/geo/address.ts';
 import { CELL_COUNT } from '../sim/geo/sphere.ts';
-import { RADIUS, SUBCELL_COUNT } from '../sim/geo/hexgrid.ts';
+import { RADIUS, SUBCELL_COUNT, toPixel, indexOf } from '../sim/geo/hexgrid.ts';
 import { Biome } from '../sim/model/biome.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
   pickGlobe, pickSubMap, corners, rotate, unrotate, houseColour,
-  blendColours, TINT_MIN_PX, type CellTint,
+  blendColours, TINT_MIN_PX, MOSAIC_MIN_PX, type CellTint, type ChildLookup,
 } from '../client/src/render.ts';
 import { bestRegion } from './sites.ts';
 import { check, measure, assert, suite } from './harness.ts';
@@ -37,6 +37,11 @@ class StubContext {
   strokes = 0;
   arcs = 0;
   rects = 0;
+  clips = 0;
+  /** Depth of save/restore nesting, which must come back to zero. */
+  depth = 0;
+  maxDepth = 0;
+  unbalanced = false;
 
   beginPath(): void {}
   closePath(): void {}
@@ -51,6 +56,15 @@ class StubContext {
   }
   fillText(): void {}
   setTransform(): void {}
+  clip(): void { this.clips++; }
+  save(): void { this.depth++; this.maxDepth = Math.max(this.maxDepth, this.depth); }
+  restore(): void {
+    this.depth--;
+    // A clip that is never restored leaks onto everything drawn afterwards,
+    // and on a canvas that shows up as the rest of the frame silently
+    // vanishing rather than as an error.
+    if (this.depth < 0) this.unbalanced = true;
+  }
 
   get nans(): number { return this.points.filter((v) => !Number.isFinite(v)).length; }
 }
@@ -183,6 +197,127 @@ suite('the map fills the window', () => {
     Math.max(widthPx / W, heightPx / H) > 0.85);
 });
 
+suite('a hex is drawn out of its own tiles', () => {
+  // Every cell is painted from its 91 children, ONE LAYER DOWN AND NO MORE.
+  // That "no more" is the load-bearing part: a globe that recursed would end
+  // up asking for all 4.75 quadrillion cells to paint twelve shapes.
+  const world = new World({ seed: 20260826 });
+  const cam = newCamera();
+  const view = globeView(W, H);
+
+  const asked: number[] = [];
+  const kids: ChildLookup = (cell) => { asked.push(cell); return world.subMap([cell]); };
+
+  const flat = stub();
+  drawGlobe(flat, world.planet, cam, view, -1, new Map(), null, null);
+  const mosaic = stub();
+  drawGlobe(mosaic, world.planet, cam, view, -1, new Map(), null, kids);
+
+  const flatRaw = flat as unknown as StubContext;
+  const mosaicRaw = mosaic as unknown as StubContext;
+
+  measure('shapes drawn flat', flatRaw.fills);
+  measure('shapes drawn from the tiles below', mosaicRaw.fills);
+  measure('child maps requested', asked.length);
+
+  assert('a mosaic draws far more shapes than a flat globe',
+    mosaicRaw.fills > flatRaw.fills * 10);
+  check('the mosaic produced no NaN coordinates', mosaicRaw.nans, 0, 0);
+
+  // Hexagons, not rectangles. The first attempt drew padded axis-aligned
+  // squares, which leave a lattice of gaps and read as dither rather than as
+  // ground -- see docs/fix-attempts.md. Nothing here may call fillRect.
+  check('nothing is drawn as a rectangle', mosaicRaw.rects, 0, 0);
+
+  // ONE LAYER. Each visible region is asked for its children exactly once and
+  // nothing is ever asked for a grandchild.
+  check('every region is asked at most once', asked.length, new Set(asked).size, 0);
+  assert('only regions are asked, never anything deeper',
+    asked.every((c) => c >= 0 && c < CELL_COUNT));
+
+  // The parent is filled underneath its own mosaic. A hexagon of hexagons has
+  // a serrated edge and the ocean would show through every notch.
+  assert('parents are still filled underneath', mosaicRaw.fills >= flatRaw.fills);
+
+  // Every clip is restored. An unbalanced one leaks onto the rest of the
+  // frame, which on a canvas looks like everything after it disappearing.
+  measure('clips taken', mosaicRaw.clips);
+  assert('the mosaic clips to each parent', mosaicRaw.clips > 0);
+  check('every save is restored', mosaicRaw.depth, 0, 0);
+  assert('and never restored too often', !mosaicRaw.unbalanced);
+  check('clip nesting never goes deeper than one', mosaicRaw.maxDepth, 1, 0);
+
+  // Below the threshold nothing is asked for at all, however small it gets.
+  const asked2: number[] = [];
+  const tiny = stub();
+  drawGlobe(tiny, world.planet, cam, { cx: 50, cy: 50, radius: 30 }, -1, new Map(), null,
+    (c) => { asked2.push(c); return world.subMap([c]); });
+  check('a small globe asks for no children', asked2.length, 0, 0);
+  check('and draws no rectangles either', (tiny as unknown as StubContext).rects, 0, 0);
+
+  // No children is always allowed: it is what the finest layer returns.
+  let threw = false;
+  try {
+    const none = stub();
+    drawGlobe(none, world.planet, cam, view, -1, new Map(), null, () => null);
+    assert('a globe with no children still draws', (none as unknown as StubContext).fills > 0);
+  } catch { threw = true; }
+  assert('no children is not an error', !threw);
+
+  // The same on a flat sub-map, where the children lay out in local
+  // coordinates rather than being projected.
+  const region = bestRegion(world);
+  const subAsked: number[] = [];
+  const sub = stub();
+  drawSubMap(sub, world.subMap([region]), flatView(W, H, cam), -1,
+    new Map(), new Map(), null, null,
+    (c) => { subAsked.push(c); return world.subMap([region, c]); });
+  const subRaw = sub as unknown as StubContext;
+  measure('shapes drawn on a mosaicked sub-map', subRaw.fills);
+  assert('a sub-map is drawn from its tiles too', subRaw.fills > SUBCELL_COUNT * 10);
+  check('a sub-map draws no rectangles', subRaw.rects, 0, 0);
+  check('each sub-map cell is asked at most once', subAsked.length, new Set(subAsked).size, 0);
+  check('a mosaicked sub-map produced no NaN', subRaw.nans, 0, 0);
+  measure('max depth', MAX_DEPTH);
+});
+
+suite('the tiles line up with the hex that holds them', () => {
+  // Ninety-one hexes of circumradius r arrange into a hexagon of circumradius
+  // sqrt(3)*RADIUS*r, and that arrangement comes out flat-topped where a cell
+  // drawn by `corners` is pointy-topped. Turning the children thirty degrees
+  // puts the two in register. Get either half of that wrong -- the scale or
+  // the turn -- and the tiling sits skew inside its own parent.
+  const parent = corners(100);
+  const child = corners(100 * (1 / (Math.sqrt(3) * RADIUS)), 0);
+
+  // The parent's vertices sit at 30, 90, 150 degrees and the turned child's at
+  // 0, 60, 120, so their edges run parallel.
+  const angleOf = (p: { x: number; y: number }): number =>
+    ((Math.atan2(p.y, p.x) * 180) / Math.PI + 360) % 360;
+  measure('first parent vertex, degrees', angleOf(parent[0]));
+  measure('first child vertex, degrees', angleOf(child[0]));
+  check('the parent is pointy-topped', angleOf(parent[0]), 330, 0.001);
+  check('a child is turned to meet it', angleOf(child[0]), 0, 0.001);
+
+  // The arrangement spans exactly as far as the parent does.
+  const childSize = 100 / (Math.sqrt(3) * RADIUS);
+  const spanOfArrangement = Math.sqrt(3) * RADIUS * childSize;
+  measure('arrangement circumradius against parent', spanOfArrangement / 100);
+  check('the children reach the parent edge', spanOfArrangement, 100, 1e-9);
+
+  // And the far corner of the real grid lands there, which is the check that
+  // the layout and the scale agree rather than each being right alone.
+  const far = toPixel(indexOf(RADIUS, 0), childSize);
+  const turned = {
+    x: far.x * (Math.sqrt(3) / 2) - far.y * 0.5,
+    y: far.x * 0.5 + far.y * (Math.sqrt(3) / 2),
+  };
+  measure('outermost child distance from centre', Math.hypot(turned.x, turned.y));
+  check('the outermost child sits on the parent corner',
+    Math.hypot(turned.x, turned.y), 100, 1e-9);
+  check('and at a parent corner angle', angleOf(turned), 30, 1e-6);
+});
+
 suite('tint from one layer below', () => {
   // Every hex stays a single hexagon and is coloured by the average of its own
   // 91 children. The claim under test is the "own" -- a globe that recursed
@@ -205,9 +340,9 @@ suite('tint from one layer below', () => {
   const tint: CellTint = (cell) => { asked.push(cell); return '#123456'; };
 
   const flat = stub();
-  drawGlobe(flat, world.planet, cam, view, -1, new Map(), null);
+  drawGlobe(flat, world.planet, cam, view, -1, new Map(), null, null);
   const tinted = stub();
-  drawGlobe(tinted, world.planet, cam, view, -1, new Map(), tint);
+  drawGlobe(tinted, world.planet, cam, view, -1, new Map(), tint, null);
 
   const flatRaw = flat as unknown as StubContext;
   const tintRaw = tinted as unknown as StubContext;
@@ -224,14 +359,14 @@ suite('tint from one layer below', () => {
   const asked2: number[] = [];
   const tiny = stub();
   drawGlobe(tiny, world.planet, cam, { cx: 50, cy: 50, radius: 4 }, -1, new Map(),
-    (c) => { asked2.push(c); return '#123456'; });
+    (c) => { asked2.push(c); return '#123456'; }, null);
   check('a tiny globe asks for no tints', asked2.length, 0, 0);
 
   // A tint of null is always safe -- that is what the finest layer returns.
   let threw = false;
   try {
     const nulled = stub();
-    drawGlobe(nulled, world.planet, cam, view, -1, new Map(), () => null);
+    drawGlobe(nulled, world.planet, cam, view, -1, new Map(), () => null, null);
     assert('a null tint still draws', (nulled as unknown as StubContext).fills > 0);
   } catch { threw = true; }
   assert('a null tint is not an error', !threw);
@@ -241,7 +376,7 @@ suite('tint from one layer below', () => {
   const subAsked: number[] = [];
   const sub = stub();
   drawSubMap(sub, world.subMap([region]), flatView(W, H, cam), -1,
-    new Map(), new Map(), null, (c) => { subAsked.push(c); return '#654321'; });
+    new Map(), new Map(), null, (c) => { subAsked.push(c); return '#654321'; }, null);
   const subRaw = sub as unknown as StubContext;
   check('a sub-map draws no mosaic tiles either', subRaw.rects, 0, 0);
   check('each sub-map cell is asked once', subAsked.length, new Set(subAsked).size, 0);

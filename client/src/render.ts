@@ -22,10 +22,10 @@ import type { SubMap } from '../../sim/gen/submap.ts';
  * docs/determinism.md. Drawing a shape is not simulating one, so the function
  * moved to the renderer instead of the rule acquiring an exception.
  */
-export function corners(size: number): { x: number; y: number }[] {
+export function corners(size: number, rotationDeg = -30): { x: number; y: number }[] {
   const out: { x: number; y: number }[] = [];
   for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 180) * (60 * i - 30);
+    const a = (Math.PI / 180) * (60 * i + rotationDeg);
     out.push({ x: size * Math.cos(a), y: size * Math.sin(a) });
   }
   return out;
@@ -99,6 +99,65 @@ function shade(hex: string, amount: number): string {
 export type CellTint = (cell: number) => string | null;
 
 /**
+ * The map one layer below a cell, for drawing that cell out of its own tiles.
+ *
+ * ONE LAYER DOWN, NEVER MORE. A region drawn from its 91 children shows real
+ * terrain -- a coastline, a range, the edge of a desert -- without the world
+ * map resolving anything below the layer under it. Recursing would mean the
+ * globe eventually asking for all 4.75 quadrillion cells to paint twelve
+ * shapes, which is what generate-on-demand exists to prevent.
+ *
+ * Returning null is always safe: the cell keeps its own colour.
+ */
+export type ChildLookup = (cell: number) => {
+  dirs: Float64Array;
+  biome: Uint8Array;
+  elevationM: Float32Array;
+} | null;
+
+/**
+ * How wide a cell must be on screen before it is worth drawing its children.
+ *
+ * A child is a ninth of its parent across, so at 34 px the children are around
+ * 3.5 px each -- about the smallest a shape can be and still read as a shape.
+ * Below it the tint takes over, which is the same information averaged, and at
+ * that size averaging is what the eye is doing anyway.
+ *
+ * THIS IS WHY THE FIRST MOSAIC FAILED. It drew at 26 px, so the children were
+ * 2.5 px, and it drew them as padded axis-aligned SQUARES rather than as
+ * hexagons -- ninety-one little rectangles scattered inside a hexagon with
+ * gaps between them. That reads as dither, not as terrain, and the parent
+ * stopped reading as a hexagon at all. The information was right and the
+ * geometry was wrong.
+ */
+export const MOSAIC_MIN_PX = 34;
+
+/**
+ * A child hexagon's circumradius against its parent's, and the turn that makes
+ * their edges parallel.
+ *
+ * Ninety-one hexes of radius r arrange into a hexagon of circumradius
+ * sqrt(3)*RADIUS*r, so r = size/(sqrt(3)*RADIUS) makes the arrangement span
+ * exactly as far as the parent does.
+ *
+ * The arrangement comes out flat-topped -- its corners land at 0, 60, 120
+ * degrees -- while a cell drawn by `corners` is pointy-topped, at 30, 90, 150.
+ * Turning the children thirty degrees puts the two in register, so the grain
+ * of the small hexes runs parallel to the big one's edges instead of cutting
+ * across them at an angle. It is the difference between a hexagon made of
+ * hexagons and a hexagon with something spilled in it.
+ */
+const CHILD_SCALE = 1 / (Math.sqrt(3) * RADIUS);
+const CHILD_TURN_DEG = 30;
+const COS30 = Math.sqrt(3) / 2;
+const SIN30 = 0.5;
+
+/** Angular circumradius of a layer-0 cell, for sizing children on the globe. */
+const L0_RADIUS_RAD = Math.sqrt(
+  (4 * Math.PI) / CELL_COUNT / ((3 * Math.sqrt(3)) / 2),
+);
+
+/**
  * Below this many pixels across, a cell is not worth asking about.
  *
  * Blending a cell's children costs generating them, and a cell three pixels
@@ -166,6 +225,7 @@ export function drawGlobe(
   highlight: number,
   owned: Map<number, number>,
   tint: CellTint | null = null,
+  children: ChildLookup | null = null,
 ): void {
   const { cx, cy, radius } = view;
 
@@ -176,35 +236,59 @@ export function drawGlobe(
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fill();
 
+  // Three ways to paint a cell, by how big it is on screen: out of its own
+  // children, as their average, or flat. The ladder is what keeps a zoomed-out
+  // globe from asking for ten thousand sub-maps to fill a dozen shapes.
   const regionPx = (2 * radius) / Math.sqrt(CELL_COUNT);
-  const wantTint = tint !== null && regionPx >= TINT_MIN_PX;
+  const wantMosaic = children !== null && regionPx >= MOSAIC_MIN_PX;
+  const wantTint = !wantMosaic && tint !== null && regionPx >= TINT_MIN_PX;
+  // A child's own circumradius on screen. Nudged up a little because the
+  // sphere's projection compresses cells away from the centre, and a gap
+  // between children reads far worse than an overlap the clip will trim.
+  const childPx = ((radius * L0_RADIUS_RAD) / Math.sqrt(SUBCELL_COUNT)) * 1.08;
 
   for (let c = 0; c < CELL_COUNT; c++) {
     const [, cyy, cz] = rotate(cam, centres[c * 3], centres[c * 3 + 1], centres[c * 3 + 2]);
     if (cz < 0) continue;
     if (planet.elevationM[c] < 0) continue;
 
-    const poly = outline(c);
-    ctx.beginPath();
-    for (let i = 0; i < poly.length; i += 3) {
-      const [px, py] = rotate(cam, poly[i], poly[i + 1], poly[i + 2]);
-      const sx = cx + px * radius;
-      const sy = cy - py * radius;
-      if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
-    }
-    ctx.closePath();
-
     // Light from the upper left, plus a lift with altitude so ranges read.
     const lambert = 0.55 + 0.45 * Math.max(0, cz * 0.75 + cyy * 0.35);
     const altitude = 1 + Math.min(0.5, Math.max(0, planet.elevationM[c]) / 6000);
+
+    globeCellPath(ctx, c, cam, view);
     const base = (wantTint ? tint(c) : null) ?? BIOME_COLOURS[planet.biome[c]];
+    // Filled whether or not a mosaic follows. The union of 91 hexagons has a
+    // serrated edge, and without a solid parent under it the ocean shows
+    // through every notch.
     ctx.fillStyle = shade(base, lambert * altitude);
     ctx.fill();
 
+    if (wantMosaic) {
+      const kids = children!(c);
+      if (kids !== null) {
+        ctx.save();
+        // Clipped to the parent, so the cell keeps a clean hexagonal
+        // silhouette however ragged the tiling inside it is.
+        ctx.clip();
+        drawGlobeChildren(ctx, kids, cam, view, childPx, lambert);
+        ctx.restore();
+      }
+    }
+
     const owner = owned.get(c);
     if (owner !== undefined) {
+      // The path was consumed by the mosaic, so lay it down again.
+      globeCellPath(ctx, c, cam, view);
       ctx.strokeStyle = houseColour(owner);
       ctx.lineWidth = 1.5;
+      ctx.stroke();
+    } else if (wantMosaic) {
+      // And a hairline on every cell once it has structure inside it, or the
+      // eye loses where one region stops and the next begins.
+      globeCellPath(ctx, c, cam, view);
+      ctx.strokeStyle = 'rgba(12,20,30,0.55)';
+      ctx.lineWidth = 1;
       ctx.stroke();
     }
   }
@@ -234,6 +318,82 @@ export function drawGlobe(
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.stroke();
 }
+
+/**
+ * Lay down one Goldberg cell's outline as the current path.
+ *
+ * A function rather than inline because the path has to be laid twice on any
+ * cell that gets a mosaic: drawing the children calls beginPath and takes it
+ * away, and the border still has to be stroked afterwards. Canvas save/restore
+ * does not preserve the current path, so there is nothing to put it back.
+ */
+function globeCellPath(
+  ctx: CanvasRenderingContext2D,
+  cell: number,
+  cam: Camera,
+  view: GlobeView,
+): void {
+  const { cx, cy, radius } = view;
+  const poly = outline(cell);
+  ctx.beginPath();
+  for (let i = 0; i < poly.length; i += 3) {
+    const [px, py] = rotate(cam, poly[i], poly[i + 1], poly[i + 2]);
+    const sx = cx + px * radius;
+    const sy = cy - py * radius;
+    if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+  }
+  ctx.closePath();
+}
+
+/**
+ * Paint one region out of its own ninety-one tiles.
+ *
+ * The children carry real positions on the sphere, so they are projected the
+ * same way their parent was and land where they belong. No separate layout and
+ * no assumption that a hexagon of hexagons is itself a hexagon -- which it is
+ * not, quite: its edges are serrated, which is what the clip is for.
+ *
+ * Drawn as hexagons and not as the quads a first version used. At four or five
+ * pixels the difference between a hexagon and a square is small and it is not
+ * nothing: hexagons tessellate, so the tiling closes up and reads as ground,
+ * where squares leave a lattice of gaps and read as noise.
+ *
+ * Lit with the parent's own lambert term so the whole region still reads as
+ * one surface facing one way, with texture on it, rather than as ninety-one
+ * separate things that happen to be adjacent.
+ */
+function drawGlobeChildren(
+  ctx: CanvasRenderingContext2D,
+  kids: { dirs: Float64Array; biome: Uint8Array; elevationM: Float32Array },
+  cam: Camera,
+  view: GlobeView,
+  childPx: number,
+  lambert: number,
+): void {
+  const { cx, cy, radius } = view;
+  const shape = corners(childPx);
+
+  for (let k = 0; k < SUBCELL_COUNT; k++) {
+    const [px, py, pz] = rotate(cam, kids.dirs[k * 3], kids.dirs[k * 3 + 1], kids.dirs[k * 3 + 2]);
+    if (pz < 0) continue;
+    const x = cx + px * radius;
+    const y = cy - py * radius;
+
+    const alt = 1 + Math.min(0.5, Math.max(0, kids.elevationM[k]) / 6000);
+    ctx.fillStyle = kids.elevationM[k] < 0
+      ? shade(OCEAN, lambert)
+      : shade(BIOME_COLOURS[kids.biome[k]], lambert * alt);
+
+    ctx.beginPath();
+    ctx.moveTo(x + shape[0].x, y + shape[0].y);
+    for (let i = 1; i < 6; i++) ctx.lineTo(x + shape[i].x, y + shape[i].y);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+/** Water, as the children see it. Matches the disc behind the globe. */
+const OCEAN = '#1b3a5c';
 
 /** Screen point back to a direction on the sphere, or null if off the globe. */
 export function pickGlobe(
@@ -290,10 +450,17 @@ export function drawSubMap(
   populated: Map<number, number>,
   worked: Map<number, number> | null = null,
   tint: CellTint | null = null,
+  children: ChildLookup | null = null,
 ): void {
   const { cx, cy, size } = view;
   const shape = corners(size);
-  const wantTint = tint !== null && size * 2 >= TINT_MIN_PX;
+  const wantMosaic = children !== null && size * 2 >= MOSAIC_MIN_PX;
+  const wantTint = !wantMosaic && tint !== null && size * 2 >= TINT_MIN_PX;
+  // Children lay out as their own hex grid inside this cell, turned thirty
+  // degrees so their grain runs with the parent's edges rather than across
+  // them. Flat coordinates, so this is exact -- no projection, no lookup.
+  const childSize = size * CHILD_SCALE;
+  const childShape = corners(childSize, -30 + CHILD_TURN_DEG);
 
   let lo = Infinity;
   let hi = -Infinity;
@@ -319,8 +486,46 @@ export function drawSubMap(
 
     const relief = 0.72 + 0.5 * ((map.elevationM[c] - lo) / span);
     const base = (wantTint ? tint!(c) : null) ?? BIOME_COLOURS[map.biome[c]];
+    // Filled first either way: the union of 91 hexagons has a serrated edge
+    // and the background would show through every notch.
     ctx.fillStyle = shade(base, relief);
     ctx.fill();
+
+    if (wantMosaic) {
+      const kids = children!(c);
+      if (kids !== null) {
+        ctx.save();
+        ctx.clip();
+        for (let k = 0; k < SUBCELL_COUNT; k++) {
+          const q = toPixel(k, childSize);
+          // The thirty-degree turn, applied to the layout as well as to the
+          // shape. Turning one and not the other puts them out of register.
+          const qx = q.x * COS30 - q.y * SIN30;
+          const qy = q.x * SIN30 + q.y * COS30;
+          const kx = x + qx;
+          const ky = y + qy;
+          const alt = 0.72 + 0.5 * ((kids.elevationM[k] - lo) / span);
+          ctx.fillStyle = kids.elevationM[k] < 0
+            ? OCEAN
+            : shade(BIOME_COLOURS[kids.biome[k]], alt);
+          ctx.beginPath();
+          ctx.moveTo(kx + childShape[0].x, ky + childShape[0].y);
+          for (let i = 1; i < 6; i++) ctx.lineTo(kx + childShape[i].x, ky + childShape[i].y);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+
+        // The cell's own edge, back on top of its texture.
+        ctx.beginPath();
+        ctx.moveTo(x + shape[0].x, y + shape[0].y);
+        for (let i = 1; i < 6; i++) ctx.lineTo(x + shape[i].x, y + shape[i].y);
+        ctx.closePath();
+        ctx.strokeStyle = 'rgba(12,20,30,0.5)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
   }
 
   // Water second, so channels sit on top of the ground they cut through.

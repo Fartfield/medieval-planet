@@ -185,7 +185,54 @@ work now.
 
 ---
 
-## Soil sat on a seventy-four degree cliff
+## Ninety-one tiles in a hexagon, three ways
+
+**Problem.** Each hex should show the tiles that make it up, one layer down, so
+that detail resolves at every step without the world map reaching to the
+bottom. Getting the information right turned out to be the easy half.
+
+* ~~Draw the 91 children as padded axis-aligned squares.~~ Read as dither.
+  Squares do not tessellate with hexagons, so the tiling left a lattice of
+  gaps; at the 26 px threshold each child was about 2.5 px, and the parent
+  stopped reading as a hexagon at all. Reported as "the mosaic doesn't land
+  well". **The information was right and the geometry was wrong**, which is why
+  it was tempting to conclude the whole idea was wrong.
+
+* ~~Replace it with a single blended colour per hex.~~ Overcorrected. It does
+  read as one clean shape and it is the right thing at a distance, but it
+  throws away exactly what was asked for -- reported back as "the tiles don't
+  look like I expected, they should show every tile that makes them".
+
+* **Hexagons, turned to meet their parent, clipped to it.** Three things,
+  and all three are needed:
+
+  - **Hexagons, not quads.** They tessellate, so the tiling closes up and
+    reads as ground rather than as noise.
+  - **Turned thirty degrees.** Ninety-one hexes of circumradius r arrange into
+    a hexagon of circumradius sqrt(3)*RADIUS*r, and that arrangement comes out
+    *flat*-topped while a cell drawn by `corners` is *pointy*-topped. Turning
+    the children puts the grain of the small hexes parallel to the big one's
+    edges instead of cutting across them.
+  - **Clipped, over a solid parent.** The union of 91 hexagons has a serrated
+    edge: without the clip the silhouette is ragged, and without the fill
+    underneath the background shows through every notch.
+
+  Measured: with the child scale at 1/(sqrt(3)*RADIUS), the outermost child
+  sits exactly 100 units from the centre of a parent of circumradius 100, at
+  30 degrees, which is a parent corner. Both halves have to be right -- get
+  the scale right and the turn wrong and the tiling sits skew inside its own
+  parent.
+
+**And a threshold, because both earlier answers are right somewhere.** Below
+34 px a cell is painted with the blend instead, and below 6 px flat. A child is
+a ninth of its parent across, so 34 px is where children reach about 3.5 px --
+roughly the smallest a shape can be and still read as a shape. The blend is not
+wasted work; it is the same information at the distance where averaging is what
+the eye is doing anyway.
+
+---
+
+## ## Soil sat on a seventy-four degree cliff
 
 **Problem.** Searching the world for hillsides held up only by their trees
 found four, and every one of them was at 74 or 75 degrees carrying most of a

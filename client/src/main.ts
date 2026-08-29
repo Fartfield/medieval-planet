@@ -33,7 +33,8 @@ import type { Polity } from '../../sim/model/polity.ts';
 import { AUTHORITY_REACH_KM } from '../../sim/model/polity.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
-  pickGlobe, pickSubMap, houseColour, blendColours, TINT_MIN_PX,
+  pickGlobe, pickSubMap, houseColour, blendColours, TINT_MIN_PX, MOSAIC_MIN_PX,
+  type ChildLookup,
   type Camera, type CellTint,
 } from './render.ts';
 
@@ -268,6 +269,29 @@ function tintFor(w: World, at: number[]): CellTint | null {
 const OCEAN_COLOUR = BIOME_COLOURS[Biome.Ocean];
 
 /**
+ * The map one layer below a cell, for drawing that cell out of its own tiles.
+ *
+ * The renderer is not allowed to reach into the world -- see
+ * docs/architecture.md -- so it asks, and this answers. It hands back the
+ * generated sub-map directly rather than a copy: the renderer only reads it,
+ * and the World's own cache is what keeps a second frame cheap.
+ *
+ * Nothing is cached here on purpose. `World.subMap` already holds 16,384 maps,
+ * which is several screens' worth, and a second cache in front of it would
+ * only be a way to get the two out of step.
+ */
+function childrenFor(w: World, at: number[]): ChildLookup | null {
+  if (at.length >= MAX_DEPTH - 1) return null;
+  return (cell: number) => {
+    try {
+      return w.subMap([...at, cell]);
+    } catch {
+      return null;
+    }
+  };
+}
+
+/**
  * The fields a selected settlement is actually working, for the renderer.
  *
  * Only computed when a populated tile is selected on a ground map, because a
@@ -315,10 +339,11 @@ function frame(): void {
   const { owned, populated } = visibleOverlays(world);
 
   if (path.length === 0) {
-    drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned, tintFor(world, []));
+    drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned,
+      tintFor(world, []), childrenFor(world, []));
   } else {
     drawSubMap(ctx, world.subMap(path), flatView(w, h, cam), selected, owned, populated,
-      workedOverlay(world), tintFor(world, path));
+      workedOverlay(world), tintFor(world, path), childrenFor(world, path));
   }
 
   const remaining = Math.max(0, Math.round((nextTurnAt - performance.now()) / 1000));
