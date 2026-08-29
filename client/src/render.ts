@@ -116,21 +116,26 @@ export type CellTint = (cell: number) => string | null;
 export type ChildLookup = (cell: number) => ChildFrame | null;
 
 /**
- * How wide a cell must be on screen before it is worth drawing its children.
+ * How wide a TILE must be on screen before its parent is drawn out of tiles.
  *
- * A child is a ninth of its parent across, so at 34 px the children are around
- * 3.5 px each -- about the smallest a shape can be and still read as a shape.
- * Below it the tint takes over, which is the same information averaged, and at
- * that size averaging is what the eye is doing anyway.
+ * Measured on the tile, not on the parent, and that is the whole point: it is
+ * the tile that either reads as a shape or does not, so it is the tile the
+ * question is about. Below four pixels the blend takes over, which is the same
+ * information averaged, and at that size averaging is what the eye is doing
+ * anyway.
  *
- * THIS IS WHY THE FIRST MOSAIC FAILED. It drew at 26 px, so the children were
- * 2.5 px, and it drew them as padded axis-aligned SQUARES rather than as
- * hexagons -- ninety-one little rectangles scattered inside a hexagon with
- * gaps between them. That reads as dither, not as terrain, and the parent
- * stopped reading as a hexagon at all. The information was right and the
- * geometry was wrong.
+ * IT USED TO BE A THRESHOLD ON THE PARENT, and the globe and the flat maps
+ * divide parent by child differently -- 9.5 against 8.7 -- so the same number
+ * meant 3.9 px tiles on a sub-map and 7.4 px tiles on the globe. The globe was
+ * held to twice the standard, and the moment the world map went from 92 cells
+ * to 192 the window needed to clear it grew from about 390 px to 600. Under
+ * that, the world view quietly fell back to a flat blend: the same
+ * "constituent hexes are not being drawn" that had been fixed twice already,
+ * arriving a third time through the one line that decides whether to draw them.
+ *
+ * Stated once, in tile pixels, both callers ask the identical question.
  */
-export const MOSAIC_MIN_PX = 34;
+export const MOSAIC_MIN_PX = 4;
 
 /**
  * How wide a shape must be on screen before its outline is worth drawing.
@@ -274,11 +279,11 @@ export function drawGlobe(
   // children, as their average, or flat. The ladder is what keeps a zoomed-out
   // globe from asking for ten thousand sub-maps to fill a dozen shapes.
   const regionPx = (2 * radius) / Math.sqrt(CELL_COUNT);
-  const wantMosaic = children !== null && regionPx >= MOSAIC_MIN_PX;
   // How wide a tile is on screen, for deciding whether its edge is worth
   // drawing. Only a threshold now -- the tiles' actual size and shape come
   // from the lattice itself rather than from a number computed here.
   const childPx = (radius * CELL_R) / Math.sqrt(SUBCELL_COUNT);
+  const wantMosaic = children !== null && childPx * 2 >= MOSAIC_MIN_PX;
   const childEdges = childPx * 2 >= GRID_MIN_PX;
 
   for (let c = 0; c < CELL_COUNT; c++) {
@@ -770,12 +775,14 @@ export function drawSubMap(
 ): void {
   const { cx, cy, size } = view;
   const shape = corners(size);
-  const wantMosaic = children !== null && size * 2 >= MOSAIC_MIN_PX;
+  // The same question the globe asks, in the same unit: is a TILE big enough
+  // to be worth drawing?
+  const childSize = size * CHILD_SCALE;
+  const wantMosaic = children !== null && childSize * 2 >= MOSAIC_MIN_PX;
   const wantTint = !wantMosaic && tint !== null && size * 2 >= TINT_MIN_PX;
   // Children lay out as their own hex grid inside this cell, turned thirty
   // degrees so their grain runs with the parent's edges rather than across
   // them. Flat coordinates, so this is exact -- no projection, no lookup.
-  const childSize = size * CHILD_SCALE;
   const childShape = corners(childSize, -30 + CHILD_TURN_DEG);
   // Tile edges, on the same terms as the globe's. Without them a run of tiles
   // sharing a biome merges into one flat area and the grid disappears exactly

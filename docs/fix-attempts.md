@@ -289,6 +289,43 @@ right and the grid cannot ask it.
 
 ---
 
+## ## The world view fell back to a blend, and the threshold was the reason
+
+**Problem.** "The tiles on the world view still do not render their constituent
+hexes. We made them take a shade, I think." The third time that sentence has
+been true, and the first time the cause was the line deciding *whether* to draw
+the tiles rather than *how*.
+
+**The globe and the flat maps were asking different questions.** A sub-map
+gates the mosaic on "is a TILE big enough to draw?" -- `size * CHILD_SCALE`.
+The globe gated on "is the REGION big enough?" -- and since the two divide
+parent by child differently, 9.5 against 8.7, one threshold of 34 px meant
+**3.9 px tiles on a sub-map and 7.4 px tiles on the globe.** The world view was
+being held to twice the standard every other layer met.
+
+That was survivable at 92 world cells. At 192 it was not: region pixels fall as
+the square root of the cell count, so the window needed to clear the gate grew
+from about 390 px to 600. Under that, the world view fell back to the flat
+blend -- correctly, by its own rule, and silently.
+
+| canvas | tile px | before | after |
+|---|---|---|---|
+| 400 | 5.3 | blend | tiles |
+| 500 | 6.7 | blend | tiles |
+| 600 | 8.0 | tiles | tiles |
+
+**Stated once, in tile pixels, both callers ask the identical question.** Below
+four pixels a tile is not a shape and the blend says the same thing more
+cheaply; above it, every layer draws its constituent hexes, including the
+world.
+
+The lesson is not the constant. It is that the same decision was written twice
+in two different units, so the two drifted without either being wrong on its
+own terms -- and the drift only became visible when an unrelated change moved
+one of the inputs.
+
+---
+
 ## ## The world map was the only layer laid out in a different space
 
 **Problem.** "World is the only one whose tiles are not a clean mosaic of their

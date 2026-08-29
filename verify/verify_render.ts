@@ -626,3 +626,51 @@ suite('every cell is served the same, there being only one kind now', () => {
   assert('no cell is left with a bare fringe', Math.min(...ratios) > 0.9);
   assert('and none has its tiles eaten by the clip', Math.max(...ratios) < 1.25);
 });
+
+suite('the world view draws its tiles at any usable size', () => {
+  // The globe and the flat maps used to gate the mosaic on different things.
+  // A sub-map asked "is a TILE big enough to draw?"; the globe asked "is the
+  // REGION big enough?" -- and since the two divide parent by child
+  // differently, 9.5 against 8.7, the same threshold meant 3.9 px tiles on a
+  // sub-map and 7.4 px on the globe. The globe was held to twice the standard.
+  //
+  // That was survivable at 92 world cells and stopped being so at 192: the
+  // window needed to clear the gate grew from about 390 px to 600, and under
+  // it the world view fell back silently to a flat blend. Reported as "the
+  // tiles on the world view still do not render their constituent hexes" --
+  // the third time that sentence has been true, and the first time the cause
+  // was the line deciding whether to draw them rather than how.
+  //
+  // Both callers now ask the identical question in the identical unit.
+  const world = new World({ seed: 20260826 });
+  const cam = newCamera();
+  const kids: ChildLookup = (c) => world.subMap([c]);
+
+  // A small window, of the sort that used to get a blend.
+  const small = stub();
+  drawGlobe(small, world.planet, cam, globeView(520, 520), -1, new Map(), null, kids);
+  const smallRaw = small as unknown as StubContext;
+  const flatSmall = stub();
+  drawGlobe(flatSmall, world.planet, cam, globeView(520, 520), -1, new Map(), null, null);
+  const flatSmallRaw = flatSmall as unknown as StubContext;
+
+  measure('shapes on a 520 px globe, flat', flatSmallRaw.fills);
+  measure('shapes on a 520 px globe, from tiles', smallRaw.fills);
+  assert('a small world view still draws its tiles',
+    smallRaw.fills > flatSmallRaw.fills * 10);
+
+  // And a genuinely tiny one still falls back, because below four pixels a
+  // tile is not a shape and the blend says the same thing more cheaply.
+  const tiny = stub();
+  let asked = 0;
+  drawGlobe(tiny, world.planet, cam, globeView(200, 200), -1, new Map(), null,
+    (c) => { asked++; return world.subMap([c]); });
+  measure('child maps asked for at 200 px', asked);
+  check('a tiny globe asks for nothing', asked, 0, 0);
+
+  // The threshold is in tile pixels, so it means the same thing to both
+  // callers. If it ever goes back to being about the parent, this is the line
+  // that notices.
+  measure('mosaic threshold, tile px', MOSAIC_MIN_PX);
+  assert('the threshold is a tile size, not a parent size', MOSAIC_MIN_PX < 12);
+});
