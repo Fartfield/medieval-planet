@@ -250,7 +250,16 @@ export function drawGlobe(
   for (let c = 0; c < CELL_COUNT; c++) {
     const [, cyy, cz] = rotate(cam, centres[c * 3], centres[c * 3 + 1], centres[c * 3 + 2]);
     if (cz < 0) continue;
-    if (planet.elevationM[c] < 0) continue;
+    // An ocean region is skipped ONLY when it is being painted flat. Once it
+    // is being drawn from its own tiles it has to be drawn, because the
+    // coastline lives in its children: a region whose average is below sea
+    // level still holds the beach on the far side of its border.
+    //
+    // Skipping them is what made land stop dead at a hexagon edge. Sixty-four
+    // of ninety-two regions drew nothing at all, so a coastline was resolved
+    // on the land side of every border and simply absent on the other, and the
+    // eye reads that as a continent cut out with a hexagonal cookie cutter.
+    if (planet.elevationM[c] < 0 && !wantMosaic) continue;
 
     // Light from the upper left, plus a lift with altitude so ranges read.
     const lambert = 0.55 + 0.45 * Math.max(0, cz * 0.75 + cyy * 0.35);

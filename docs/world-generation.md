@@ -227,6 +227,59 @@ One exponent across seven orders of magnitude is an approximation and worth
 saying so — different processes shape a mountain range and a ploughed field —
 but a measured approximation beats an unmeasured one.
 
+## Boundaries
+
+Nothing in the ladder may depend on which map a point happens to fall in. Three
+things enforce that, and each was learned by getting it wrong.
+
+**One noise field per layer.** The detail seed keys on the depth, not on the
+parent's address. Sampling in 3D world space is necessary for continuity and
+not sufficient -- two maps can read the same coordinates and still disagree if
+they read different functions. Shared, the seam at a border is exactly zero,
+because both maps evaluate the same function.
+
+**Two fields, one question each.** Elevation interpolates as a straight
+average, so a planar hillside stays planar. The land/sea classification
+interpolates separately, so the coastline crosses near the boundary between two
+cells rather than a long way inside whichever is shallower. Serving both with
+one normalised field does place the coast correctly and puts a 4.4× kink in the
+gradient at sea level, which comes out as a cliff along every shore.
+
+**The World fetches what a map cannot reach.** A rim cell is missing two or
+three neighbours because they belong to a sibling map under a different
+grandparent. The missing neighbour's *position* is computable from inside the
+map — the hex lattice runs on past the edge of the array — so only its value
+needs fetching, and the World finds it by descending from the globe. Descend,
+do not walk: the same answer `cellsWithin` gives for areas, applied to one
+cell.
+
+Without that last one, a third of every map — a radius-5 rim is 30 cells of 91
+— had children built on the containing cell's own value. That is
+nearest-neighbour, which is the staircase, surviving on every map edge at every
+layer: a 987 m step across one 306 m cell.
+
+Relief now falls at every step of the descent, and rim cells measure 0.898 of
+the interior's mean slope — indistinguishable, and slightly gentler because a
+rim cell has fewer neighbours to take a maximum over.
+
+## Coastlines keep their area
+
+Sea level is solved once, at the planet, against Earth's land fraction.
+Everything below inherits that coastline and adds detail to it, and the area it
+encloses must not drift: **coastlines are fractal in length, not in area.**
+
+It drifted from 29% to 12% to 9%, because the rule guarding the coastline ran
+one way only — its own comment said "or the reverse" and the code did not — and
+because it was expressed in metres. Metres are not symmetric about a coast:
+land stands 840 m up on average and the sea floor lies 3,688 m down, so a
+threshold in metres protects the ocean far more strictly than the land, and the
+noise eats the difference at every layer.
+
+Expressed in the classification instead, the land fraction holds: a land parent
+keeps 98.5% of its children as land at the shire layer and 99.8% at the hundred.
+The one real loss is the first descent, −2.6 points, which is where a 2,922 km
+cell has to decide where its own coast is and genuinely cannot know.
+
 ## The ground itself
 
 Rock was a gap with an ore table sitting over it. Deposits knew about tectonic

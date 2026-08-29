@@ -22,8 +22,8 @@ import { generatePlanet, type Planet } from './gen/planet.ts';
 import type { Boundary } from './gen/hydrology.ts';
 import {
   generateSubMap, basisAt, samplePlanet, sampleSubMap, soilAt, aridityAt,
-  STABILITY_CAP,
-  cellRadiusRad, type SubMap,
+  STABILITY_CAP, cellContaining,
+  cellRadiusRad, type SubMap, type Neighbouring,
 } from './gen/submap.ts';
 import { classify } from './model/biome.ts';
 import {
@@ -141,7 +141,7 @@ export class World {
       const cell = address[address.length - 1];
       if (cell < 0 || cell >= SUBCELL_COUNT) throw new RangeError(`no cell ${cell}`);
       basis = basisAt(above.dirs[cell * 3], above.dirs[cell * 3 + 1], above.dirs[cell * 3 + 2]);
-      sample = (x, y, z) => sampleSubMap(above, x, y, z);
+      sample = (x, y, z) => sampleSubMap(above, x, y, z, this.neighbouring(depth - 1));
       inflow = inflowFromSubMap(above, cell);
     }
 
@@ -156,6 +156,72 @@ export class World {
       if (oldest !== undefined) this.cache.delete(oldest);
     }
     return map;
+  }
+
+  /**
+   * A lookup for cells of a layer that a given map does not itself hold.
+   *
+   * A map's rim cells are missing two or three neighbours, and those
+   * neighbours are not nowhere -- they sit in a sibling map under a different
+   * grandparent. A map cannot reach sideways to find them; the World can, by
+   * descending from the globe to the cell containing the point. Same answer as
+   * `cellsWithin`, applied to one cell instead of to an area.
+   *
+   * Without it, a third of every map -- the rim of a radius-5 hexagon is 30
+   * cells of 91 -- had children built on a guess, and the guess showed as a
+   * cliff along every map edge at every layer.
+   *
+   * Bound once per generated map rather than per sample so the closure is not
+   * rebuilt ninety-one times.
+   */
+  private neighbouring(layerDepth: number): Neighbouring | null {
+    if (layerDepth < 1) return null;
+    return (x, y, z) => {
+      // A layer-N cell has an address of length N+1: the map holding it is at
+      // depth N, and the last component is the index within that map.
+      const address = this.addressAt(x, y, z, layerDepth + 1);
+      if (address === null) return null;
+      const holder = this.subMap(address.slice(0, -1));
+      const cell = address[address.length - 1];
+      return {
+        elevationM: holder.elevationM[cell],
+        precipMm: holder.precipMm[cell],
+        upliftM: holder.upliftM[cell],
+      };
+    };
+  }
+
+  /**
+   * The address of the layer-`length` cell containing a point, found by
+   * descending rather than by searching.
+   *
+   * Each step asks one map which of its cells holds the point, so the cost is
+   * the depth and not the width. A cell's territory is a Voronoi region and
+   * the hexagon we draw for it is only approximately that, so a point can miss
+   * every cell by a hair; the nearest centre is then the honest answer rather
+   * than a failure.
+   */
+  addressAt(x: number, y: number, z: number, length: number): Address | null {
+    if (length < 1) return null;
+    const address: number[] = [cellAt(x, y, z)];
+    while (address.length < length) {
+      const map = this.subMap(address);
+      let cell = cellContaining(map.basis, map.cellRadiusRad, x, y, z);
+      if (cell < 0) {
+        let best = 0;
+        let bestD = Infinity;
+        for (let c = 0; c < SUBCELL_COUNT; c++) {
+          const dx = map.dirs[c * 3] - x;
+          const dy = map.dirs[c * 3 + 1] - y;
+          const dz = map.dirs[c * 3 + 2] - z;
+          const d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 < bestD) { bestD = d2; best = c; }
+        }
+        cell = best;
+      }
+      address.push(cell);
+    }
+    return address;
   }
 
   /**

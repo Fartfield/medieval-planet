@@ -22,7 +22,7 @@
 // magnitude out.
 
 import { World } from '../sim/world.ts';
-import { SUBCELL_COUNT } from '../sim/geo/hexgrid.ts';
+import { SUBCELL_COUNT, RADIUS, ringOf } from '../sim/geo/hexgrid.ts';
 import { CELL_COUNT } from '../sim/geo/sphere.ts';
 import * as A from '../sim/anchors.ts';
 import {
@@ -440,4 +440,102 @@ suite('clearing a hillside is a decision with a delay', () => {
   measure('hillside FS twelve years later', twelveYears);
   check('felling does not change it that year', sameYear, before, before * 1e-6);
   assert('it is weaker a decade later', twelveYears < before * 0.8);
+});
+
+suite('a map edge is no different from its middle', () => {
+  // A map's rim cells are missing two or three neighbours, because those live
+  // in a sibling map under a different grandparent. For most of this project's
+  // life the sampler gave up on them and used the containing cell's own value,
+  // which is nearest-neighbour -- so the staircase this codebase has now
+  // fought three times survived on EVERY MAP EDGE at every layer, and a rim is
+  // 30 cells of 91.
+  //
+  // It showed as a 987 m step across one 306 m cell, inherited rather than
+  // added by noise, and as relief that would not fall from one layer to the
+  // next. The fix is the same one cellsWithin uses: the World descends from
+  // the globe to find the sibling that holds the missing neighbour, because a
+  // map cannot reach sideways and the world can.
+  //
+  // If it ever regresses, the rim gets steeper than the middle. That is the
+  // whole test.
+  const w = new World({ seed: SEED });
+  let rimSum = 0, rimN = 0, midSum = 0, midN = 0, worstRim = 0, worstMid = 0;
+
+  for (let region = 0; region < CELL_COUNT; region += 2) {
+    if (w.planet.elevationM[region] <= 0) continue;
+    for (let k = 0; k < SUBCELL_COUNT; k += 17) {
+      const map = w.subMap([region, k]);
+      for (let c = 0; c < SUBCELL_COUNT; c++) {
+        if (ringOf(c) === RADIUS) {
+          rimSum += map.slope[c]; rimN++;
+          worstRim = Math.max(worstRim, map.slope[c]);
+        } else {
+          midSum += map.slope[c]; midN++;
+          worstMid = Math.max(worstMid, map.slope[c]);
+        }
+      }
+    }
+  }
+
+  assert('sampled enough cells to mean anything', rimN > 500 && midN > 500);
+  const rim = rimSum / rimN;
+  const mid = midSum / midN;
+  measure('mean slope on rim cells', rim);
+  measure('mean slope on interior cells', mid);
+  measure('rim to interior slope ratio', rim / mid);
+  measure('steepest rim cell', worstRim);
+  measure('steepest interior cell', worstMid);
+
+  // Generous, because the two are not identical for an honest reason: a rim
+  // cell has fewer neighbours to take a maximum over, so it reads slightly
+  // GENTLER. What is being caught is the other direction, and it was large.
+  assert('the rim is not systematically steeper than the middle',
+    rim < mid * 2);
+  assert('and the worst cliff is not on an edge',
+    worstRim < worstMid * 3);
+});
+
+suite('a coastline survives the descent', () => {
+  // Sea level is solved once, at the planet, so that the land fraction matches
+  // Earth's. Every layer below inherits that coastline and adds detail to it,
+  // and the AREA it encloses must not drift -- coastlines are fractal in
+  // length, not in area.
+  //
+  // It drifted badly. Land could drown freely while sea could not rise,
+  // because the rule that guarded the coastline ran one way only -- its own
+  // comment said "or the reverse" and the code did not -- and because the
+  // guard read metres, which are not symmetric about a coast: land stands
+  // 840 m up on average and the sea floor lies 3,688 m down, so a threshold in
+  // metres protects the ocean far more strictly than the land. A planet solved
+  // for 29.2% came out at 12.1% one layer down and 8.8% the next.
+  const w = new World({ seed: SEED });
+
+  let land0 = 0;
+  for (let c = 0; c < CELL_COUNT; c++) if (w.planet.elevationM[c] >= 0) land0++;
+  const f0 = land0 / CELL_COUNT;
+
+  let land1 = 0, all1 = 0;
+  for (let c = 0; c < CELL_COUNT; c++) {
+    const map = w.subMap([c]);
+    for (let k = 0; k < SUBCELL_COUNT; k++) { all1++; if (map.elevationM[k] >= 0) land1++; }
+  }
+  const f1 = land1 / all1;
+
+  let land2 = 0, all2 = 0;
+  for (let c = 0; c < CELL_COUNT; c++) {
+    for (let k = 0; k < SUBCELL_COUNT; k += 13) {
+      const map = w.subMap([c, k]);
+      for (let j = 0; j < SUBCELL_COUNT; j++) { all2++; if (map.elevationM[j] >= 0) land2++; }
+    }
+  }
+  const f2 = land2 / all2;
+
+  measure('land fraction, planet', f0);
+  measure('land fraction, march layer', f1);
+  measure('land fraction, shire layer', f2);
+
+  check('the planet is solved to Earth land fraction', f0, A.LAND_FRACTION, 0.05);
+  assert('the march layer keeps most of it', f1 > f0 * 0.65);
+  assert('the shire layer keeps most of that', f2 > f1 * 0.8);
+  assert('and no layer invents land', f1 < f0 * 1.35 && f2 < f1 * 1.35);
 });

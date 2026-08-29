@@ -218,7 +218,21 @@ export const EARTH_RADIUS_M = 6371000.0;
  *  than tuning the elevation field until the coastlines look about right. */
 export const LAND_FRACTION = 0.292;
 
-/** Mean elevation of land above sea level, m, and mean ocean depth, m. */
+/**
+ * Mean elevation of land above sea level, m, and mean ocean depth, m.
+ *
+ * The RATIO between them is what the generator needs, and it is the reason a
+ * coastline cannot be interpolated in metres. Land stands a few hundred metres
+ * up and the sea floor lies four kilometres down, so a straight interpolation
+ * between a continent and an abyss crosses sea level four fifths of the way
+ * into the continent: a region at +643 m beside ocean at -3,800 crossed 14% of
+ * the way out from its own centre rather than at the boundary halfway, and
+ * kept about 8% of its area as land.
+ *
+ * Compounded over the ladder that turned a planet solved for LAND_FRACTION
+ * above into a march layer holding 12% land and a hundred layer holding 6%.
+ * See gen/submap.landSignal.
+ */
 export const MEAN_LAND_ELEVATION_M = 840.0;
 export const MEAN_OCEAN_DEPTH_M = 3688.0;
 

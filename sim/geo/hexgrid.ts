@@ -113,6 +113,20 @@ export function ringOf(cell: number): number {
  * edge. Getting those two confused is the classic hex bug and shows up as a
  * grid with hairline gaps that only appear at some zoom levels.
  */
+/**
+ * The position of an axial coordinate, whether or not it is inside the map.
+ *
+ * `toPixel` needs a cell index and so cannot answer for a neighbour that falls
+ * outside the hexagon -- which is exactly the neighbour a rim cell is missing.
+ * The lattice extends past the map even though the array does not.
+ */
+export function pixelOfAxial(q: number, r: number, size: number): { x: number; y: number } {
+  return {
+    x: size * Math.sqrt(3) * (q + r / 2),
+    y: size * 1.5 * r,
+  };
+}
+
 export function toPixel(cell: number, size: number): { x: number; y: number } {
   const cq = coords[cell * 2];
   const cr = coords[cell * 2 + 1];

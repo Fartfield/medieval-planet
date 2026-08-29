@@ -185,7 +185,111 @@ work now.
 
 ---
 
-## Ninety-one tiles in a hexagon, three ways
+## Land stopped at the edge of a hexagon, for four separate reasons
+
+**Problem.** Reported from the screen once the mosaic was drawing real tiles:
+land appears at the edge of a hex and does not continue into the next one. Four
+causes, found in order, and only the last was the big one.
+
+### 1. Every sub-map sampled a different noise field
+
+The detail noise was seeded from the parent's ADDRESS, so two adjacent maps
+read different fields. The file header claims terrain is continuous because
+noise is sampled in 3D world space, and sampling in world space is necessary
+and **not sufficient** -- two maps can read the same coordinates and still
+disagree if they are reading different functions.
+
+Measured at the exact midpoint of every region border: the two maps' noise
+differed by 16% of the detail amplitude at the median and 70% at the worst.
+Keyed on the depth instead, so each layer still has its own field and every map
+on a layer shares it, the seam is **exactly zero** -- both maps evaluate the
+same function.
+
+Rock provinces had the same bug from the same seed and got the same fix.
+
+### 2. Sixty-four of ninety-two regions drew nothing at all
+
+`drawGlobe` skipped any region whose average was below sea level. A coastline
+lives in the children, so a region that is mostly sea still holds the beach on
+the far side of its border -- and skipping it meant the coast was resolved on
+the land side of every boundary and simply absent on the other. The eye reads
+that as a continent cut out with a hexagonal cookie cutter.
+
+### 3. The world lost two thirds of its land on the way down
+
+**A planet solved for Earth's 29.2% land came out at 12.1% one layer down and
+8.8% the next.** Coastlines are fractal in length, not in area, so this is
+straightforwardly wrong.
+
+* ~~Make the coastline guard symmetric.~~ Its own comment already said "or the
+  reverse" while the code ran one way only -- sea could not become land and
+  land could drown freely. Fixing that moved the number by 0.1 points.
+
+* ~~Widen the guard band to the continental shelf, and then to the local
+  relief.~~ Both helped a little and neither addressed it. The band was in
+  METRES, and metres are not symmetric about a coast: land stands 840 m up on
+  average and the sea floor lies 3,688 m down, so any threshold in metres
+  protects the ocean far more strictly than the land, and the noise eats the
+  difference at every layer.
+
+* ~~Interpolate elevation as a normalised land/sea signal.~~ This places the
+  coast correctly -- 12.1% became 27.9% -- and puts a **4.4x kink in the
+  gradient at exactly sea level**, which the interpolation then reproduces as a
+  cliff along every shore. Six suites went red.
+
+* **Interpolate the classification as its own field.** Elevation and coastline
+  want opposite things from an interpolator: elevation wants a straight average
+  so a planar hillside stays planar, the coastline wants land and sea weighted
+  equally so the crossing sits near the boundary between two cells. Two fields,
+  one question each, and no kink in either.
+
+### 4. The rim of every map was still nearest-neighbour
+
+The one that mattered. A map's rim cell is missing two or three neighbours,
+because they live in a sibling map under a different grandparent -- so no
+triangle contains the sample point and the sampler fell back to the cell's own
+value. **Nearest-neighbour, on every map edge, at every layer**, and a rim is
+30 cells of 91.
+
+Measured on a child of a rim cell: a **987 m step across one 306 m cell**, a
+73-degree cliff, entirely inherited rather than added by noise, and relief that
+did not fall from its parent's at all.
+
+* ~~Extrapolate from the least-bad triangle.~~ Worse. A triangle that does not
+  contain the point can be lopsided, and unbounded extrapolation amplifies
+  whatever gradient it has: adjacent cells came back 987 m apart from a field
+  varying by tens of metres.
+
+* ~~Fit a plane through the cell and whatever neighbours it has.~~ Bounded, and
+  still wrong where the sibling would have said something else. Relief started
+  falling again but 85-degree cliffs remained.
+
+* **Let the World fetch the sibling.** A map cannot reach sideways; the World
+  can, by descending from the globe to the cell containing the point. The
+  missing neighbour's POSITION is computable from inside the map -- the hex
+  lattice runs on past the edge of the array -- and only its value needs
+  fetching. This is `cellsWithin`'s answer applied to one cell instead of an
+  area: **descend, do not walk.**
+
+  Measured, relief down the seven layers: 5829, 2086, 660, 190, 32.4, 6.6,
+  1.9 m, falling at every step, with slope rising 0.7 to 60 degrees as the
+  scale shrinks -- which is what self-affine means. Rim cells now average
+  0.898 of the interior's slope: indistinguishable, and slightly gentler for
+  an honest reason, because a rim cell has fewer neighbours to take a maximum
+  over. The whole descent costs 33 ms.
+
+**And one test was measuring the wrong layer.** "Most cells do not carry a
+river" failed at 64 of 91 -- asked of the march map, where a cell is 27.8 km
+across and drains 670 km². Nearly every such cell carries the 844 m3/s the
+threshold asks for and it is right that it does: the water is real and it is
+spread over a hundred channels, none of them resolved. Moved to the ground
+layer, where a channel is narrower than a tile and the question means
+something. Same finding as the soil model's, one field over -- the rule is
+right and the grid cannot ask it.
+
+---
+
+## ## Ninety-one tiles in a hexagon, three ways
 
 **Problem.** Each hex should show the tiles that make it up, one layer down, so
 that detail resolves at every step without the world map reaching to the

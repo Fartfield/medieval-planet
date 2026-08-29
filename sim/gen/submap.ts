@@ -23,7 +23,8 @@
 
 import * as A from '../anchors.ts';
 import {
-  SUBCELL_COUNT, RADIUS, subNeighbours, toPixel, fromPixel, ringOf,
+  SUBCELL_COUNT, RADIUS, subNeighbours, coords, DIRECTIONS,
+  toPixel, pixelOfAxial, fromPixel, ringOf,
 } from '../geo/hexgrid.ts';
 import { CELL_COUNT, centres, neighbours, neighbourCount, cellAt } from '../geo/sphere.ts';
 import { addressSeed, SALT, type Address } from '../geo/address.ts';
@@ -133,6 +134,23 @@ export interface ParentSample {
   elevationM: number;
   precipMm: number;
   upliftM: number;
+  /**
+   * Which side of sea level the layer above says this is, from -1 to +1.
+   *
+   * The classification, interpolated on its own rather than read off the
+   * elevation. Kept apart because the two want opposite things from an
+   * interpolator. Elevation wants a straight average, so that a planar
+   * hillside stays planar; the coastline wants land and sea weighted equally,
+   * so that the crossing sits near the boundary between two cells instead of a
+   * long way inside whichever one is shallower.
+   *
+   * Trying to serve both with one field -- normalising elevation by the mean
+   * land height and mean ocean depth before interpolating -- does place the
+   * coast correctly and puts a 4.4x kink in the gradient at exactly sea level,
+   * which the interpolation then reproduces as a cliff along every shore. Two
+   * fields, one question each.
+   */
+  landness: number;
 }
 
 /**
@@ -141,6 +159,20 @@ export interface ParentSample {
  * a Float32Array or a JSON round trip, so it is capped where it is stored.
  */
 export const STABILITY_CAP = 99;
+
+/**
+ * FREE PARAMETER: how far a coastline may wander from where the layer above
+ * put it, as a fraction of the way from the cell boundary toward a cell centre.
+ *
+ * Zero would pin the coast exactly to the boundary the coarse map implies and
+ * give it no detail at all; one would let the noise redraw the map. At 0.3 the
+ * coast keeps the shape of the continent it was given and gains bays and
+ * headlands about a third of a cell deep.
+ *
+ * No measurement settles this. It is a statement about how much authority each
+ * layer has over the one below, and the honest range is wide.
+ */
+const COAST_BAND = 0.3;
 
 /** Circumradius of a layer-0 cell in radians, and the ratio per layer down. */
 const L0_RADIUS_RAD = Math.sqrt(
@@ -199,7 +231,7 @@ export function cellContaining(b: Basis, radiusRad: number, x: number, y: number
  */
 export function samplePlanet(planet: Planet, x: number, y: number, z: number): ParentSample {
   const c = cellAt(x, y, z);
-  let we = 0, wp = 0, wu = 0, wsum = 0;
+  let we = 0, wp = 0, wu = 0, wl = 0, wsum = 0;
 
   const add = (cell: number): void => {
     const dx = centres[cell * 3] - x;
@@ -210,6 +242,7 @@ export function samplePlanet(planet: Planet, x: number, y: number, z: number): P
     // zero; at this scale it simply means that cell dominates, which is right.
     const w = 1 / (d2 + 1e-9);
     we += planet.elevationM[cell] * w;
+    wl += (planet.elevationM[cell] >= 0 ? 1 : -1) * w;
     wp += planet.precipMm[cell] * w;
     wu += upliftProxy(planet, cell) * w;
     wsum += w;
@@ -220,7 +253,12 @@ export function samplePlanet(planet: Planet, x: number, y: number, z: number): P
     const n = neighbours[c * 6 + i];
     if (n >= 0) add(n);
   }
-  return { elevationM: we / wsum, precipMm: wp / wsum, upliftM: wu / wsum };
+  return {
+    elevationM: we / wsum,
+    precipMm: wp / wsum,
+    upliftM: wu / wsum,
+    landness: wl / wsum,
+  };
 }
 
 /**
@@ -271,7 +309,34 @@ function upliftProxy(planet: Planet, cell: number): number {
  * neighbour sampling turning a coastline into a 39 km staircase, and it was
  * the sampler both times". Three times now.
  */
-export function sampleSubMap(map: SubMap, x: number, y: number, z: number): ParentSample {
+/**
+ * What one cell of a map holds, for a cell that may belong to another map.
+ *
+ * The four fields the layer below inherits, and nothing else.
+ */
+export interface CellValue {
+  elevationM: number;
+  precipMm: number;
+  upliftM: number;
+}
+
+/**
+ * Look up a cell of the SAME layer that this map does not hold.
+ *
+ * A rim cell is missing two or three neighbours, and those neighbours are not
+ * nowhere -- they are in a sibling map, under a different grandparent. Only
+ * something holding the whole world can find them, so the world passes this
+ * in. Returning null means give up and use what is to hand.
+ */
+export type Neighbouring = (x: number, y: number, z: number) => CellValue | null;
+
+export function sampleSubMap(
+  map: SubMap,
+  x: number,
+  y: number,
+  z: number,
+  outside: Neighbouring | null = null,
+): ParentSample {
   const b = map.basis;
   const lx = x * b.ex + y * b.ey + z * b.ez;
   const ly = x * b.nx + y * b.ny + z * b.nz;
@@ -282,13 +347,36 @@ export function sampleSubMap(map: SubMap, x: number, y: number, z: number): Pare
     // slightly overhangs its parent. Real cross-boundary sampling is the
     // unsolved geometry problem in docs/known-gaps.md.
     const mid = fromPixel(0, 0, map.cellRadiusRad);
-    return { elevationM: map.elevationM[mid], precipMm: map.precipMm[mid], upliftM: map.upliftM[mid] };
+    return {
+      elevationM: map.elevationM[mid],
+      precipMm: map.precipMm[mid],
+      upliftM: map.upliftM[mid],
+      landness: map.elevationM[mid] >= 0 ? 1 : -1,
+    };
   }
 
   const p0 = toPixel(c, map.cellRadiusRad);
+
   // Hex centres are a triangular lattice, so the containing triangle is the
-  // cell and two neighbours adjacent to each other. Six to try and exactly one
-  // contains the point, except on a boundary where two agree and either does.
+  // cell and two neighbours adjacent to each other. Six to try, and normally
+  // exactly one contains the point.
+  //
+  // ON THE PARENT'S RIM there may be none: a rim cell is missing two or three
+  // of its neighbours, so the triangle covering the point can be one we do not
+  // hold. The old answer was to fall back to the cell's own value, which is
+  // nearest-neighbour -- and nearest-neighbour is the staircase this whole
+  // function exists to avoid. It survived on every map edge, and that is a
+  // third of the cells of a radius-5 hexagon. Measured: a child map covering a
+  // rim cell had a 1,000 m step across one 305 m cell, a 73-degree cliff, and
+  // its relief did not fall from its parent's at all.
+  //
+  // So take the best triangle available and let the weights go negative, which
+  // is linear EXTRAPOLATION rather than interpolation. It still reproduces a
+  // linear field exactly -- the only thing that changes is that the point sits
+  // outside the triangle rather than inside it -- and the gradient carries on
+  // across the rim instead of flattening against it.
+  const side = (v: number): number => (v >= 0 ? 1 : -1);
+
   for (let i = 0; i < 6; i++) {
     const na = subNeighbours[c * 6 + i];
     const nb = subNeighbours[c * 6 + ((i + 1) % 6)];
@@ -309,13 +397,180 @@ export function sampleSubMap(map: SubMap, x: number, y: number, z: number): Pare
       elevationM: w0 * map.elevationM[c] + w1 * map.elevationM[na] + w2 * map.elevationM[nb],
       precipMm: w0 * map.precipMm[c] + w1 * map.precipMm[na] + w2 * map.precipMm[nb],
       upliftM: w0 * map.upliftM[c] + w1 * map.upliftM[na] + w2 * map.upliftM[nb],
+      landness: w0 * side(map.elevationM[c])
+        + w1 * side(map.elevationM[na])
+        + w2 * side(map.elevationM[nb]),
     };
   }
 
-  // No complete triangle: the parent's own rim, where the neighbours live in a
-  // map we are not holding. The cell's own value, which is the old behaviour
-  // confined to the one ring where nothing better is available.
-  return { elevationM: map.elevationM[c], precipMm: map.precipMm[c], upliftM: map.upliftM[c] };
+  // NO TRIANGLE CONTAINS THE POINT, which happens on the parent's rim: a rim
+  // cell is missing two or three of its neighbours, so the triangle covering
+  // the point can be one this map does not hold. A third of the cells of a
+  // radius-5 hexagon are rim cells, so this is not a corner case.
+  //
+  // If the caller can reach the sibling map that DOES hold them, ask it. The
+  // neighbour's position is known even when its index is not: the lattice runs
+  // on past the edge of the array. This is the same answer as cellsWithin's --
+  // descend from the globe rather than walk sideways -- applied to a single
+  // cell instead of to an area.
+  if (outside !== null) {
+    const crossed = crossTriangle(map, c, p0, lx, ly, outside);
+    if (crossed !== null) return crossed;
+  }
+  //
+  // Nothing to ask, so fall back to a plane through the cell, least-squares
+  // through whatever neighbours it does have. Bounded by construction -- it
+  // can only carry the gradient those neighbours actually show -- and still
+  // exact for a linear field.
+  //
+  // The two answers this replaced are both worth remembering. The cell's own
+  // value is nearest-neighbour, which is the staircase this function exists to
+  // remove, and it survived on every map edge: measured on a child of a rim
+  // cell, a 987 m step across one 306 m cell and a 73-degree cliff, entirely
+  // inherited rather than added by noise. Extrapolating from the least-bad
+  // triangle was worse, because a triangle that does not contain the point can
+  // be lopsided and unbounded extrapolation amplifies its gradient.
+  return planeAt(map, c, p0, lx, ly);
+}
+
+/**
+ * Barycentric interpolation across a map boundary.
+ *
+ * Same triangles as above, but a neighbour whose index is -1 is looked up by
+ * POSITION instead. The hex lattice continues past the edge of the array, so
+ * the missing neighbour's centre is computable from its axial coordinate; what
+ * is not computable from inside this map is the value there, and that is what
+ * the caller's lookup answers.
+ *
+ * Returns null if the sibling cannot be reached, so the caller can fall back.
+ */
+function crossTriangle(
+  map: SubMap,
+  c: number,
+  p0: { x: number; y: number },
+  lx: number,
+  ly: number,
+  outside: Neighbouring,
+): ParentSample | null {
+  const cq = coords[c * 2];
+  const cr = coords[c * 2 + 1];
+
+  for (let i = 0; i < 6; i++) {
+    const ia = i;
+    const ib = (i + 1) % 6;
+    const va = valueOfNeighbour(map, c, cq, cr, ia, outside);
+    const vb = valueOfNeighbour(map, c, cq, cr, ib, outside);
+    if (va === null || vb === null) continue;
+
+    const det = (va.y - vb.y) * (p0.x - vb.x) + (vb.x - va.x) * (p0.y - vb.y);
+    if (det === 0) continue;
+    const w0 = ((va.y - vb.y) * (lx - vb.x) + (vb.x - va.x) * (ly - vb.y)) / det;
+    const w1 = ((vb.y - p0.y) * (lx - vb.x) + (p0.x - vb.x) * (ly - vb.y)) / det;
+    const w2 = 1 - w0 - w1;
+    if (w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9) continue;
+
+    const side = (v: number): number => (v >= 0 ? 1 : -1);
+    return {
+      elevationM: w0 * map.elevationM[c] + w1 * va.elevationM + w2 * vb.elevationM,
+      precipMm: w0 * map.precipMm[c] + w1 * va.precipMm + w2 * vb.precipMm,
+      upliftM: w0 * map.upliftM[c] + w1 * va.upliftM + w2 * vb.upliftM,
+      landness: w0 * side(map.elevationM[c])
+        + w1 * side(va.elevationM)
+        + w2 * side(vb.elevationM),
+    };
+  }
+  return null;
+}
+
+/** One neighbour of a cell, from this map if it holds it and from the world
+ *  next door if it does not. */
+function valueOfNeighbour(
+  map: SubMap,
+  c: number,
+  cq: number,
+  cr: number,
+  dir: number,
+  outside: Neighbouring,
+): (CellValue & { x: number; y: number }) | null {
+  const n = subNeighbours[c * 6 + dir];
+  const q = cq + DIRECTIONS[dir][0];
+  const r = cr + DIRECTIONS[dir][1];
+  const p = pixelOfAxial(q, r, map.cellRadiusRad);
+
+  if (n >= 0) {
+    return {
+      x: p.x, y: p.y,
+      elevationM: map.elevationM[n],
+      precipMm: map.precipMm[n],
+      upliftM: map.upliftM[n],
+    };
+  }
+
+  // Outside this map. Its position on the sphere is still exact.
+  const dir3 = new Float64Array(3);
+  toDirection(map.basis, p.x, p.y, dir3, 0);
+  const v = outside(dir3[0], dir3[1], dir3[2]);
+  return v === null ? null : { x: p.x, y: p.y, ...v };
+}
+
+/**
+ * The value at a point, from a plane fitted through one cell and its
+ * neighbours.
+ *
+ * Exact through the cell itself and least-squares through the neighbours, so a
+ * linear field passes through untouched and anything else is carried by the
+ * local gradient rather than by a single sample. Two non-collinear neighbours
+ * are enough, and a rim cell of a hexagon of hexagons always keeps three.
+ */
+function planeAt(
+  map: SubMap,
+  c: number,
+  p0: { x: number; y: number },
+  lx: number,
+  ly: number,
+): ParentSample {
+  let sxx = 0, sxy = 0, syy = 0;
+  let sxe = 0, sye = 0, sxp = 0, syp = 0, sxu = 0, syu = 0, sxl = 0, syl = 0;
+  const side = (v: number): number => (v >= 0 ? 1 : -1);
+  const e0 = map.elevationM[c];
+  const pr0 = map.precipMm[c];
+  const u0 = map.upliftM[c];
+  const l0 = side(e0);
+
+  for (let i = 0; i < 6; i++) {
+    const n = subNeighbours[c * 6 + i];
+    if (n < 0) continue;
+    const pn = toPixel(n, map.cellRadiusRad);
+    const dx = pn.x - p0.x;
+    const dy = pn.y - p0.y;
+    sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+    sxe += dx * (map.elevationM[n] - e0); sye += dy * (map.elevationM[n] - e0);
+    sxp += dx * (map.precipMm[n] - pr0); syp += dy * (map.precipMm[n] - pr0);
+    sxu += dx * (map.upliftM[n] - u0); syu += dy * (map.upliftM[n] - u0);
+    sxl += dx * (side(map.elevationM[n]) - l0); syl += dy * (side(map.elevationM[n]) - l0);
+  }
+
+  const det = sxx * syy - sxy * sxy;
+  const qx = lx - p0.x;
+  const qy = ly - p0.y;
+  if (det === 0) {
+    // Collinear neighbours, which a hex lattice does not produce. Total rather
+    // than reachable.
+    return { elevationM: e0, precipMm: pr0, upliftM: u0, landness: l0 };
+  }
+
+  const at = (sx: number, sy: number, base: number): number => {
+    const a = (syy * sx - sxy * sy) / det;
+    const b = (sxx * sy - sxy * sx) / det;
+    return base + a * qx + b * qy;
+  };
+
+  return {
+    elevationM: at(sxe, sye, e0),
+    precipMm: at(sxp, syp, pr0),
+    upliftM: at(sxu, syu, u0),
+    landness: clamp(at(sxl, syl, l0), -1, 1),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -339,7 +594,24 @@ export function generateSubMap(
 ): SubMap {
   const cellRad = cellRadiusRad(depth);
   const spacingM = Math.sqrt(3) * cellRad * radiusM;
-  const seed = addressSeed(worldSeed, parentAddress, SALT.submap);
+  // ONE NOISE FIELD PER LAYER, shared by every map on it.
+  //
+  // This was seeded from the parent's address, which meant every sub-map
+  // sampled a different field. Sampling in world space -- which the header
+  // above is right that we do -- is necessary for continuity and not
+  // sufficient: two maps can read the same coordinates and still disagree, if
+  // they are reading different fields. Measured at the region layer, two maps
+  // asked about the SAME POINT ON THE SPHERE differed by 184 m at the median
+  // and 806 m at the ninetieth percentile, and 1.5% of pairs straddling a
+  // border disagreed about whether that point was land or sea. On screen that
+  // is a coastline that stops at the edge of a hexagon.
+  //
+  // Keyed on the depth rather than on nothing, so each layer still adds its
+  // own detail rather than every layer repeating the same shapes at different
+  // scales. Two maps on the same layer now read one field, and a mountain
+  // grows from both sides of a boundary without either map consulting the
+  // other -- which is what the header claimed all along.
+  const fieldSeed = addressSeed(worldSeed, [depth], SALT.submap);
 
   const dirs = new Float64Array(SUBCELL_COUNT * 3);
   // The parent's fields at each of our cells. Kept rather than re-sampled in
@@ -392,8 +664,8 @@ export function generateSubMap(
 
     // Rolling detail everywhere, plus ridges gated to ground that is already
     // being pushed up -- the same trick the planet uses, one scale down.
-    const rolling = fbm3(x * detailFreq, y * detailFreq, z * detailFreq, seed ^ 0x1d, 5);
-    const crest = ridged3(x * detailFreq * 2.3, y * detailFreq * 2.3, z * detailFreq * 2.3, seed ^ 0x2e, 3);
+    const rolling = fbm3(x * detailFreq, y * detailFreq, z * detailFreq, fieldSeed ^ 0x1d, 5);
+    const crest = ridged3(x * detailFreq * 2.3, y * detailFreq * 2.3, z * detailFreq * 2.3, fieldSeed ^ 0x2e, 3);
     const gate = smoothstep(300, 2800, parent.upliftM);
 
     // Between the measured ends: a shield plain where nothing is being pushed
@@ -402,9 +674,33 @@ export function generateSubMap(
     const detailAmp = localRelief * reliefScale;
 
     let e = parent.elevationM + rolling * detailAmp + crest * gate * detailAmp * 0.8;
-    // Do not let detail push a sea tile onto land or the reverse; the coastline
-    // belongs to the layer that solved sea level for it.
-    if (parent.elevationM < -50) e = Math.min(e, -1);
+    // The coastline belongs to the layer that solved sea level for it, and
+    // detail may only move it inside the band where the two genuinely compete
+    // -- the continental shelf, which is ground that has been dry land within
+    // the last glacial cycle.
+    //
+    // THIS RULE USED TO RUN ONE WAY ONLY. Its own comment said "or the
+    // reverse" and the code did not: sea could not become land, and land could
+    // drown freely. The leak compounds at every layer, because each one adds
+    // its own noise to whatever survived the last. Measured: the planet is
+    // calibrated to Earth's 29% land and came out at 30.4%, and by the march
+    // layer that was 12.1% and by the shire layer 8.8%. Two thirds of the
+    // world's land drowned on the way down, and what it left behind was a
+    // fringe of speckled islands -- land that appears at the edge of a hex and
+    // does not continue, because there was nothing left of it to continue.
+    // Well inside a cell the layer above has already decided, and detail may
+    // not overrule it. Near a boundary the two cells disagree, landness passes
+    // through zero, and there the noise decides -- which is where a coastline
+    // gets its shape.
+    //
+    // Read from landness rather than from metres because metres are not
+    // symmetric about a coast: land stands 840 m up on average and the sea
+    // floor lies 3,688 m down, so a threshold in metres protects the ocean far
+    // more strictly than the land, and the noise eats the difference at every
+    // layer. Measured before this: a planet solved for 29% land came out at
+    // 12% one layer down and 9% the next.
+    if (parent.landness > COAST_BAND) e = Math.max(e, 1);
+    else if (parent.landness < -COAST_BAND) e = Math.min(e, -1);
     elevationM[c] = e;
   }
 
@@ -505,7 +801,8 @@ export function generateSubMap(
       elevationM: elevationM[c],
       oceanic: elevationM[c] < 0 && upliftM[c] < 200,
       sinLat: dirs[c * 3 + 1],
-      seed,
+      // Rock provinces are 200 km across and must not stop at a map edge either.
+      seed: fieldSeed,
     });
     rock[c] = r;
     erosionMPerYr[c] = erosionRateM(r, flow.catchmentM2[c], slope[c]);
