@@ -1286,3 +1286,162 @@ Not a code problem, but it cost time twice and is worth recording. Writing
 these files through shell heredocs failed on punctuation-dense TypeScript —
 bash reported an unexpected EOF and wrote nothing. Use the file-writing tools
 for source, and reserve heredocs for short config and markdown.
+
+## The world was laid out by one projection and read back by another
+
+Symptom: descending from a region, land drained away layer by layer -- 86 of
+91 cells above water at the region, then 73, then 7, then none. The suites'
+reference settlement was placed on open sea 30 m down, `yieldAt` returned
+0 kg/ha, ten `verify_supply` checks failed, and `verify_expansion` stopped
+finishing at all (>600 s against a previous 16 s) because every one of its
+2,088 turns searched for a site that could not exist.
+
+The first three hypotheses were all about terrain, and all wrong:
+
+* ~~The new tectonic mesh produces no farmland~~ -- the world's best sampled
+  tile yielded 474 kg/ha, inside the medieval band.
+* ~~The descent is drowning because coastal regions are mostly ocean~~ -- the
+  regions it walked were 91/91 land at every layer when walked by elevation.
+* ~~A systematic downward bias in the detail noise~~ -- the error was not
+  systematic. A child map covering a 14 m cell came out 445 m too **high**;
+  one covering a 956 m cell came out 754 m too low. Noise with a mean of zero
+  cannot do that, and neither can a bias.
+
+What it was: `sampleSubMapRaw` inverted the projection with a pair of dot
+products against the tangent-plane axes -- the linearisation the basis stopped
+using when it started carrying `lon`/`sinLat`. `toDirection`, which *lays the
+map out*, had been converted to the exact projection. `cellContaining` had been
+written correct. This third inverse, inside the sampler, was left behind. So
+every map was drawn in one coordinate system and read in another.
+
+It hid because both projections are the identity at the map's centre and
+diverge with distance from it. The measurement that found it: **sample the map
+at its own cell centres.** Barycentric interpolation at a node returns that
+node's value exactly, by construction, so any error there is the point having
+been looked up somewhere else. Cell 45 -- the centre -- was exact. The mean
+error over the other 90 was 247 m and the worst was 822 m.
+
+After the fix that measurement reads 0.000 m worst, land holds at 91/91 down
+the ladder, the reference site yields 612 kg/ha and is land-limited at 490
+people, and the expansion suite finishes in 27 s.
+
+The general lesson is the one the geometry keeps teaching here: a forward
+transform and its inverse are one fact written twice, and converting one of
+them is a half-migration that type-checks. There are now two inverses of this
+projection in the file and they share a `shortWay` helper, which is not the
+same as sharing the transform -- worth collapsing if a third ever appears.
+
+## Relief stopped falling three layers early, and it was the fallback, not the terrain
+
+Symptom: down a mountain descent, relief went 1,508 m, 597, then **325, 326,
+324** across maps 1.9 km, 200 m and 21 m wide. Each layer covers one cell of
+the one above, so relief has to fall by roughly the factor the cell size does.
+Instead it stuck. Three hundred metres across a 200 m map is a 78-degree cliff,
+and `verify_geology` failed five checks on it.
+
+The tempting reading is that the detail noise is too strong at depth. It is
+not, and the measurement that says so is worth keeping: **compare what a child
+INHERITS against what it ends up with.** Sampling the parent at each of the
+child's 91 cell centres gave an inherited range of 604 m, then 325, 326, 324 --
+the plateau is already there before a single metre of detail is added. The
+detail was contributing 1 to 6 m. The ladder was not manufacturing ground; it
+was importing it.
+
+What it was: a child centred on a RIM cell overhangs its parent by a fraction
+of a cell, so a few of its points fall outside the parent's hexagon.
+`fromPixel` returns -1 for those, and `sampleSubMapRaw` answered them with the
+parent map's **centre** cell -- the one cell furthest from the point being
+asked about. Measured: 3 of 91 samples took that path, and on this mountain the
+centre sat 325 m away in elevation. Those three cells set the child's entire
+range.
+
+It recurred at every layer because **the distance to the centre does not shrink
+when the cells do.** A 21 m map and a 1.9 km map both reach the same wrong cell
+and inherit the same 325 m. That is the signature to remember: a quantity that
+is identical across three orders of magnitude of scale is not being generated
+by anything scale-dependent, so it is not the terrain.
+
+The descent confirmed it from the other side. At layer 5 the steepest cell was
+ring 4 rather than ring 5, no sample fell off the map, and relief immediately
+dropped from 324 to 81.
+
+Fix: `nearestCell` clamps an outside point to the edge it overhangs instead of
+refusing it, and the existing rim machinery -- sibling-map lookup, else a
+least-squares plane -- handles it as it already handles every other rim point.
+Relief now falls at every layer: 1,508, 597, 120, 28.5, 4.3, 1.1, 0.2, ratios
+of 2.5 to 6.6 against the 5.35 the Hurst exponent implies. Steepest slope at
+the finest layer went from 78 degrees to 19.
+
+Note for anyone re-reading the old comment: it called the centre fallback
+"wrong but bounded", and bounded it was -- by the parent's whole range, which
+at these scales is unbounded in every sense that mattered. A bound that does
+not tighten as the thing it bounds gets smaller is not a bound on relief.
+
+## A town alone stripped its own fields because its granary was full
+
+Symptom: `verify_trade`'s specialisation check failed -- a settlement alone on
+barren ground (169 kg/ha, iron ore under it, no trade partner anywhere) walked
+its farm share down to the 0.05 floor and made 335 kg of iron a turn with
+nobody to sell it to.
+
+The trace is the whole story. It farms contentedly for ten years at a ration of
+1.54 and grows from 60 people to 130. Then, around year twelve, it flips: farm
+share 0.05, **ration 0.13**, grain arriving 0. It is not starving yet only
+because it is eating a granary it has no way to refill.
+
+`decideFarmShare` already knew the rule and had it written down: *"A town alone
+in the wilderness must farm, however poor the ground, because there is nothing
+else to eat. Grain arriving is the observable fact that says a different trade
+is survivable."* The guard was declared inside the hungry branch, so it
+protected only towns already short of food. A town that was **fed** fell through
+to the second half of the rule, where a full granary plus wanting iron for its
+own ploughs was enough to specialise.
+
+The confusion worth naming: a full granary and somebody feeding you are not the
+same fact. The first says you can afford to stop farming for a while; only the
+second says you can afford to stop farming.
+
+* ~~Hoist `someoneFeedsUs` out of the hungry branch and require it in both~~ --
+  **deadlocked the paired case.** `verify_trade` then failed the opposite two
+  checks: the town with a neighbour never specialised either, because a town
+  will not buy grain until it stops growing its own, and it will not stop
+  growing its own until grain is arriving. Nothing ever moved. Grain arriving is
+  the right test for a town that is already hungry, when the answer is known; it
+  is circular as a test for *starting*.
+
+The fix: what separates the two cases before any trade has happened is whether
+anybody else exists at all. `Report.alone` carries that, and the step down now
+requires a partner to exist rather than to have already delivered. Deliberately
+"anybody at all" rather than "anybody in reach" -- the market's own distance
+limits decide whether a trade happens, and a town whose only neighbour is
+unreachable finds out the ordinary way, by watching grain fail to arrive.
+
+Note this was surfaced by the terrain fixes rather than caused by them: the mine
+site's yield moved from 219 to 169 kg/ha, which changed when the town crossed
+the nine-months-of-food line. The hole had been there the whole time.
+
+## A landslide test that was not asking about a landslide
+
+`verify_geology`'s "clearing a hillside is a decision with a delay" failed:
+factor of safety fell from 4.54 to 3.79 over twelve years, a 16% loss where the
+assertion wants 20%.
+
+The physics was right. Root cohesion has a 3.5-year half-life, so 9.3% of it
+remains after twelve years -- the roots had gone. What changed is that root
+cohesion is a fixed number of kilopascals, so the *share* of stability it
+represents depends entirely on the slope: on shallow ground friction dominates
+and losing the roots barely registers.
+
+The test picked **the first** cell steeper than 0.2 and stopped, so it ran on
+whatever gentle slope the scan reached first. Once the relief fixes above made
+the terrain honest, that cell was gentler and the loss fell below the threshold.
+
+The wrong fix is to relax the assertion to 0.85. Felling trees is a landslide
+question and should be asked of ground where landslides happen, so the search
+now takes the **steepest** soil-covered hillside instead of the first
+acceptable one. That finds 29.5 degrees, and there the factor of safety falls
+from 4.48 to 1.82 -- a 60% loss, and a slope that has come within sight of
+actually failing. The assertion is unchanged and now has something to bite on.
+
+This is the stale-assertion category from testing.md, but with the twist worth
+remembering: the assertion was fine and the *sample* was stale.

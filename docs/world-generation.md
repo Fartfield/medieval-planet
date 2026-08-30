@@ -14,19 +14,70 @@ noise with a legend.
 
 ## Tectonics
 
+**The mesh is the planet.** Tectonics, elevation, erosion, climate and biome
+are all simulated on 110,592 cells about 65 km apart. The world map's 192
+hexagons are a *summary* of that, not the thing itself, and every layer of the
+ladder below reads the mesh directly rather than interpolating between those
+192.
+
+That inversion is the whole of what makes the coastlines look like coastlines.
+Before it, the shape of a continent's edge was decided by hexagons 1,550 km
+across, and every layer underneath inherited that outline however far it
+zoomed in — which is why the world looked assembled out of hex-shaped chunks.
+A rain shadow is about 100 km wide, so on the old grid it could not exist at
+all; on the mesh it lands on the mountain that casts it.
+
+Summarised by **median** elevation, not mean. A world cell covers about six
+hundred mesh cells; average one that is half mountain and half abyss and the
+answer is deep ocean. Averaging turned a mesh that is 29.2% land into a world
+map that was 16.1% land — it drowned precisely the coastal regions that matter.
+The median gives 26.0%. Biome is by majority vote for the same reason: the mean
+of two biomes is a third biome that is not there.
+
+### Plates are rigid caps rotating about Euler poles
+
 Fifteen plates — Earth has seven major and about eight minor. Nuclei are
-scattered deterministically from the world seed and grown outward by a
-**cost-weighted** flood fill rather than a plain breadth-first one. Plain BFS
-gives graph-Voronoi cells whose boundaries are conspicuously straight; the
-planet comes out looking like a football. Perturbing each step's cost with
-noise makes the seams wander the way real sutures do, at the cost of needing a
-heap instead of a queue.
+scattered from the world seed and grown by breadth-first flood fill.
 
-Each plate gets a type (oceanic or continental) and a drift direction in its
-own tangent plane, at 1–10 cm/yr — the rate satellite geodesy measures.
+Each plate gets an **Euler pole**: an axis through the centre of the sphere and
+a rate. This is not decoration. A plate is a rigid cap on a sphere, so the only
+motion it can have *is* a rotation about some axis, and the velocity at a point
+is `ω × r` — which means a single plate has different speeds and different
+directions at different places on it, and the same boundary can be converging
+at one end and sliding past at the other. A per-plate drift vector in a tangent
+plane, which is what this used to be, cannot represent that.
 
-Elevation comes from what the plates are doing to each other at their shared
-boundaries:
+Rates are drawn from the 10–100 mm/yr that satellite geodesy measures across
+Earth's plates. The Pacific runs near the top of that range, the Eurasian near
+the bottom, and the spread is what makes one boundary a Himalaya and another a
+quiet suture.
+
+### Continents are not plates
+
+Continental crust is laid down as a fractal field thresholded at Earth's
+continental share of the surface (41% — more than the 29% that is dry land,
+because the shelves are continental crust that happens to be drowned).
+
+It is deliberately *not* a plate property, because on Earth it is not one
+either: the African plate carries a continent and an ocean, and the Pacific
+plate carries almost no continent at all.
+
+**Three octaves, not seven**, and that is a measurement rather than a taste. A
+craton is a compact thing — the median point of Earth's land is about 600 km
+from the sea. At seven octaves the field made beautiful fractal coastlines
+around forty-three landmasses whose median point was 417 km from water: an
+archipelago, not a world with continents in it. At three it makes five to seven
+landmasses at 625 km, which is Earth. The roughness of a coastline is not this
+field's job; it comes from the elevation octaves and the erosion below, which
+dissect a compact margin into headlands and bays. Ask one field for both the
+shape and the edge and you get neither.
+
+### What the boundaries do
+
+The relative velocity of two plates at a shared boundary is split into the part
+**across** it and the part **along** it. Across is convergence or divergence and
+builds or destroys crust; along is a transform fault, which moves a great deal
+of rock sideways and very little of it up.
 
 | meeting | result | example |
 |---|---|---|
@@ -39,9 +90,27 @@ boundaries:
 The last one catches people out. A spreading ridge is three kilometres *above*
 the abyssal plain either side of it.
 
-The boundary signal is then smeared inland over four neighbour-averaging
-passes, weighted toward each cell's own value so crests survive. A plate
-boundary is a line; a mountain range is a hundred kilometres wide.
+Thickening accumulates over forty steps, spreading inland a little on each one.
+A collision does not raise a line, it raises a belt: measured orogens are
+150–500 km wide, which is three to ten cells here, and the spreading is what
+turns a boundary into one.
+
+### Elevation is buoyancy, not a height field
+
+Continental elevation comes from **Airy isostasy** — thick light crust floats
+high, exactly as an iceberg does, and the 35 km/7 km contrast between
+continental and oceanic crust *is* the difference between land and sea. Ocean
+floor instead subsides as it cools and moves away from its ridge, following the
+half-space cooling result `depth = 2500 + 350·√age`, which is why abyssal
+plains deepen with distance from the spreading centre.
+
+Then erosion runs on the mesh: water is routed, stream power `E = K·√A·S`
+incises valleys, and creep smooths the interfluves. Sea level is solved
+afterwards (see below), and the roughness each region ended up with is measured
+and kept as `reliefM` — the field the ladder below uses to decide how much
+detail to add. That has to be a field rather than a per-map number; the reason
+is in fix-attempts.md, and it is that two neighbouring maps which each measure
+their own roughness disagree along the edge they share.
 
 ## Sea level is solved, not chosen
 

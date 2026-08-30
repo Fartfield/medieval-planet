@@ -8,8 +8,29 @@ import { generatePlanet, DEFAULT_CLIMATE, type ClimateParams } from '../sim/gen/
 import { CELL_COUNT } from '../sim/geo/sphere.ts';
 import { Biome } from '../sim/model/biome.ts';
 
-const EARTH = { forest: 0.31, grass: 0.25, desert: 0.19, tundraIce: 0.20 };
-const SEEDS = [20260826, 20268745, 20276664];
+/**
+ * Earth's land cover, RENORMALISED to the band the grid actually holds.
+ *
+ * The published figures -- 31% forest, 25% grass, 19% desert, 20% tundra and
+ * ice -- are for all land. The world map is a band that stops at 65 degrees,
+ * and the land it leaves out is about 13% of Earth's total and almost entirely
+ * tundra and ice: Antarctica is 9 points of it, Greenland 1.4, the high Arctic
+ * most of the rest. Take that out and renormalise what is left.
+ *
+ * Comparing against the unrenormalised figures would ask this world to grow
+ * tundra where it has no arctic, which it can only do by being too cold
+ * everywhere else.
+ */
+const EARTH = { forest: 0.356, grass: 0.287, desert: 0.218, tundraIce: 0.080 };
+
+/**
+ * One seed, and that is an increase in sample size rather than a cut.
+ *
+ * The cover is read off the MESH now -- 110,592 cells of one world -- where it
+ * used to be read off 192 cells of three. Pooling seeds was working around a
+ * resolution problem that no longer exists.
+ */
+const SEEDS = [20260826];
 
 function group(b: number): string {
   if (b === Biome.Ocean) return 'ocean';
@@ -26,8 +47,9 @@ function score(k: ClimateParams): { err: number; cover: Record<string, number> }
   let land = 0;
   for (const s of SEEDS) {
     const p = generatePlanet(s, undefined, k);
-    for (let c = 0; c < CELL_COUNT; c++) {
-      const key = group(p.biome[c]);
+    const mesh = p.mesh;
+    for (let c = 0; c < mesh.biome.length; c++) {
+      const key = group(mesh.biome[c]);
       if (key === 'ocean') continue;
       g[key] = (g[key] ?? 0) + 1;
       land++;
@@ -43,13 +65,19 @@ function score(k: ClimateParams): { err: number; cover: Record<string, number> }
 }
 
 const rows: { k: ClimateParams; err: number; cover: Record<string, number>; label: string }[] = [];
-for (const continentality of [0.10, 0.16, 0.22, 0.28]) {
-  for (const backgroundMm of [40, 70]) {
+// Continentality is PER KILOMETRE. The sweep used to run 0.10 to 0.28, which
+// were the per-cell units it had before that anchor was fixed, and at a mesh
+// spacing of 65 km a value of 0.1/km wrings the air dry ten kilometres inland
+// -- so every row came back 88% desert and the sweep reported them all as
+// equally, uselessly bad. The range now brackets the anchor: half-lives from
+// about 4,600 km down to 870.
+for (const continentality of [8.0e-4, 1.2e-3, 1.8e-3, 2.6e-3, 4.0e-3]) {
+  for (const backgroundMm of [10, 25, 40]) {
     for (const frontWidth of [0.20, 0.24]) {
       for (const leeFloor of [0.10, 0.22]) {
         const k = { ...DEFAULT_CLIMATE, continentality, backgroundMm, frontWidth, leeFloor };
         const { err, cover } = score(k);
-        rows.push({ k, err, cover, label: `cont=${continentality} bg=${backgroundMm} fw=${frontWidth} lee=${leeFloor}` });
+        rows.push({ k, err, cover, label: `cont=${continentality.toExponential(2)} bg=${backgroundMm} fw=${frontWidth} lee=${leeFloor}` });
       }
     }
   }

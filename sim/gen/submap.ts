@@ -24,7 +24,7 @@
 import * as A from '../anchors.ts';
 import {
   SUBCELL_COUNT, RADIUS, subNeighbours, coords, DIRECTIONS,
-  toPixel, pixelOfAxial, fromPixel, ringOf,
+  toPixel, pixelOfAxial, fromPixel, nearestCell, ringOf,
 } from '../geo/hexgrid.ts';
 import {
   CELL_COUNT, CELL_R, centres, neighbours, neighbourCount, cellAt,
@@ -48,6 +48,7 @@ import {
   type Soil,
 } from '../model/soil.ts';
 import type { Planet } from './planet.ts';
+import { meshCellAt, MESH_COLS } from './tectonics.ts';
 
 /**
  * A local frame, in the units the world map itself is laid out in.
@@ -115,6 +116,11 @@ export interface SubMap {
    * map normalised against its own biggest channel.
    */
   drainage: Float32Array;
+  /** The lowest and highest ground on this map. Bounds what a child may inherit. */
+  loM: number;
+  hiM: number;
+  /** The roughness field, carried down unchanged from the mesh. */
+  reliefM: Float32Array;
   /** Depth of water leaving each cell in a year, metres. */
   runoffM: Float32Array;
   /** Fraction of each cell that is river floodplain, 0..1. */
@@ -172,6 +178,8 @@ export interface ParentSample {
   elevationM: number;
   precipMm: number;
   upliftM: number;
+  /** How rough the simulation says this place is; see tectonics.reliefM. */
+  reliefM: number;
 }
 
 /**
@@ -236,14 +244,20 @@ export function toDirection(b: Basis, x: number, y: number, out: Float64Array, a
   out[at + 2] = cosLat * dsin(lon);
 }
 
+/** Longitude difference taken the short way round, so a map straddling the
+ * wrap does not read its own cells as half a world away. */
+function shortWay(d: number): number {
+  if (d > PI) return d - 2 * PI;
+  if (d < -PI) return d + 2 * PI;
+  return d;
+}
+
 /** A direction on the sphere back to the sub-map cell containing it, or -1. */
 export function cellContaining(b: Basis, radiusRad: number, x: number, y: number, z: number): number {
   // Back through the same projection. Longitude is taken the short way round,
   // so a map straddling the wrap does not read its own cells as half a world
   // away.
-  let lx = datan2(z, x) - b.lon;
-  if (lx > PI) lx -= 2 * PI;
-  if (lx < -PI) lx += 2 * PI;
+  const lx = shortWay(datan2(z, x) - b.lon);
   const ly = y - b.sinLat;
   return fromPixel(lx, ly, radiusRad);
 }
@@ -257,33 +271,96 @@ export function cellContaining(b: Basis, radiusRad: number, x: number, y: number
  * the detail noise then roughens.
  */
 export function samplePlanet(planet: Planet, x: number, y: number, z: number): ParentSample {
-  const c = cellAt(x, y, z);
-  let we = 0, wp = 0, wu = 0, wsum = 0;
+  // Straight off the tectonic mesh, not interpolated between the world map's
+  // 192 cells.
+  //
+  // That is the whole point of the mesh existing. Interpolating 192 cells
+  // 1,550 km across can only ever give back a coastline shaped like a dozen
+  // hexagons, however much detail is added underneath; reading a field
+  // simulated at 49 km gives back mountain belts, island arcs, rift valleys
+  // and dissected margins, and the layers below add detail to THAT.
+  //
+  // Precipitation still comes from the world map, because rainfall is a
+  // planetary-scale field -- Hadley cells and ocean distance -- and the layers
+  // below apply their own orographic correction on top of it as they always
+  // did.
+  const t = planet.mesh.tect;
+  const mesh = meshCellAt(t, datan2(z, x), y);
 
-  const add = (cell: number): void => {
+  // BARYCENTRIC, not inverse-distance, and the difference is the whole field.
+  //
+  // Inverse-distance weighting has a flat spot at every node -- the gradient
+  // goes to zero exactly at a cell centre -- so on a mesh whose neighbours
+  // differ by kilometres it degenerates into nearest-neighbour: 69 km plateaus
+  // with cliffs between them. Every layer below then inherits those cliffs and
+  // rebuilds them, and the relief RISES down the ladder instead of falling.
+  // Measured: 177 m across a 200 km map, then 1,603 m across a 21 km one.
+  //
+  // This is the same mistake as the sub-map sampler's, in a new place, and it
+  // has the same answer: barycentric weights over the triangle of cell centres
+  // containing the point reproduce a linear field exactly, so a planar
+  // hillside stays planar and nothing manufactures a step.
+  const g = t.band;
+  let dlon = datan2(z, x) - g.lon[mesh];
+  if (dlon > PI) dlon -= 2 * PI;
+  if (dlon < -PI) dlon += 2 * PI;
+  const dsin = y - g.sinLat[mesh];
+
+  let we = t.elevationM[mesh];
+  let wu = t.upliftM[mesh];
+  let wr = t.reliefM[mesh];
+  for (let i = 0; i < 6; i++) {
+    const na = g.neighbours[mesh * 6 + i];
+    const nb = g.neighbours[mesh * 6 + ((i + 1) % 6)];
+    if (na < 0 || nb < 0) continue;
+    const ax = wrapLon(g.lon[na] - g.lon[mesh]);
+    const ay = g.sinLat[na] - g.sinLat[mesh];
+    const bx = wrapLon(g.lon[nb] - g.lon[mesh]);
+    const by = g.sinLat[nb] - g.sinLat[mesh];
+
+    const det = (ay - by) * (0 - bx) + (bx - ax) * (0 - by);
+    if (det === 0) continue;
+    const w0 = ((ay - by) * (dlon - bx) + (bx - ax) * (dsin - by)) / det;
+    const w1 = ((by - 0) * (dlon - bx) + (0 - bx) * (dsin - by)) / det;
+    const w2 = 1 - w0 - w1;
+    if (w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9) continue;
+
+    we = w0 * t.elevationM[mesh] + w1 * t.elevationM[na] + w2 * t.elevationM[nb];
+    wu = w0 * t.upliftM[mesh] + w1 * t.upliftM[na] + w2 * t.upliftM[nb];
+    wr = w0 * t.reliefM[mesh] + w1 * t.reliefM[na] + w2 * t.reliefM[nb];
+    break;
+  }
+
+  // Rainfall from the world map, interpolated as before.
+  const c = cellAt(x, y, z);
+  let wp = 0, psum = 0;
+  const addP = (cell: number): void => {
     const dx = centres[cell * 3] - x;
     const dy = centres[cell * 3 + 1] - y;
     const dz = centres[cell * 3 + 2] - z;
-    const d2 = dx * dx + dy * dy + dz * dz;
-    // A tiny floor so that landing exactly on a centre is not a division by
-    // zero; at this scale it simply means that cell dominates, which is right.
-    const w = 1 / (d2 + 1e-9);
-    we += planet.elevationM[cell] * w;
+    const w = 1 / (dx * dx + dy * dy + dz * dz + 1e-9);
     wp += planet.precipMm[cell] * w;
-    wu += upliftProxy(planet, cell) * w;
-    wsum += w;
+    psum += w;
   };
-
-  add(c);
+  addP(c);
   for (let i = 0; i < neighbourCount(c); i++) {
-    const n = neighbours[c * 6 + i];
-    if (n >= 0) add(n);
+    const nb = neighbours[c * 6 + i];
+    if (nb >= 0) addP(nb);
   }
+
   return {
-    elevationM: we / wsum,
-    precipMm: wp / wsum,
-    upliftM: wu / wsum,
+    elevationM: we,
+    precipMm: wp / psum,
+    upliftM: wu,
+    reliefM: wr,
   };
+}
+
+/** Longitude difference, taken the short way round. */
+function wrapLon(d: number): number {
+  if (d > PI) return d - 2 * PI;
+  if (d < -PI) return d + 2 * PI;
+  return d;
 }
 
 /**
@@ -362,22 +439,81 @@ export function sampleSubMap(
   z: number,
   outside: Neighbouring | null = null,
 ): ParentSample {
+  const s = sampleSubMapRaw(map, x, y, z, outside);
+  // A CHILD CANNOT INHERIT GROUND ITS PARENT DOES NOT HAVE.
+  //
+  // Interpolating a bounded field gives a bounded answer, and the one thing
+  // that legitimately reaches past the parent's own span is the cross-boundary
+  // lookup -- a neighbour just outside the map really can be higher than
+  // anything in it. One map's span is a generous allowance for that and a hard
+  // stop on the alternative.
+  //
+  // The alternative happened. A depth-7 map, two metres across, inherited
+  // 2,197 m of relief from a parent holding one; the ladder then added detail
+  // in proportion and produced vertical cliffs at the finest layer. Relief that
+  // RISES going down the ladder cannot be right whatever the cause, so this
+  // says so directly rather than waiting to find the next cause.
+  //
+  // Bounded by the parent's own range and not a margin around it. A child map
+  // fills ONE CELL of its parent, so every point of it lies inside the parent,
+  // and the parent's highest ground is a ceiling on what any of it can inherit.
+  // The rim overhangs by a fraction of a cell, which is the one place this is
+  // an approximation and the smallest one available -- an allowance of a whole
+  // map span instead let each layer treble the last one's relief, which is a
+  // slower runaway rather than none.
+  return {
+    elevationM: clamp(s.elevationM, map.loM, map.hiM),
+    precipMm: s.precipMm,
+    upliftM: s.upliftM,
+    reliefM: s.reliefM,
+  };
+}
+
+function sampleSubMapRaw(
+  map: SubMap,
+  x: number,
+  y: number,
+  z: number,
+  outside: Neighbouring | null = null,
+): ParentSample {
   const b = map.basis;
-  const lx = x * b.ex + y * b.ey + z * b.ez;
-  const ly = x * b.nx + y * b.ny + z * b.nz;
-  const c = fromPixel(lx, ly, map.cellRadiusRad);
-  if (c < 0) {
-    // Off the edge of this sub-map. Falling back to the centre is wrong but
-    // bounded, and it only happens on the outermost ring where the child map
-    // slightly overhangs its parent. Real cross-boundary sampling is the
-    // unsolved geometry problem in docs/known-gaps.md.
-    const mid = fromPixel(0, 0, map.cellRadiusRad);
-    return {
-      elevationM: map.elevationM[mid],
-      precipMm: map.precipMm[mid],
-      upliftM: map.upliftM[mid],
-    };
-  }
+
+  // THROUGH THE SAME PROJECTION THE MAP WAS BUILT WITH.
+  //
+  // This used to be a pair of dot products against the tangent-plane axes,
+  // which is the linearisation the basis stopped using when it started
+  // carrying `lon`/`sinLat`. `toDirection` was converted and `cellContaining`
+  // was written correct; this one inverse was left behind, so every map was
+  // laid out by one projection and read back by another.
+  //
+  // It agrees at the map's centre, where both are the identity, and diverges
+  // with distance from it -- which is why it hid. Measured on a region map:
+  // sampling a cell's own centre returned its own value only at cell 45, the
+  // centre, and was wrong by a mean of 247 m and a worst of 822 m everywhere
+  // else. Barycentric interpolation at a node is exact by construction, so any
+  // error at a node is the point having been looked up in the wrong place.
+  //
+  // Downstream that read as terrain: each descent resampled its parent through
+  // the mismatch, so land drifted downhill layer by layer -- 86 of 91 cells
+  // above water at the region, 73, then 7, then none -- and the reference
+  // settlement was placed on open sea 30 m down.
+  const lx = shortWay(datan2(z, x) - b.lon);
+  const ly = y - b.sinLat;
+  // NEAREST CELL, not -1. A child centred on a rim cell overhangs its parent
+  // by a fraction of a cell, so a few of its points land just outside; the
+  // rim cell they overhang is the one that should answer, and the triangle
+  // logic below then handles them exactly as it handles any other rim point.
+  //
+  // This used to return the parent map's CENTRE value, which is the single
+  // worst cell to pick: it is the one furthest from the point being asked
+  // about. Measured on a mountain descent, 3 of a rim child's 91 samples took
+  // that path and the centre sat 325 m away in elevation, so those three cells
+  // alone set the child's whole range. Because the distance to the centre does
+  // not shrink when the cells do, it recurred identically at every layer, and
+  // relief stopped falling: 604 m, then 325, 326, 324 across maps of 18 km,
+  // 1.9 km, 200 m and 21 m. That is a 78-degree cliff on a 200 m map, and it
+  // was one badly-chosen fallback rather than anything about the terrain.
+  const c = nearestCell(lx, ly, map.cellRadiusRad);
 
   const p0 = toPixel(c, map.cellRadiusRad);
 
@@ -419,6 +555,7 @@ export function sampleSubMap(
       elevationM: w0 * map.elevationM[c] + w1 * map.elevationM[na] + w2 * map.elevationM[nb],
       precipMm: w0 * map.precipMm[c] + w1 * map.precipMm[na] + w2 * map.precipMm[nb],
       upliftM: w0 * map.upliftM[c] + w1 * map.upliftM[na] + w2 * map.upliftM[nb],
+      reliefM: w0 * map.reliefM[c] + w1 * map.reliefM[na] + w2 * map.reliefM[nb],
     };
   }
 
@@ -493,6 +630,7 @@ function crossTriangle(
       elevationM: w0 * map.elevationM[c] + w1 * va.elevationM + w2 * vb.elevationM,
       precipMm: w0 * map.precipMm[c] + w1 * va.precipMm + w2 * vb.precipMm,
       upliftM: w0 * map.upliftM[c] + w1 * va.upliftM + w2 * vb.upliftM,
+      reliefM: map.reliefM[c],
     };
   }
   return null;
@@ -566,22 +704,46 @@ function planeAt(
   const det = sxx * syy - sxy * sxy;
   const qx = lx - p0.x;
   const qy = ly - p0.y;
-  if (det === 0) {
-    // Collinear neighbours, which a hex lattice does not produce. Total rather
-    // than reachable.
-    return { elevationM: e0, precipMm: pr0, upliftM: u0 };
+
+  // Guarded against near-degeneracy, not just exact zero. A rim cell keeps
+  // three neighbours and they can sit almost in a line, which leaves `det`
+  // small rather than zero -- and dividing by it turns a plane fit into an
+  // arbitrarily steep one. It produced -Infinity: one cell of one map came
+  // back infinitely deep, the map's inherited range became infinite with it,
+  // and every layer below inherited a world clamped between Everest and
+  // Challenger Deep. What it looked like was relief that RISES down the
+  // ladder, which is the signature of the staircase and was not one.
+  //
+  // The scale to compare against is the lattice's own: sxx and syy are sums of
+  // squared offsets, so their product is the natural size of this determinant.
+  if (!(det > 1e-9 * (sxx * syy + 1e-30))) {
+    return { elevationM: e0, precipMm: pr0, upliftM: u0, reliefM: map.reliefM[c] };
+  }
+
+  // And bounded by what the neighbours actually show. A plane fitted to a
+  // handful of points and evaluated outside them is an extrapolation, and an
+  // extrapolation is only honest inside the range of what it was fitted to:
+  // beyond that it is inventing ground nobody measured.
+  let vlo = e0, vhi = e0;
+  for (let i = 0; i < 6; i++) {
+    const nb = subNeighbours[c * 6 + i];
+    if (nb < 0) continue;
+    if (map.elevationM[nb] < vlo) vlo = map.elevationM[nb];
+    if (map.elevationM[nb] > vhi) vhi = map.elevationM[nb];
   }
 
   const at = (sx: number, sy: number, base: number): number => {
     const a = (syy * sx - sxy * sy) / det;
     const b = (sxx * sy - sxy * sx) / det;
-    return base + a * qx + b * qy;
+    const v = base + a * qx + b * qy;
+    return Number.isFinite(v) ? v : base;
   };
 
   return {
-    elevationM: at(sxe, sye, e0),
-    precipMm: at(sxp, syp, pr0),
-    upliftM: at(sxu, syu, u0),
+    elevationM: clamp(at(sxe, sye, e0), vlo, vhi),
+    precipMm: Math.max(0, at(sxp, syp, pr0)),
+    upliftM: Math.max(0, at(sxu, syu, u0)),
+    reliefM: map.reliefM[c],
   };
 }
 
@@ -638,6 +800,7 @@ export function generateSubMap(
   const slope = new Float32Array(SUBCELL_COUNT);
   const drainage = new Float32Array(SUBCELL_COUNT);
   const runoffM = new Float32Array(SUBCELL_COUNT);
+  const reliefM = new Float32Array(SUBCELL_COUNT);
   const rock = new Uint8Array(SUBCELL_COUNT);
   const erosionMPerYr = new Float32Array(SUBCELL_COUNT);
   const regolithM = new Float32Array(SUBCELL_COUNT);
@@ -651,78 +814,74 @@ export function generateSubMap(
   // ground map inherits the same three hills its region already had. Tie it to
   // the cell size so every layer adds roughness at its own scale.
   const detailFreq = 0.45 / cellRad;
-  // How much relief to add at this layer's own scale.
-  //
-  // Anchored rather than picked: real landscapes are reported by their local
-  // relief over a ten-kilometre baseline, and relief scales as the baseline to
-  // the Hurst exponent. So one measured relief at one measured baseline fixes
-  // the amplitude at every cell size the ladder has, and the result is a
-  // number that can be checked against a landscape instead of against taste.
-  //
-  // Per cell rather than per map, because how rough ground is depends on where
-  // it is: the mountain end of the range where the plates are still pushing,
-  // the plain end where they are not. `gate` below carries that.
   const reliefScale = dpow(spacingM / A.LOCAL_RELIEF_BASELINE_M, A.TOPOGRAPHY_HURST);
+
+  // Do not invent detail the simulation already has.
+  //
+  // The planet is simulated on a mesh whose cells are about 69 km, and that
+  // mesh carries real mountain belts, rifts and river valleys. A layer whose
+  // own cells are coarser than that is a downsample of it and should add
+  // nothing; a layer far finer has nothing to read and should add everything.
+  //
+  // Without this the two are summed and the same landscape is built twice at
+  // the same wavelength, which is not more detail -- it is the same detail
+  // twice, out of phase with itself, and it shows up as relief that will not
+  // fall from one layer to the next.
+  const meshSpacingM = (2 * Math.PI * radiusM) / MESH_COLS;
+  const belowMesh = clamp((meshSpacingM - spacingM) / (meshSpacingM * 0.75), 0, 1);
 
   for (let c = 0; c < SUBCELL_COUNT; c++) {
     const p = toPixel(c, cellRad);
     toDirection(basis, p.x, p.y, dirs, c * 3);
-    const x = dirs[c * 3], y = dirs[c * 3 + 1], z = dirs[c * 3 + 2];
-
-    const parent = sample(x, y, z);
+    const parent = sample(dirs[c * 3], dirs[c * 3 + 1], dirs[c * 3 + 2]);
     upliftM[c] = parent.upliftM;
+    reliefM[c] = parent.reliefM;
     parentElev[c] = parent.elevationM;
     parentPrecip[c] = parent.precipMm;
+  }
+
+  // HOW MUCH DETAIL TO ADD, AS A FIELD RATHER THAN A NUMBER.
+  //
+  // The simulation has already decided how rough each part of the world is, so
+  // the ladder asks it: `reliefM` is the elevation spread across a mesh cell,
+  // carried down through every layer. Relief goes as the span to the Hurst
+  // exponent, so at a cell of `spacingM` the missing detail is that roughness
+  // scaled by (spacingM / meshSpacing)^H -- and zero once a layer's own cells
+  // are coarser than the mesh, because then the mesh has already supplied it.
+  //
+  // Per cell, and that is the load-bearing part. Two earlier versions used one
+  // number for the whole map -- first the tectonic uplift at its centre, then
+  // the map's own observed relief -- and both are discontinuous at a map
+  // boundary: neighbouring maps compute different numbers, add different
+  // amounts of detail, and disagree along the edge they share. The
+  // cross-boundary lookup then reads that disagreement as real ground and the
+  // layer below amplifies it. Measured, that ran away to a two-metre map
+  // inheriting 2,197 m of relief. A field is continuous by construction, so
+  // neighbours agree because they are reading the same thing.
+
+  for (let c = 0; c < SUBCELL_COUNT; c++) {
+    const x = dirs[c * 3], y = dirs[c * 3 + 1], z = dirs[c * 3 + 2];
 
     // Rolling detail everywhere, plus ridges gated to ground that is already
     // being pushed up -- the same trick the planet uses, one scale down.
     const rolling = fbm3(x * detailFreq, y * detailFreq, z * detailFreq, fieldSeed ^ 0x1d, 5);
     const crest = ridged3(x * detailFreq * 2.3, y * detailFreq * 2.3, z * detailFreq * 2.3, fieldSeed ^ 0x2e, 3);
-    const gate = smoothstep(300, 2800, parent.upliftM);
+    const gate = smoothstep(300, 2800, upliftM[c]);
+    const detailAmp = reliefM[c] * dpow(spacingM / meshSpacingM, A.TOPOGRAPHY_HURST) * belowMesh;
 
-    // Between the measured ends: a shield plain where nothing is being pushed
-    // up, a high belt where it is.
-    const localRelief = lerp(A.LOCAL_RELIEF_PLAIN_M, A.LOCAL_RELIEF_MOUNTAIN_M, gate);
-    const detailAmp = localRelief * reliefScale;
+    let e = parentElev[c] + rolling * detailAmp + crest * gate * detailAmp * 0.8;
 
-    let e = parent.elevationM + rolling * detailAmp + crest * gate * detailAmp * 0.8;
-    // NO COASTLINE GUARD. There was one, twice, and both did more harm than
-    // the problem they were for.
-    //
-    // The problem was real: a planet solved for Earth's 29% land came out at
-    // 12% one layer down and 9% the next, because detail noise drowned low
-    // ground faster than it raised shallow sea. But that was measured on a
-    // 92-cell world map, where a continent was three cells across and most of
-    // a land cell's neighbours were abyss. At 192 cells a continent's interior
-    // cells are surrounded by other land, and the drowning very largely stops
-    // on its own: 29.7% -> 23.6% -> 25.6%, which is stable rather than
-    // collapsing.
-    //
-    // What the guards cost was worse than the six points they were saving.
-    // As a CLAMP -- land forced to at least +1 m -- it is a discontinuity by
-    // construction: two neighbours straddling the threshold get one snapped to
-    // +1 and the other left wherever it was, and the step between them is
-    // however deep the second happened to be. Measured on a coastal ground
-    // map, 147 m across a 22 m cell, with the noise contributing nothing. The
-    // clamped value is then inherited, so the next layer starts from a field
-    // whose median is exactly 1 m and builds its own cliffs on that.
-    //
-    // As a smooth PULL toward the layer above's classification it made the
-    // land fraction worse rather than better -- 21.6% against 23.6% for no
-    // guard at all -- because it leans on sea as hard as on land and there is
-    // more sea. It also inflated the relief it was added to.
-    //
-    // So: nothing. The coastline is where the elevation says it is.
-    //
-    // The one bound kept is the planet's own: no point on Earth is above
-    // Everest or below Challenger Deep, and both are anchored. Relief is
-    // extrapolated from a ten-kilometre baseline by the Hurst exponent, and
-    // over a 184 km cell that extrapolation overshoots -- it asked for 12 km
-    // of relief inside one region where the real world manages about eight.
-    // Terrain is only self-affine over a range, and a mountain belt has a
-    // finite height; clamping to the measured extremes says so without
-    // pretending to model why.
+    // NO COASTLINE GUARD -- see the note in fix-attempts.md. The one bound kept
+    // is the planet's own: no point on Earth is above Everest or below
+    // Challenger Deep, and both are anchored.
     elevationM[c] = clamp(e, A.MAX_DEPTH_M, A.MAX_ELEVATION_M);
+  }
+
+  let mapLo = Infinity;
+  let mapHi = -Infinity;
+  for (let c = 0; c < SUBCELL_COUNT; c++) {
+    if (elevationM[c] < mapLo) mapLo = elevationM[c];
+    if (elevationM[c] > mapHi) mapHi = elevationM[c];
   }
 
   // --- slope, from the neighbours we have -----------------------------------
@@ -844,6 +1003,7 @@ export function generateSubMap(
   return {
     parent: parentAddress, depth, basis, cellRadiusRad: cellRad, spacingM,
     dirs, elevationM, slope, temperatureC, precipMm, drainage, runoffM, flow,
+    loM: mapLo, hiM: mapHi, reliefM,
     alluvial, rock, erosionMPerYr, regolithM, stability,
     hillslopesResolved: spacingM <= A.HILLSLOPE_LENGTH_M,
     waterlogging, nppGm2, biome, upliftM,

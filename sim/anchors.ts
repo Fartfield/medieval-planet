@@ -294,7 +294,7 @@ export const PRECIP_ITCZ_WIDTH = 0.26;
 export const PRECIP_POLAR_FRONT_MM = 800.0;
 export const PRECIP_POLAR_FRONT_CENTRE = 0.80;
 export const PRECIP_POLAR_FRONT_WIDTH = 0.20;
-export const PRECIP_BACKGROUND_MM = 40.0;
+export const PRECIP_BACKGROUND_MM = 10.0;
 
 /**
  * How fast rain wrings out of an air mass moving inland, per KILOMETRE.
@@ -305,11 +305,19 @@ export const PRECIP_BACKGROUND_MM = 40.0;
  * continent turned into rainforest -- 44% forest cover against a target of 31%
  * -- because no interior was ever dry.
  *
- * A half-life of about 1,900 km puts the dry heart of a continent the right
- * distance from its coasts, and now says so in units that do not care how the
- * world is subdivided.
+ * Refitted when the planet moved onto a simulated mesh, and it moved a long
+ * way: from a 1,900 km half-life to 578. The reason is measurable and is not
+ * about rain. This world's land covers the same 149 million km2 as Earth's and
+ * is in about the same number of pieces, but it is more dissected -- the median
+ * land point sits 278 km from the sea where Earth's sits nearer 600 -- so a
+ * given half-life dries out proportionally less of it.
+ *
+ * Fitted rather than chosen: the sweep in verify/calibrate_climate.ts scores
+ * whole land-cover fractions against Earth's, renormalised to the band the
+ * grid holds, and this is the value that wins. The fit error over four cover
+ * classes is 0.050, against 0.187 for the old value on the new world.
  */
-export const CONTINENTALITY_PER_KM = 0.10 / 277;
+export const CONTINENTALITY_PER_KM = 1.2e-3;
 
 /**
  * How wide a mountain range is, metres. A plate boundary is a line and a
@@ -1144,3 +1152,149 @@ export const WATER_UNIT_WEIGHT_N_M3 = 9810.0;
  * same weight term. That identity is a free check on the arithmetic.
  */
 export const SOIL_FRICTION_ANGLE_DEG = 33.0;
+
+// ---------------------------------------------------------------------------
+// Plate tectonics
+// ---------------------------------------------------------------------------
+// The mesh the world is generated on runs a plate simulation. Everything here
+// is something measured about Earth's crust and how it moves.
+
+/**
+ * How fast plates move: 10 to 100 mm a year.
+ *
+ * The measured range across Earth's plates. The Pacific runs near the top of
+ * it, the Eurasian near the bottom, and the spread is what makes one boundary
+ * a Himalaya and another a quiet suture.
+ */
+export const PLATE_SPEED_MIN_M_PER_YR = 0.010;
+export const PLATE_SPEED_MAX_M_PER_YR = 0.100;
+
+/**
+ * Crustal thickness, kilometres. Continental 35, oceanic 7.
+ *
+ * The single most consequential pair of numbers in the whole model, because
+ * the difference between them IS the difference between land and sea: thick
+ * light crust floats high, thin dense crust floats low, and everything else is
+ * detail on top of that.
+ */
+export const CRUST_CONTINENTAL_KM = 35.0;
+export const CRUST_OCEANIC_KM = 7.0;
+
+/** Crust cannot be thinned away to nothing; rifted continental crust bottoms
+ *  out around 10 km before it breaks and becomes ocean floor. */
+export const CRUST_MINIMUM_KM = 6.0;
+
+/**
+ * Continental crust as a share of the Earth's surface: about 41%.
+ *
+ * More than the 29% that is dry land, because the continental shelves are
+ * continental crust that happens to be under water. Using the land fraction
+ * here instead would drown every shelf in the world and leave no shallow sea
+ * to fish, trade or invade across.
+ */
+export const CONTINENTAL_FRACTION = 0.41;
+
+/**
+ * How deep a continent is: the median point of Earth's land is about 600 km
+ * from the sea, and the furthest -- the Eurasian pole of inaccessibility, in
+ * Xinjiang -- is about 2,650.
+ *
+ * These are what a continent-generating field has to be checked against, and
+ * they are why the craton field is only three octaves. At seven it produced
+ * beautiful fractal coastlines around forty-three landmasses whose median
+ * point was 417 km from water: an archipelago, not a world with continents in
+ * it. The rain then had nowhere to dry out, every interior was forest, and the
+ * climate calibration tried to fix it by cranking continentality to a 385 km
+ * half-life -- against about 1,000 km measured across the Great Plains -- which
+ * is what compensating for the wrong thing looks like.
+ *
+ * Compactness comes from the low frequencies; the coastline's roughness comes
+ * from the elevation noise and the erosion on top. Asking one field to do both
+ * gets neither.
+ */
+export const CONTINENT_MEDIAN_INLAND_KM = 600.0;
+export const CONTINENT_MAX_INLAND_KM = 2650.0;
+
+/**
+ * Airy isostasy: the fraction of a crustal column that stands above the level
+ * the mantle would settle at.
+ *
+ * One minus the density ratio, with continental crust at 2,700 kg/m3 and
+ * mantle at 3,300: 1 - 2700/3300 = 0.1818. A column of crust floats with about
+ * an eighth of itself proud, which is why 35 km of crust gives a continent a
+ * few hundred metres of freeboard and not thirty kilometres of it.
+ */
+export const ISOSTATIC_FREEBOARD = 0.1818;
+
+/**
+ * The datum that turns freeboard into elevation, kilometres.
+ *
+ * Solved rather than chosen: standard continental crust must come out at
+ * Earth's mean land elevation. 35 km at 0.1818 is 6.36 km of freeboard, and
+ * mean land is 0.84 km above the sea, so the datum is 5.52.
+ */
+export const ISOSTATIC_DATUM_KM = 5.52;
+
+/**
+ * Sea floor deepens as it cools: depth = 2500 + 350*sqrt(age in Myr).
+ *
+ * The half-space cooling law, and it is measured on every ocean on Earth. A
+ * ridge crest sits about 2,500 m down and hundred-million-year floor about
+ * 6,000, and the square root is the signature of heat diffusing out of a slab
+ * -- not a curve anybody fitted for looks.
+ *
+ * It is the reason an ocean basin has a shape at all rather than being a flat
+ * bottom at one depth.
+ */
+export const RIDGE_CREST_DEPTH_M = 2500.0;
+export const THERMAL_SUBSIDENCE_COEFF = 350.0;
+
+/** Half-spreading rate, km per million years -- the same thing as mm/yr, and
+ *  the middle of the measured range. Turns distance from a ridge into age. */
+export const SPREADING_HALF_RATE_KM_PER_MYR = 40.0;
+
+/**
+ * How much crust a collision piles up, and how much an arc does, per unit of
+ * convergence rate per step.
+ *
+ * FREE PARAMETERS in the sense that the step is not a year -- what is measured
+ * is the RATIO and the end state. Continental collision doubles crustal
+ * thickness: Tibet runs 70 km against a normal 35, and that is the thickest
+ * crust on Earth. A volcanic arc thickens far less, which is why the Andes are
+ * 6 km high and the Himalaya 8 with a plateau behind them.
+ */
+export const COLLISION_THICKENING_KM = 9.0;
+export const ARC_THICKENING_KM = 2.2;
+
+/** How much a rift thins the crust it pulls apart, on the same terms. */
+export const RIFT_THINNING_KM = 3.0;
+
+/**
+ * How far a belt spreads inland per step, as a share of the neighbour average.
+ *
+ * A collision does not raise a line, it raises a belt: measured orogens run
+ * 150 to 500 km wide, which at 49 km mesh cells is three to ten of them.
+ */
+export const OROGEN_SPREAD = 0.28;
+
+/**
+ * Relief the mesh adds on top of the tectonics, metres at the coarsest octave.
+ *
+ * Tectonics gives mountain belts and basins and nothing between them. This is
+ * what stops every part of a continent's interior being the same height, and
+ * it falls away with frequency at TOPOGRAPHY_HURST -- the same exponent the
+ * gameplay ladder uses, because it is the same property of the same terrain.
+ */
+export const MESH_RELIEF_M = 900.0;
+
+/**
+ * How hard and how long the mesh is eroded.
+ *
+ * FREE PARAMETERS. The stream-power law and its exponents are measured (see
+ * DENUDATION_TEMPERATE_M_PER_YR), but a pass is not a year and the aim here is
+ * the shape a landscape settles into rather than a date. Twelve passes is
+ * where the drainage stops reorganising.
+ */
+export const MESH_EROSION_PASSES = 8;
+export const MESH_EROSION_RATE = 4.0e-5;
+export const MESH_CREEP = 0.18;

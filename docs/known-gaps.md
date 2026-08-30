@@ -33,11 +33,40 @@ it as one or lets it overflow.
 where a classification boundary needs it. A game with two-minute weeks will
 eventually want real seasons, and that is a layer-1 concern.
 
+**The ladder delivers 57% of the relief its own anchor predicts.** Measured, at
+every layer: the Hurst law says a map spanning `S` should carry
+`reliefM x (S / 69.5 km)^0.70` of relief, and the ratio of what is produced to
+what is predicted came out 0.61, 0.56, 0.55, 0.63, 0.46, 0.58 across spans from
+1,900 km down to 24 m.
+
+The constancy is the useful part. Self-affinity is *correct* -- the implied
+Hurst exponent is 0.728 against the 0.70 anchor -- so this is a single
+amplitude constant being low by about 1.8x, not a scaling error. It is that the
+fbm's realised peak-to-peak across a map is smaller than the [-1, 1] its range
+suggests, and the amplitude is applied as though it were not.
+
+The visible cost is a world at the smooth end of every band it is checked
+against: median land slope about 1.1 degrees where Earth is 2-3. Every anchored
+landscape check passes, so this is a calibration rather than a defect, and the
+honest fix is to measure the noise's realised range once and divide by it
+rather than to pick a multiplier.
+
 ## Geometry
 
-**One region in eight is a pentagon.** A sphere needs exactly twelve whatever
-its resolution, so at 92 regions they are 13% of the world map rather than the
-0.12% they were at 10,242. Unavoidable, and visible.
+**Cells are stretched toward the poles, by up to 2.7 to 1.** The world map is a
+wrapped hex band in the Lambert cylindrical equal-area projection, so every cell
+has the same *area* but not the same shape: a cell at 52 degrees is nearly three
+times as wide as it is tall.
+
+This replaced a worse problem. A closed sphere tiled with hexagons needs exactly
+twelve pentagons -- Euler forces it, and no cleverness avoids it -- and at 92
+regions those were 13% of the world map. A cylinder has Euler characteristic
+zero, so a band that wraps needs none at all, and the map is now hexagons only.
+The cost moved from topology to shape, which is the better place for it: a
+stretched hexagon still tiles, still has six neighbours, and still subdivides.
+
+The band reaches to 65.05 degrees, just short of the 66.56-degree polar circle.
+The caps beyond it are ungridded ice.
 
 **A 2,900 km cell cannot resolve a mountain range.** Uplift smearing is scaled
 to a real distance and at this resolution correctly does nothing, so relief at

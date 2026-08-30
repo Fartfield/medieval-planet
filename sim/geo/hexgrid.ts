@@ -156,6 +156,36 @@ export function fromPixel(x: number, y: number, size: number): number {
   return indexOf(rq, rr);
 }
 
+/**
+ * Pixel back to the nearest cell, clamped into the map rather than refused.
+ *
+ * `fromPixel` answers -1 outside the hexagon, which is the right answer for
+ * picking: a click on nothing selects nothing. A sampler needs the other
+ * answer. A child map centred on a RIM cell overhangs its parent by a fraction
+ * of a cell, so a few of its points fall outside the parent's hexagon -- they
+ * are just past the map's edge, not nowhere, and the cell they are just past
+ * is the one that should answer for them.
+ *
+ * The scan is over all 91 cells and it is the honest cost: it runs only for
+ * points that are actually outside, measured at 3 of 91 samples on a rim
+ * child and none at all on an interior one.
+ */
+export function nearestCell(x: number, y: number, size: number): number {
+  const inside = fromPixel(x, y, size);
+  if (inside >= 0) return inside;
+
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < SUBCELL_COUNT; i++) {
+    const p = toPixel(i, size);
+    const dx = p.x - x;
+    const dy = p.y - y;
+    const d = dx * dx + dy * dy;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
 // The corner offsets a renderer needs to draw a hexagon used to live here and
 // now live in client/src/render.ts. They needed Math.cos and Math.sin, which
 // verify_purity.ts forbids anywhere under sim/ -- and rather than grant this

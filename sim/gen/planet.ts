@@ -18,9 +18,12 @@
 
 import * as A from '../anchors.ts';
 import { routeWater, runoffM as runoffDepthM, drainageOf, type Flow } from './hydrology.ts';
-import { CELL_COUNT, centres, neighbours, neighbourCount } from '../geo/sphere.ts';
+import { tectonicsFor, meshCellAt, type Tectonics } from './tectonics.ts';
+import {
+  CELL_COUNT, centres, neighbours, neighbourCount, cellAt,
+} from '../geo/sphere.ts';
 import { fbm3, ridged3, hash3, unit } from './noise.ts';
-import { dexp, clamp, smoothstep } from './mathx.ts';
+import { dexp, clamp, smoothstep, datan2 } from './mathx.ts';
 import {
   Biome, classify, miamiNPP, potentialEvapotranspiration, type BiomeId,
 } from '../model/biome.ts';
@@ -56,9 +59,27 @@ export interface Planet {
   flow: Flow;
   /** Discharge on the 0..1 scale, for drawing and for the soil model. */
   drainage: Float32Array;
+
+  /**
+   * The planet the world map is a summary of.
+   *
+   * Every layer below reads this directly rather than interpolating between
+   * the world map's 192 cells, which is what stops a coastline's shape being
+   * decided by a dozen hexagons.
+   */
+  mesh: PlanetMesh;
 }
 
-const PLATES = A.TECTONIC_PLATES;
+/** The planet at mesh resolution: what was simulated, before it was summarised. */
+export interface PlanetMesh {
+  tect: Tectonics;
+  temperatureC: Float32Array;
+  precipMm: Float32Array;
+  nppGm2: Float32Array;
+  biome: Uint8Array;
+  oceanDistance: Int16Array;
+}
+
 
 /**
  * The climate knobs, gathered so that calibration can sweep them.
@@ -106,35 +127,78 @@ export function generatePlanet(
   radiusM = A.EARTH_RADIUS_M,
   climate: ClimateParams = DEFAULT_CLIMATE,
 ): Planet {
-  // How far apart two neighbouring cell centres are, in km. Everything below
-  // that is expressed as a real distance has to go through this, because the
-  // globe's resolution is a setting and the physics is not.
+  // THE MESH IS THE PLANET. Tectonics, elevation, erosion, climate and biome
+  // are all computed on 110,592 cells at 65 km, and the world map's 192 cells
+  // are a summary of that rather than the thing itself.
+  //
+  // That inversion is the whole change. Before it, a coastline's shape was
+  // decided by 192 hexagons 1,550 km across and every layer below inherited
+  // that outline; now every layer reads a field that knows about mountain
+  // belts, rifts, island arcs and river valleys, and adds its own detail to it.
+  //
+  // The climate runs on the mesh too, and that matters as much as the
+  // elevation: a rain shadow is 100 km wide, so on the old grid it could not
+  // exist at all. Here it lands on the mountain that casts it.
+  const mesh = planetMesh(seed, radiusM, climate);
+  const t = mesh.tect;
+
   const spacingKm = (Math.sqrt(3) * Math.sqrt(
     (4 * Math.PI) / CELL_COUNT / ((3 * Math.sqrt(3)) / 2)) * radiusM) / 1000;
-  const plate = new Int16Array(CELL_COUNT).fill(-1);
-  const plateOceanic = new Uint8Array(PLATES);
-  const plateDrift = new Float64Array(PLATES * 3);
 
-  seedPlates(seed, plate, plateOceanic, plateDrift);
-  const elevationM = buildElevation(seed, plate, plateOceanic, plateDrift, spacingKm);
-  const oceanDistance = measureOceanDistance(elevationM);
-  const temperatureC = buildTemperature(elevationM);
-  const precipMm = buildPrecipitation(
-    seed, elevationM, temperatureC, oceanDistance, climate, spacingKm);
-
+  // --- the world map, as a summary of the mesh ------------------------------
+  //
+  // By MEDIAN for elevation, not mean, and the difference is every coastline.
+  // A world cell covers about six hundred mesh cells; average one that is half
+  // mountain and half abyss and the answer is deep ocean, so averaging turned a
+  // mesh that is 29.2% land into a world map that was 16.1% land. Every coastal
+  // region drowned -- which is exactly the class of region that matters.
+  const buckets = bucketMesh(t);
+  const elevationM = new Float32Array(CELL_COUNT);
+  const temperatureC = new Float32Array(CELL_COUNT);
+  const precipMm = new Float32Array(CELL_COUNT);
   const nppGm2 = new Float32Array(CELL_COUNT);
   const biome = new Uint8Array(CELL_COUNT);
+  const plate = new Int16Array(CELL_COUNT);
+  const plateOceanic = new Uint8Array(A.TECTONIC_PLATES);
+  const plateDrift = new Float64Array(A.TECTONIC_PLATES * 3);
+
+  const scratch: number[] = [];
   for (let c = 0; c < CELL_COUNT; c++) {
-    nppGm2[c] = elevationM[c] < 0 ? 0 : miamiNPP(temperatureC[c], precipMm[c]);
-    biome[c] = classify({
-      temperatureC: temperatureC[c],
-      precipMm: precipMm[c],
-      sinLat: centres[c * 3 + 1],
-      elevationM: elevationM[c],
-    });
+    const cells = buckets[c];
+    if (cells.length === 0) continue;
+
+    scratch.length = 0;
+    for (const m of cells) scratch.push(t.elevationM[m]);
+    scratch.sort((x, y) => x - y);
+    elevationM[c] = scratch[scratch.length >> 1];
+
+    let temp = 0, rain = 0, npp = 0;
+    const votes = new Map<number, number>();
+    let oceanic = 0;
+    for (const m of cells) {
+      temp += mesh.temperatureC[m];
+      rain += mesh.precipMm[m];
+      npp += mesh.nppGm2[m];
+      votes.set(mesh.biome[m], (votes.get(mesh.biome[m]) ?? 0) + 1);
+      if (t.continental[m] === 0) oceanic++;
+    }
+    temperatureC[c] = temp / cells.length;
+    precipMm[c] = rain / cells.length;
+    nppGm2[c] = npp / cells.length;
+
+    // The biome a region IS, which is the one most of it is. An average of
+    // two biomes is a third biome that is not there.
+    let best = 0, bestVotes = -1;
+    for (const [b, v] of votes) if (v > bestVotes) { bestVotes = v; best = b; }
+    biome[c] = best;
+
+    plate[c] = t.plate[cells[cells.length >> 1]];
+    if (oceanic * 2 > cells.length) plateOceanic[plate[c]] = 1;
   }
 
-  // --- water ---------------------------------------------------------------
+  const oceanDistance = measureOceanDistance(worldGrid(spacingKm), elevationM);
+
+  // --- water on the world map ----------------------------------------------
   // The sphere is closed, so there is no rim and no inflow: the only way out
   // is the sea. Everything else drains to it, which is what makes this the
   // boundary condition for every map below rather than a thing needing one.
@@ -163,207 +227,80 @@ export function generatePlanet(
   return {
     seed, radiusM, plate, plateOceanic, plateDrift,
     elevationM, temperatureC, precipMm, nppGm2, biome, oceanDistance,
-    runoffM, flow, drainage,
+    runoffM, flow, drainage, mesh,
   };
+}
+
+/** The world map, as something the climate model can be run on. */
+function worldGrid(spacingKm: number): ClimateGrid {
+  return { count: CELL_COUNT, centres, neighbours, spacingKm };
+}
+
+/**
+ * Which mesh cells fall in which world cell.
+ *
+ * Every mesh cell is walked once and dropped into whichever world cell holds
+ * it -- O(mesh) rather than O(world x mesh) -- and each gets exactly one vote,
+ * because the projection is equal-area and they really are the same size.
+ */
+function bucketMesh(t: Tectonics): number[][] {
+  const out: number[][] = new Array(CELL_COUNT);
+  for (let c = 0; c < CELL_COUNT; c++) out[c] = [];
+  for (let m = 0; m < t.band.count; m++) {
+    const c = cellAt(t.band.centres[m * 3], t.band.centres[m * 3 + 1], t.band.centres[m * 3 + 2]);
+    out[c].push(m);
+  }
+  return out;
+}
+
+/**
+ * The whole planet, at mesh resolution: tectonics, then climate on top of it.
+ *
+ * NOT memoised, deliberately, though the tectonics underneath it is. The
+ * tectonics is what costs seconds and depends only on the seed; the climate on
+ * top of it is a tenth of a second and depends on the climate parameters as
+ * well. Caching the pair by seed alone would hand the calibration sweep the
+ * same answer for every parameter set it tried, which is the sort of bug that
+ * reads as "the sweep found nothing".
+ */
+export function planetMesh(
+  seed: number,
+  radiusM: number,
+  climate: ClimateParams,
+): PlanetMesh {
+  const tect = tectonicsFor(seed, radiusM);
+  const g: ClimateGrid = {
+    count: tect.band.count,
+    centres: tect.band.centres,
+    neighbours: tect.band.neighbours,
+    spacingKm: (Math.sqrt(3) * tect.band.cellR * radiusM) / 1000,
+  };
+
+  const oceanDistance = measureOceanDistance(g, tect.elevationM);
+  const temperatureC = buildTemperature(g, tect.elevationM);
+  const precipMm = buildPrecipitation(
+    g, seed, tect.elevationM, temperatureC, oceanDistance, climate);
+
+  const nppGm2 = new Float32Array(g.count);
+  const biome = new Uint8Array(g.count);
+  for (let c = 0; c < g.count; c++) {
+    nppGm2[c] = tect.elevationM[c] < 0 ? 0 : miamiNPP(temperatureC[c], precipMm[c]);
+    biome[c] = classify({
+      temperatureC: temperatureC[c],
+      precipMm: precipMm[c],
+      sinLat: g.centres[c * 3 + 1],
+      elevationM: tect.elevationM[c],
+    });
+  }
+
+  return { tect, temperatureC, precipMm, nppGm2, biome, oceanDistance };
 }
 
 // ---------------------------------------------------------------------------
 // Tectonics
 // ---------------------------------------------------------------------------
 
-/**
- * Scatter plate nuclei and grow them outward.
- *
- * Growth is a cost-weighted flood fill rather than a plain breadth-first one.
- * Plain BFS gives graph-Voronoi cells, whose boundaries are conspicuously
- * straight -- run it once and the planet looks like a football. Perturbing each
- * step's cost with noise makes the seams wander the way real sutures do, at
- * the price of needing a heap instead of a queue.
- */
-function seedPlates(
-  seed: number,
-  plate: Int16Array,
-  oceanic: Uint8Array,
-  drift: Float64Array,
-): void {
-  const nuclei: number[] = [];
-  let probe = 0;
-  while (nuclei.length < PLATES) {
-    const h = hash3(probe++, 0x51ed, 0, seed);
-    const cell = h % CELL_COUNT;
-    if (!nuclei.includes(cell)) nuclei.push(cell);
-  }
 
-  for (let p = 0; p < PLATES; p++) {
-    const h = hash3(p, 0x0cea, 1, seed);
-    // Earth's crust is about 60% oceanic by plate count once the small
-    // continental fragments are counted; sea level is solved for separately,
-    // so this only has to be in the right neighbourhood.
-    oceanic[p] = unit(h) < 0.55 ? 1 : 0;
-
-    // A drift direction in the plate's own tangent plane. Taking an arbitrary
-    // 3D vector and removing its radial component is the cheap way to get a
-    // uniform tangent direction without any trigonometry.
-    const c = nuclei[p];
-    const px = centres[c * 3];
-    const py = centres[c * 3 + 1];
-    const pz = centres[c * 3 + 2];
-    let vx = unit(hash3(p, 1, 2, seed)) * 2 - 1;
-    let vy = unit(hash3(p, 2, 3, seed)) * 2 - 1;
-    let vz = unit(hash3(p, 3, 4, seed)) * 2 - 1;
-    const radial = vx * px + vy * py + vz * pz;
-    vx -= radial * px;
-    vy -= radial * py;
-    vz -= radial * pz;
-    const len = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
-    const speed = A.PLATE_DRIFT_M_PER_YR * (0.4 + 1.2 * unit(hash3(p, 5, 6, seed)));
-    drift[p * 3] = (vx / len) * speed;
-    drift[p * 3 + 1] = (vy / len) * speed;
-    drift[p * 3 + 2] = (vz / len) * speed;
-  }
-
-  const cost = new Float64Array(CELL_COUNT).fill(Infinity);
-  const heap = new MinHeap();
-  for (let p = 0; p < PLATES; p++) {
-    cost[nuclei[p]] = 0;
-    plate[nuclei[p]] = p;
-    heap.push(nuclei[p], 0);
-  }
-  while (heap.size > 0) {
-    const cur = heap.pop();
-    const c = cur.id;
-    if (cur.cost > cost[c]) continue;
-    for (let i = 0; i < neighbourCount(c); i++) {
-      const n = neighbours[c * 6 + i];
-      if (n < 0) continue;
-      const wobble = 1 + 0.9 * (0.5 + 0.5 * fbm3(
-        centres[n * 3] * 4, centres[n * 3 + 1] * 4, centres[n * 3 + 2] * 4, seed ^ 0x51a7, 3,
-      ));
-      const next = cur.cost + wobble;
-      if (next < cost[n]) {
-        cost[n] = next;
-        plate[n] = plate[c];
-        heap.push(n, next);
-      }
-    }
-  }
-}
-
-/**
- * Elevation, from what the plates are doing to each other.
- *
- * Convergent boundaries build; divergent ones open. Which of those you get,
- * and how much, depends on what kind of crust meets what kind:
- *
- *   continent + continent, converging -> the crust has nowhere to go but up,
- *     and you get the Himalaya. The biggest signal on the planet.
- *   ocean + continent, converging -> the dense oceanic slab dives under, and
- *     you get a trench offshore and a volcanic cordillera onshore. The Andes.
- *   ocean + ocean, converging -> one subducts under the other and throws up an
- *     island arc. Japan.
- *   anything, diverging -> a rift. On land it drops (the African rift); at sea
- *     it *rises*, because new hot crust is buoyant. The mid-Atlantic ridge is
- *     three kilometres above the abyssal plain either side of it.
- *
- * The uplift is then smeared inland over a few passes, because a mountain
- * range is a hundred kilometres wide and a plate boundary is a line.
- */
-function buildElevation(
-  seed: number,
-  plate: Int16Array,
-  oceanic: Uint8Array,
-  drift: Float64Array,
-  spacingKm: number,
-): Float32Array {
-  const elev = new Float32Array(CELL_COUNT);
-  const uplift = new Float32Array(CELL_COUNT);
-
-  for (let c = 0; c < CELL_COUNT; c++) {
-    const pc = plate[c];
-    const cx = centres[c * 3];
-    const cy = centres[c * 3 + 1];
-    const cz = centres[c * 3 + 2];
-
-    for (let i = 0; i < neighbourCount(c); i++) {
-      const n = neighbours[c * 6 + i];
-      if (n < 0) continue;
-      const pn = plate[n];
-      if (pn === pc) continue;
-
-      // Direction from c to n, flattened into c's tangent plane.
-      let dx = centres[n * 3] - cx;
-      let dy = centres[n * 3 + 1] - cy;
-      let dz = centres[n * 3 + 2] - cz;
-      const dlen = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-      dx /= dlen; dy /= dlen; dz /= dlen;
-
-      // Positive when the neighbour's plate is closing on ours.
-      const relX = drift[pn * 3] - drift[pc * 3];
-      const relY = drift[pn * 3 + 1] - drift[pc * 3 + 1];
-      const relZ = drift[pn * 3 + 2] - drift[pc * 3 + 2];
-      const closing = -(relX * dx + relY * dy + relZ * dz) / A.PLATE_DRIFT_M_PER_YR;
-
-      const bothLand = !oceanic[pc] && !oceanic[pn];
-      const bothSea = oceanic[pc] === 1 && oceanic[pn] === 1;
-
-      if (closing > 0) {
-        if (bothLand) uplift[c] += closing * 5200;
-        else if (bothSea) uplift[c] += closing * 900;
-        else if (!oceanic[pc]) uplift[c] += closing * 3600; // the overriding side
-        else uplift[c] -= closing * 4200; // the trench
-      } else {
-        // Diverging. New crust at sea is buoyant and stands proud; on land the
-        // block simply drops.
-        uplift[c] += oceanic[pc] ? -closing * 1400 : closing * 1100;
-      }
-    }
-  }
-
-  // Spread the boundary signal inland, because a plate boundary is a line and
-  // a cordillera is a few hundred kilometres wide.
-  //
-  // How many passes that takes depends on how big a cell is, which is a
-  // setting rather than a fact about mountains. At 240 km a cell it is two
-  // passes; at 2,530 km it is none, and that is the honest answer -- a cell
-  // that wide cannot resolve the Andes and pretending otherwise would smear
-  // uplift across a continent.
-  const passes = Math.max(0, Math.min(6,
-    Math.round(A.MOUNTAIN_RANGE_WIDTH_M / 1000 / Math.max(1, spacingKm))));
-  let smoothed = uplift;
-  for (let pass = 0; pass < passes; pass++) {
-    const next = new Float32Array(CELL_COUNT);
-    for (let c = 0; c < CELL_COUNT; c++) {
-      let sum = smoothed[c];
-      let count = 1;
-      for (let i = 0; i < neighbourCount(c); i++) {
-        const n = neighbours[c * 6 + i];
-        if (n < 0) continue;
-        sum += smoothed[n];
-        count++;
-      }
-      // Weighted toward the cell's own value so ranges keep their crests.
-      next[c] = 0.45 * smoothed[c] + 0.55 * (sum / count);
-    }
-    smoothed = next;
-  }
-
-  for (let c = 0; c < CELL_COUNT; c++) {
-    const x = centres[c * 3];
-    const y = centres[c * 3 + 1];
-    const z = centres[c * 3 + 2];
-    const base = oceanic[plate[c]] ? -3800 : 500;
-    // Two noise fields: rolling relief everywhere, plus ridged noise gated to
-    // places already being uplifted, so crests appear on mountains and not in
-    // the middle of a plain.
-    const rolling = fbm3(x * 2.2, y * 2.2, z * 2.2, seed ^ 0x3f21, 6) * 900;
-    const crests = ridged3(x * 5.5, y * 5.5, z * 5.5, seed ^ 0x77c3, 4);
-    const gate = smoothstep(400, 2600, smoothed[c]);
-    elev[c] = base + smoothed[c] + rolling + crests * gate * 2400;
-  }
-
-  solveSeaLevel(elev);
-  return elev;
-}
 
 /**
  * Put the shoreline where Earth's is.
@@ -400,21 +337,38 @@ function solveSeaLevel(elev: Float32Array): void {
 // ---------------------------------------------------------------------------
 
 /** Steps to the nearest sea cell. Drives continentality and, later, trade. */
-function measureOceanDistance(elev: Float32Array): Int16Array {
-  const dist = new Int16Array(CELL_COUNT).fill(-1);
-  const queue: number[] = [];
-  for (let c = 0; c < CELL_COUNT; c++) {
-    if (elev[c] < 0) { dist[c] = 0; queue.push(c); }
+/**
+ * A grid the climate can be computed on: the world map, or the mesh.
+ *
+ * The climate model never cared which. It wants positions, adjacency and a
+ * spacing, and both grids have all three -- so it runs on the 196,608-cell
+ * mesh, where a rain shadow lands on the mountain that casts it, instead of on
+ * 192 cells 1,550 km across, where it cannot.
+ */
+export interface ClimateGrid {
+  count: number;
+  centres: Float64Array;
+  neighbours: Int32Array;
+  spacingKm: number;
+}
+
+function measureOceanDistance(g: ClimateGrid, elev: Float32Array): Int16Array {
+  const dist = new Int16Array(g.count).fill(-1);
+  const queue = new Int32Array(g.count);
+  let tail = 0;
+  for (let c = 0; c < g.count; c++) {
+    if (elev[c] < 0) { dist[c] = 0; queue[tail++] = c; }
   }
-  for (let head = 0; head < queue.length; head++) {
+  for (let head = 0; head < tail; head++) {
     const c = queue[head];
-    for (let i = 0; i < neighbourCount(c); i++) {
-      const n = neighbours[c * 6 + i];
+    for (let i = 0; i < 6; i++) {
+      const n = g.neighbours[c * 6 + i];
       if (n < 0 || dist[n] >= 0) continue;
-      dist[n] = dist[c] + 1;
-      queue.push(n);
+      dist[n] = Math.min(32000, dist[c] + 1);
+      queue[tail++] = n;
     }
   }
+  for (let c = 0; c < g.count; c++) if (dist[c] < 0) dist[c] = 0;
   return dist;
 }
 
@@ -426,10 +380,10 @@ function measureOceanDistance(elev: Float32Array): Int16Array {
  * trigonometry involved. That is worth noticing: the one place a planet really
  * wants a transcendental turns out not to need one.
  */
-function buildTemperature(elev: Float32Array): Float32Array {
-  const t = new Float32Array(CELL_COUNT);
-  for (let c = 0; c < CELL_COUNT; c++) {
-    const sinLat = centres[c * 3 + 1];
+function buildTemperature(g: ClimateGrid, elev: Float32Array): Float32Array {
+  const t = new Float32Array(g.count);
+  for (let c = 0; c < g.count; c++) {
+    const sinLat = g.centres[c * 3 + 1];
     const u = sinLat * sinLat;
     const seaLevelT = A.TEMP_EQUATOR_C - A.TEMP_QUAD_COEFF * u - A.TEMP_CUBIC_COEFF * u * u * u;
     t[c] = seaLevelT - A.LAPSE_RATE_PER_M * Math.max(0, elev[c]);
@@ -454,19 +408,20 @@ function buildTemperature(elev: Float32Array): Float32Array {
  *     is what puts a desert immediately behind a mountain range.
  */
 function buildPrecipitation(
+  g: ClimateGrid,
   seed: number,
   elev: Float32Array,
   temp: Float32Array,
   oceanDist: Int16Array,
   k: ClimateParams,
-  spacingKm: number,
 ): Float32Array {
-  const p = new Float32Array(CELL_COUNT);
+  const p = new Float32Array(g.count);
+  const spacingKm = g.spacingKm;
 
-  for (let c = 0; c < CELL_COUNT; c++) {
-    const x = centres[c * 3];
-    const sinLat = centres[c * 3 + 1];
-    const z = centres[c * 3 + 2];
+  for (let c = 0; c < g.count; c++) {
+    const x = g.centres[c * 3];
+    const sinLat = g.centres[c * 3 + 1];
+    const z = g.centres[c * 3 + 2];
     const u = Math.abs(sinLat);
 
     const itcz = k.itczMm * gauss(u, 0, k.itczWidth);
@@ -494,11 +449,11 @@ function buildPrecipitation(
 
       let upwind = -1;
       let best = -Infinity;
-      for (let i = 0; i < neighbourCount(c); i++) {
-        const n = neighbours[c * 6 + i];
+      for (let i = 0; i < 6; i++) {
+        const n = g.neighbours[c * 6 + i];
         if (n < 0) continue;
-        const dx = centres[n * 3] - x;
-        const dz = centres[n * 3 + 2] - z;
+        const dx = g.centres[n * 3] - x;
+        const dz = g.centres[n * 3 + 2] - z;
         const align = -(dx * ex + dz * ez);
         if (align > best) { best = align; upwind = n; }
       }
@@ -570,3 +525,45 @@ class MinHeap {
 }
 
 export { Biome, type BiomeId };
+
+/** Longitude of a world-map cell, from its centre. */
+function lonOf(cell: number): number {
+  return datan2(centres[cell * 3 + 2], centres[cell * 3]);
+}
+
+/**
+ * Summarise a mesh field over each world-map cell, by MEDIAN.
+ *
+ * Not the mean, and the difference is the whole coastline. A world cell covers
+ * about a thousand mesh cells; average the elevation of one that is half
+ * mountain and half abyss and the answer is deep ocean, so averaging turned a
+ * mesh that is 29.2% land into a world map that was 16.1% land. Every coastal
+ * region drowned, which is exactly the class of region that matters.
+ *
+ * A median is land precisely when the region is mostly land, which is what a
+ * cell 1,550 km across can honestly claim about itself. It is also robust: one
+ * trench in the corner does not move it.
+ *
+ * Every mesh cell is walked once and dropped into whichever world cell holds
+ * it -- O(mesh) rather than O(world x mesh) -- and every one gets exactly one
+ * vote, because the projection is equal-area and they really are the same size.
+ */
+function medianFromMesh(
+  t: Tectonics,
+  read: (t: Tectonics, mesh: number) => number,
+): Float32Array {
+  const buckets: number[][] = new Array(CELL_COUNT);
+  for (let c = 0; c < CELL_COUNT; c++) buckets[c] = [];
+  for (let m = 0; m < t.band.count; m++) {
+    const c = cellAt(t.band.centres[m * 3], t.band.centres[m * 3 + 1], t.band.centres[m * 3 + 2]);
+    buckets[c].push(read(t, m));
+  }
+  const out = new Float32Array(CELL_COUNT);
+  for (let c = 0; c < CELL_COUNT; c++) {
+    const b = buckets[c];
+    if (b.length === 0) continue;
+    b.sort((x, y) => x - y);
+    out[c] = b[b.length >> 1];
+  }
+  return out;
+}

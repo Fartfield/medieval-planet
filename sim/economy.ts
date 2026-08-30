@@ -77,6 +77,16 @@ export interface Report {
   oreRichness: number;
   timberKgPerYear: number;
 
+  /** Is there anybody else in the world to trade with?
+   *
+   * A town alone cannot specialise however rich its ore, because there is
+   * nobody to buy the iron and nobody to sell it the food it stops growing.
+   * This is deliberately "anybody at all" rather than "anybody in reach": the
+   * market's own distance limits decide whether a trade actually happens, and
+   * a town whose only neighbour is unreachable will still find that out the
+   * ordinary way, by watching grain fail to arrive. */
+  alone: boolean;
+
   /** Fraction of what people needed that they actually got. */
   ration: number;
   /** Share of the settlement's hands with nothing to do. Drives spreading
@@ -168,6 +178,7 @@ export function runEconomy(world: World): EconomyResult {
       + sold;
     const harvest = world.harvestFor(
       address, population, ironSupply, farmShare, neighbours, target);
+    const alone = neighbours.length === 0;
     const grainGrown = harvest.netKgPerYear * perTurn;
 
     // Whatever hands are not farming go to the ore, if there is any.
@@ -199,6 +210,7 @@ export function runEconomy(world: World): EconomyResult {
       ironLimitedBy: ironLimit(idleDays, oreRichness, catchment.timberKgPerYear),
       oreRichness,
       timberKgPerYear: catchment.timberKgPerYear,
+      alone,
       ration: 0,
       idleShare: 0,
       harvest,
@@ -262,6 +274,23 @@ function decideFarmShare(r: Report): number {
   const yearIron = r.ironNeed * A.TURNS_PER_YEAR;
   const monthsOfFood = yearGrain <= 0 ? 12 : (r.grainStock / yearGrain) * 12;
 
+  // Is anybody actually delivering grain?
+  //
+  // A town alone in the wilderness must farm, however poor the ground, because
+  // there is nothing else to eat. Grain arriving is the observable fact that
+  // says a different trade is survivable.
+  //
+  // This used to be declared inside the hungry branch below, and it guarded
+  // only that branch -- so a town that was *fed* could strip its fields with
+  // nobody bringing food. Measured: a settlement alone on 169 kg/ha farmed
+  // contentedly for ten years, banked a granary, and then, because it wanted
+  // iron for its own ploughs and had nine months of food behind it, walked its
+  // farm share down to the 0.05 floor. Its ration fell to 0.13 and it was
+  // living entirely on stores it had no way to replace. A full granary is a
+  // reason to think you can afford to specialise; it is not somebody bringing
+  // you food, and only the second one is survivable.
+  const someoneFeedsUs = r.grainIn > 0;
+
   // Hungry, or nearly. This overrides everything.
   if (r.ration < 0.98 || monthsOfFood < 3) {
     // Would farming harder actually fix it?
@@ -277,12 +306,6 @@ function decideFarmShare(r: Report): number {
     // people need, more hands on them is not the answer.
     const farmingCannotFix = r.harvest.limitedBy === 'land'
       || r.harvest.ration < 0.8;
-
-    // And it is only an answer if somebody is actually delivering grain. A
-    // town alone in the wilderness must farm, however poor the ground, because
-    // there is nothing else to eat. Grain arriving is the observable fact that
-    // says a different trade is survivable.
-    const someoneFeedsUs = r.grainIn > 0;
 
     return farmingCannotFix && someoneFeedsUs
       ? clamp(share - SHARE_STEP, MIN_FARM_SHARE, 1)
@@ -308,7 +331,19 @@ function decideFarmShare(r: Report): number {
 
   // Specialise only with a full granary behind it. A town that puts its hands
   // in a mine before it has a year of food starves in the first bad week.
-  if ((wantsItself || somebodyBought) && monthsOfFood >= 9) {
+  // AND there has to be somebody out there.
+  //
+  // `someoneFeedsUs` is the right test when the town is hungry, because by then
+  // grain either is or is not arriving. It is the wrong test for *starting*,
+  // and using it here deadlocked the pair: a town will not buy grain until it
+  // stops growing its own, and it will not stop growing its own until grain is
+  // arriving. Nothing ever moved.
+  //
+  // What distinguishes the two cases before any trade has happened is simply
+  // whether anyone else exists. A town alone in the wilderness has nobody to
+  // buy its iron and nobody to sell it food, so its ore is worth nothing to it
+  // however rich it is.
+  if ((wantsItself || somebodyBought) && monthsOfFood >= 9 && !r.alone) {
     return clamp(share - SHARE_STEP, MIN_FARM_SHARE, 1);
   }
   return share;
