@@ -64,7 +64,7 @@ export interface Planet {
    * The planet the world map is a summary of.
    *
    * Every layer below reads this directly rather than interpolating between
-   * the world map's 192 cells, which is what stops a coastline's shape being
+   * the world map's 546 cells, which is what stops a coastline's shape being
    * decided by a dozen hexagons.
    */
   mesh: PlanetMesh;
@@ -128,11 +128,11 @@ export function generatePlanet(
   climate: ClimateParams = DEFAULT_CLIMATE,
 ): Planet {
   // THE MESH IS THE PLANET. Tectonics, elevation, erosion, climate and biome
-  // are all computed on 110,592 cells at 65 km, and the world map's 192 cells
+  // are all computed on 122,850 cells at 68 km, and the world map's 546 cells
   // are a summary of that rather than the thing itself.
   //
   // That inversion is the whole change. Before it, a coastline's shape was
-  // decided by 192 hexagons 1,550 km across and every layer below inherited
+  // decided by a few hundred hexagons 1,550 km across and every layer below inherited
   // that outline; now every layer reads a field that knows about mountain
   // belts, rifts, island arcs and river valleys, and adds its own detail to it.
   //
@@ -343,7 +343,7 @@ function solveSeaLevel(elev: Float32Array): void {
  * The climate model never cared which. It wants positions, adjacency and a
  * spacing, and both grids have all three -- so it runs on the 196,608-cell
  * mesh, where a rain shadow lands on the mountain that casts it, instead of on
- * 192 cells 1,550 km across, where it cannot.
+ * 546 cells 930 km across, where it barely can.
  */
 export interface ClimateGrid {
   count: number;

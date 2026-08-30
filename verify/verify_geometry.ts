@@ -19,6 +19,7 @@ import {
 import * as A from '../sim/anchors.ts';
 import { World } from '../sim/world.ts';
 import { cellContaining } from '../sim/gen/submap.ts';
+import { MESH_ROWS, MESH_COLS } from '../sim/gen/tectonics.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 suite('the world map has no pentagons', () => {
@@ -33,7 +34,27 @@ suite('the world map has no pentagons', () => {
   // hexagons give E = 3F and V = 2F, so V - E + F = 0 where a closed surface
   // needs 2. At 92 cells the twelve were one region in eight.
   check('cell count', CELL_COUNT, COLS * ROWS, 0);
-  check('columns are three times the rows', COLS, 3 * ROWS, 0);
+  // The band's reach is 2.72070 x ROWS/COLS and depends on nothing else -- not
+  // on how fine the grid is. So this is the one number that decides how much
+  // of the sphere is left to the storms.
+  check('the band reaches what the aspect implies',
+    BAND_SIN_LIMIT, (Math.PI * Math.sqrt(3) / 2) * (ROWS / COLS), 1e-12);
+
+  const capRadiusDeg = 90 - (Math.asin(BAND_SIN_LIMIT) * 180) / Math.PI;
+  measure('storm cap angular radius, degrees', capRadiusDeg);
+  measure('storm cap share of the globe, per cap', (1 - BAND_SIN_LIMIT) / 2);
+  // Half the 24.95 degrees the 8/24 grid left, which is what it was solved for.
+  check('the caps are half the width they were', capRadiusDeg, 12.47, 0.15);
+
+  // THE MESH MUST REACH AT LEAST AS FAR AS THE WORLD MAP.
+  //
+  // The world's outermost row would otherwise be summarising a planet that
+  // stops short of it. The two are the same ratio by construction now -- the
+  // mesh counts are the world's times an integer -- and this says so out loud
+  // because it is the kind of invariant that breaks silently when somebody
+  // edits one of the two.
+  check('the mesh band reaches exactly as far as the world band',
+    (Math.PI * Math.sqrt(3) / 2) * (MESH_ROWS / MESH_COLS), BAND_SIN_LIMIT, 1e-12);
 
   // THE HEADLINE. Not "few" pentagons: none.
   let fives = 0;
@@ -157,13 +178,89 @@ suite('the world map has no pentagons', () => {
   }
   measure('closest neighbour km', minStep / 1000);
   measure('furthest neighbour km', maxStep / 1000);
-  assert('no neighbour is absurdly far', maxStep / minStep < 3.5);
+  measure('neighbour distance spread', maxStep / minStep);
+
+  // PREDICTED, not bounded by a number somebody liked.
+  //
+  // This used to assert a ratio under 3.5, which held at 2.06 on the 24x8 grid
+  // and broke at 3.90 on 39x14. Neither figure is a fault: extending the band
+  // poleward necessarily stretches the outermost cells, because a cylindrical
+  // projection buys equal area by giving up shape. A threshold cannot tell the
+  // difference between that and a broken lattice, so it is the wrong tool.
+  //
+  // Both extremes are computable instead. The closest pair is east-west along
+  // the outermost row, where the circle of latitude is shortest; the furthest
+  // is the diagonal between the two outermost rows, where sine-latitude
+  // compresses hardest. If the measured pair match the projection's arithmetic
+  // then the lattice is exactly what it claims to be, whatever the ratio.
+  const rowH = 1.5 * CELL_R;
+  const sTop = BAND_SIN_LIMIT - 0.5 * rowH;
+  const sNext = sTop - rowH;
+  const latTop = Math.asin(sTop);
+
+  const predictedMin = (2 * Math.PI * A.EARTH_RADIUS_M * Math.cos(latTop)) / COLS;
+  const dLat = latTop - Math.asin(sNext);
+  const dLon = 0.5 * Math.sqrt(3) * CELL_R * Math.cos(0.5 * (latTop + Math.asin(sNext)));
+  const predictedMax = A.EARTH_RADIUS_M * Math.hypot(dLat, dLon);
+
+  check('the closest pair is the outermost row, east to west',
+    minStep, predictedMin, predictedMin * 0.02);
+  check('the furthest pair is the diagonal off that row',
+    maxStep, predictedMax, predictedMax * 0.02);
 
   // Six corners on everything. There is nothing else any more.
   let badOutline = 0;
   for (let c = 0; c < CELL_COUNT; c++) if (outline(c).length / 3 !== 6) badOutline++;
   check('every cell has six corners', badOutline, 0, 0);
   measure('cell circumradius in projection units', CELL_R);
+});
+
+suite('nothing makes landfall against a storm', () => {
+  // The lore constraint, checked rather than asserted in prose: the two caps
+  // are permanent storms and the last thing before them is open water. See
+  // docs/world-lore.md, and drownStormMargin in sim/gen/tectonics.ts.
+  //
+  // A cell borders a cap exactly when one of its six neighbours is -1, which
+  // is true only in the top and bottom rows. This is the check that would
+  // catch the margin being dropped, mis-signed, or applied to the mesh's row
+  // height instead of the world's -- the mesh row is a fifteenth the size, so
+  // that mistake would leave the outer row very much above water.
+  const w = new World({ seed: 20260826 });
+
+  let bordering = 0;
+  let borderingLand = 0;
+  let highestLand = 0;
+  for (let c = 0; c < CELL_COUNT; c++) {
+    let touchesCap = false;
+    for (let k = 0; k < 6; k++) if (neighbours[c * 6 + k] < 0) touchesCap = true;
+    if (touchesCap) {
+      bordering++;
+      if (w.planet.elevationM[c] > 0) borderingLand++;
+    }
+    if (w.planet.elevationM[c] > 0) {
+      const s = Math.abs(centres[c * 3 + 1]);
+      if (s > highestLand) highestLand = s;
+    }
+  }
+
+  measure('world cells bordering a storm', bordering);
+  check('two rows of them', bordering, 2 * COLS, 0);
+  check('and none of them is land', borderingLand, 0, 0);
+
+  const latDeg = (Math.asin(highestLand) * 180) / Math.PI;
+  measure('highest latitude holding land, degrees', latDeg);
+  // The outer row starts at 56.8 degrees, so land has to stop below it. The
+  // upper bound is the claim; the lower one guards against the margin eating
+  // the whole temperate world, which a sign error here would do.
+  assert('land stops short of the storms', latDeg < 56.8 && latDeg > 35);
+
+  // The land drowned at the poles comes back further south rather than being
+  // lost, because sea level is re-solved to Earth's land fraction afterwards.
+  let land = 0;
+  for (let c = 0; c < CELL_COUNT; c++) if (w.planet.elevationM[c] > 0) land++;
+  measure('world land fraction with the storms in place', land / CELL_COUNT);
+  assert('the world did not lose its land to the storms',
+    land / CELL_COUNT > 0.2 && land / CELL_COUNT < 0.4);
 });
 
 suite('sub-map', () => {

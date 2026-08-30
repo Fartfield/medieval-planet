@@ -1,7 +1,7 @@
 // A hex grid wrapped east to west around the sphere, at any resolution.
 //
 // The world map is one of these and so is the tectonic mesh the world map is
-// generated from -- the same construction at 192 cells and at 196,608 -- so it
+// generated from -- the same construction at 546 cells and at 122,850 -- so it
 // lives here rather than twice.
 //
 // The grid is laid out in (longitude, sine of latitude), which is the Lambert

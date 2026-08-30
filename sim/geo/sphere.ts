@@ -46,21 +46,35 @@ import { dsin, dcos, datan2, PI } from '../gen/mathx.ts';
 const SQRT3 = Math.sqrt(3);
 
 /**
- * Rows of cells between the caps, and columns around the world.
+ * Rows of cells between the storm caps, and columns around the world.
  *
- * COLS is three times ROWS, and that ratio is not chosen for looks: it is what
- * makes the band reach the polar circle, and it drops out of the wrap
- * arithmetic rather than being imposed. See BAND_SIN_LIMIT.
+ * THE RATIO IS THE CAP. Everything about how much of the sphere is left
+ * ungridded is decided here and nowhere else, because BAND_SIN_LIMIT below
+ * works out to 2.72070 x ROWS/COLS and depends on nothing else at all. A
+ * finer grid with the same ratio has the same caps; a different ratio moves
+ * them whatever the resolution.
  *
- * 24 by 8 puts 192 cells on the world map against the Goldberg globe's 92.
- * Six rows was closer to the old cell count and too coarse to hold a climate:
- * with only six latitude bands one of them lands squarely on the subtropical
- * desert belt, and the world came out 33.3% desert -- which is exactly two
- * rows in six, and the giveaway. Eight rows straddle the belt instead and the
- * figure falls to 27%, against a target of 19 +/- 10.
+ * 39 by 14 was solved backwards from a wanted cap, which is the honest way
+ * round now that the caps are a place in the world rather than an artefact.
+ * Halving the caps' angular radius -- 24.95 degrees to 12.47 -- needs the band
+ * to reach sin(lat) 0.97656, so ROWS/COLS must be 0.358936. 14/39 is 0.358974
+ * and lands the band edge at 77.58 degrees, a cap radius of 12.42: 50.2%
+ * narrower than the 24.95 it replaces.
+ *
+ * COLS IS ODD, and that is allowed. The wrap is `(col + shift) % COLS` and
+ * nothing else -- see build() -- so it does not care about parity: only
+ * columns wrap, and a row's half-cell shift is uniform along it. A hex band on
+ * a cylinder tiles seamlessly for any COLS at all.
+ *
+ * 546 cells against the 192 this replaced, and against the Goldberg globe's
+ * 92. Resolution is not the point of the change but it is a real gain: the
+ * old eight rows were chosen because six put a whole latitude band squarely on
+ * the subtropical desert belt and the world came out 33.3% desert -- exactly
+ * two rows in six, which was the giveaway. Fourteen rows resolve the belt
+ * properly instead of straddling it.
  */
-export const ROWS = 8;
-export const COLS = 3 * ROWS;
+export const ROWS = 14;
+export const COLS = 39;
 export const CELL_COUNT = COLS * ROWS;
 
 /** None. That is the point of this module. */
@@ -78,16 +92,23 @@ export const CELL_R = (2 * Math.PI) / (COLS * SQRT3);
  * How far the grid reaches from the equator, as a sine of latitude.
  *
  * ROWS rows of vertical spacing 1.5·r, half above the equator and half below.
- * With COLS = 3·ROWS the ratio cancels and this is 0.9069 whatever ROWS is,
- * which is latitude 65.05 degrees. **The polar circle is at 66.56 degrees**,
- * set by Earth's 23.44-degree axial tilt -- so the grid ends within a degree
- * and a half of the real boundary of the polar day.
+ * Substituting CELL_R, the whole thing collapses to
  *
- * That is a coincidence of the arithmetic rather than something imposed, and
- * it is worth saying so plainly. The grid does not stop there because the
- * Arctic is there. It stops there because a hex grid that closes on itself
- * around a sphere, with cells about as tall as they are wide, reaches about
- * that far. The two agreeing is luck, and convenient luck.
+ *     BAND_SIN_LIMIT = (pi·sqrt(3)/2) · ROWS/COLS = 2.72070 · ROWS/COLS
+ *
+ * so the band's reach is a pure function of the ASPECT of the grid and is
+ * completely independent of how fine it is. That is the fact worth carrying:
+ * you cannot shrink the caps by adding detail, only by changing the ratio.
+ *
+ * At 14/39 this is 0.97666, which is latitude 77.58 degrees, and the caps
+ * beyond it have an angular radius of 12.42 degrees.
+ *
+ * The previous grid stopped at 65.05 degrees, and the note here used to make
+ * something of its landing within a degree and a half of the 66.56-degree
+ * polar circle. That was luck rather than design -- the comment said so -- and
+ * the luck is spent: the caps are now storms rather than ice, they are a place
+ * in the world with lore attached, and where they begin is chosen. See
+ * docs/world-lore.md.
  */
 export const BAND_SIN_LIMIT = (ROWS * 1.5 * CELL_R) / 2;
 
@@ -97,7 +118,7 @@ export const centres = new Float64Array(CELL_COUNT * 3);
 /**
  * Neighbour ids, six per cell, packed in the order E, NE, NW, W, SW, SE.
  *
- * A -1 means the ice cap, and only the top and bottom rows have any: two each.
+ * A -1 means a storm cap, and only the top and bottom rows have any: two each.
  * Every other cell has six, which is the entire point of the exercise.
  */
 export const neighbours = new Int32Array(CELL_COUNT * 6).fill(-1);

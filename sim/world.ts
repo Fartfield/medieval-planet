@@ -349,15 +349,38 @@ export class World {
   // --- what a settlement can reach ------------------------------------------
 
   /**
-   * How many sub-maps a catchment may spread over.
+   * How much ground a catchment may actually look at, in square metres.
    *
-   * A sub-map is now 91 cells of 888 m2, which is 8 hectares -- a fifth of what
-   * one family farms. So a catchment needs *many* maps where it used to need
-   * one, and the cap is correspondingly larger. It is not as expensive as it
-   * sounds: a 91-cell map costs about a hundredth of what a 9,919-cell one did,
-   * so 127 of them is still less work than seven of the old ones.
+   * THIS IS A COMPUTE BUDGET WEARING PHYSICAL UNITS, and it is stated this way
+   * on purpose. It used to be a count -- 127 sub-maps -- and a count is a
+   * quantity of *work*, not a quantity of *world*, so what a settlement could
+   * reach depended on how finely the planet happened to be divided.
+   *
+   * That went wrong exactly as you would expect. Re-gridding the world from 24
+   * by 8 to 39 by 14 made a ground tile 149.7 m2 instead of 425.7, and the same
+   * 127 maps then covered 1.73 km2 instead of 4.92. Every settlement in the
+   * world lost nearly two thirds of its farmland to a change of map resolution:
+   * carrying capacity fell from 490 people to 209, towns hit their land limit
+   * three times sooner, and a kingdom that used to throw seven daughters in
+   * forty years threw seventy-nine. None of that was geography.
+   *
+   * Worse, the cap bound at EVERY population once tiles were that small -- even
+   * a hamlet of twenty asked for 3.2 km2 and was given 1.73 -- so "limited by
+   * land" had stopped meaning the land had run out and started meaning the
+   * search had.
+   *
+   * As an area it is invariant: the map count is derived from it and the tile
+   * size, so a finer grid costs more maps to cover the same ground rather than
+   * quietly covering less. 4.92 km2 is what the old cap worked out to, and it
+   * is a defensible figure to have inherited -- 492 hectares is about what a
+   * village of a few hundred works once waste, wood and pasture are counted --
+   * but it is a budget and not a measurement, so it is labelled as one.
+   *
+   * The real limit on how far a settlement reaches is `radiusForPopulation`,
+   * which is solved from what the people need and what the ground yields. This
+   * only stops that search becoming unbounded.
    */
-  static readonly CATCHMENT_MAPS = 127;
+  static readonly CATCHMENT_REACH_M2 = 4.92e6;
 
   /**
    * The land a settlement at `address` can reach, with the maps it needs
@@ -391,7 +414,10 @@ export class World {
     const hit = this.catchments.get(key);
     if (hit !== undefined) return hit;
 
-    const { maps, addresses } = this.mapsAround(address, radiusM, World.CATCHMENT_MAPS);
+    // Derived from the reach, so the same ground is searched at any resolution.
+    const mapCap = Math.max(
+      1, Math.ceil(World.CATCHMENT_REACH_M2 / (SUBCELL_COUNT * areaM2)));
+    const { maps, addresses } = this.mapsAround(address, radiusM, mapCap);
     const built = buildCatchment(
       maps, addresses, 0, address[address.length - 1], radiusM, areaM2);
 

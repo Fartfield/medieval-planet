@@ -21,7 +21,51 @@ import { Biome } from '../sim/model/biome.ts';
  * tundra where it has no arctic, which it can only do by being too cold
  * everywhere else.
  */
-const EARTH = { forest: 0.356, grass: 0.287, desert: 0.218, tundraIce: 0.080 };
+/**
+ * Earth's land cover, restricted to the latitudes THIS world has land in.
+ *
+ * The storms drown the outermost row of cells, so nothing here lives above
+ * about 57 degrees -- see docs/world-lore.md. Comparing against Earth's global
+ * shares would ask this world to grow a taiga it has no room for and an ice
+ * sheet it has no poles for, so the comparison is made against Earth below 57
+ * degrees instead.
+ *
+ * LAND AREA, in millions of km2:
+ *
+ *   Earth's land                        149.0
+ *     less Antarctica                   -14.0   entirely above 60S
+ *     less Greenland                     -2.2   almost entirely above 60N
+ *     less other land above 57           -12.0  northern Canada, Alaska,
+ *                                               northern Russia, Scandinavia
+ *   land at or below 57 degrees         120.8
+ *
+ * and within it:
+ *
+ *   forest    46.2 global (FAO: 31% of land) less ~8.2 of boreal
+ *             lying above 57                                       38.0
+ *   grass     savanna and temperate grassland                      32.5
+ *   desert    subtropical desert, nearly all of it below 57        21.0
+ *   tundra    alpine only, the rest having been cut                 1.0
+ *                                                                 -----
+ *                                                                  92.5
+ *
+ * RENORMALISED OVER THOSE FOUR, which is the fair comparison rather than a
+ * convenience: Earth's remaining 28 million km2 is cropland, wetland,
+ * mediterranean scrub and montane mosaic, and this model's classifier has no
+ * bucket for any of them -- it puts about 98% of its land in the same four. So
+ * the two are made to sum to the same thing before they are compared, instead
+ * of charging this world for categories it cannot produce.
+ *
+ * The soft part is the taiga and tundra split at 57 degrees; everything else is
+ * kept whole because it lies well south of the cut. The tolerance downstream is
+ * wide for exactly that reason.
+ *
+ * The previous figures were the same exercise against a band ending at 65
+ * degrees: forest 0.356, grass 0.287, desert 0.218, tundra/ice 0.080. Tundra
+ * collapsing to 0.011 is the honest headline -- a world with no land above 57
+ * degrees has no tundra except on mountains.
+ */
+const EARTH = { forest: 0.411, grass: 0.351, desert: 0.227, tundraIce: 0.011 };
 
 /**
  * One seed, and that is an increase in sample size rather than a cut.
@@ -69,9 +113,15 @@ const rows: { k: ClimateParams; err: number; cover: Record<string, number>; labe
 // were the per-cell units it had before that anchor was fixed, and at a mesh
 // spacing of 65 km a value of 0.1/km wrings the air dry ten kilometres inland
 // -- so every row came back 88% desert and the sweep reported them all as
-// equally, uselessly bad. The range now brackets the anchor: half-lives from
-// about 4,600 km down to 870.
-for (const continentality of [8.0e-4, 1.2e-3, 1.8e-3, 2.6e-3, 4.0e-3]) {
+// equally, uselessly bad.
+//
+// EXTENDED DOWNWARD after the re-grid. Every one of the eight best rows came
+// back at 8.0e-4, which was the bottom of the range -- and a sweep whose winner
+// sits on its own boundary has not found a minimum, it has run out of room.
+// This world's land is confined below 57 degrees, so it has proportionally more
+// ground in the dry subtropics and less under the polar front than the old band
+// did, and it wants wetter interiors to balance that.
+for (const continentality of [2.0e-4, 3.5e-4, 5.0e-4, 8.0e-4, 1.2e-3, 1.8e-3, 2.6e-3]) {
   for (const backgroundMm of [10, 25, 40]) {
     for (const frontWidth of [0.20, 0.24]) {
       for (const leeFloor of [0.10, 0.22]) {

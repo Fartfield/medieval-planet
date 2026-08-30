@@ -65,8 +65,11 @@ zero, so a band that wraps needs none at all, and the map is now hexagons only.
 The cost moved from topology to shape, which is the better place for it: a
 stretched hexagon still tiles, still has six neighbours, and still subdivides.
 
-The band reaches to 65.05 degrees, just short of the 66.56-degree polar circle.
-The caps beyond it are ungridded ice.
+The band reaches to 77.58 degrees and the caps beyond it are ungridded. They
+are permanent storms rather than ice now, and their size is chosen rather than
+inherited -- see docs/world-lore.md. Nothing lands against them: the outermost
+row of cells is drowned, which costs this world all land above about 57
+degrees.
 
 **A 2,900 km cell cannot resolve a mountain range.** Uplift smearing is scaled
 to a real distance and at this resolution correctly does nothing, so relief at

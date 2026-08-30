@@ -89,15 +89,17 @@ suite('climate', () => {
   // Tolerances are wider than they were, and honestly so: 92 regions is a
   // coarse sample of a planet however many seeds are pooled, because each seed
   // only offers about 27 pieces of land and they are enormous.
-  check('forest cover', cover.forest, 0.356, 0.10);
-  check('grassland cover', cover.grass, 0.287, 0.10);
-  check('desert cover', cover.desert, 0.218, 0.10);
-  // Tundra and ice are about a fifth of Earth's land -- and almost all of that
-  // fifth is poleward of 65 degrees: Antarctica, Greenland, the high Arctic.
-  // The world map is a hex band that stops at 65.05 and leaves the caps
-  // ungridded, so that land is not absent from the model, it is outside it.
-  // Within the band Earth carries a few per cent, and so does this.
-  check('tundra and ice cover inside the gridded band', cover.tundraIce, 0.080, 0.05);
+  // Against Earth BELOW 57 DEGREES, which is where this world's land is: the
+  // storms drown the outermost row, so there is no taiga belt and no ice sheet
+  // to compare with. The derivation is in verify/calibrate_climate.ts.
+  check('forest cover', cover.forest, 0.411, 0.10);
+  check('grassland cover', cover.grass, 0.351, 0.10);
+  check('desert cover', cover.desert, 0.227, 0.10);
+  // Tundra and ice are about a fifth of Earth's land, and almost all of that
+  // fifth is poleward of 60 degrees: Antarctica, Greenland, the high Arctic.
+  // This world has no land above about 57 degrees at all -- the storms take the
+  // outermost row -- so what is left is alpine tundra and nothing else.
+  check('tundra and ice cover, which is alpine only', cover.tundraIce, 0.011, 0.04);
 
   // Zonal temperature, against observed means over low-lying land.
   const observed: [number, number][] = [[0, 26], [30, 20], [45, 12], [60, 0]];

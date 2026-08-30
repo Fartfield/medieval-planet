@@ -7,7 +7,9 @@
 // opening move forever. See docs/fix-attempts.md.
 
 import { World } from '../sim/world.ts';
-import { SUBCELL_COUNT } from '../sim/geo/hexgrid.ts';
+import { MESH_COLS } from '../sim/gen/tectonics.ts';
+import * as A from '../sim/anchors.ts';
+import { SUBCELL_COUNT, RADIUS } from '../sim/geo/hexgrid.ts';
 import { CELL_COUNT } from '../sim/geo/sphere.ts';
 import { toKey, fromKey, GROUND_DEPTH, MAX_DEPTH } from '../sim/geo/address.ts';
 import { Biome, miamiNPP, biotemperature } from '../sim/model/biome.ts';
@@ -176,8 +178,13 @@ suite('sub-maps', () => {
   const groundMap = w.subMap(ground.slice(0, -1));
   measure('ground cell spacing m', groundMap.spacingM);
   check('ground depth', groundMap.depth, GROUND_DEPTH, 0);
-  assert('a ground cell is a few tens of metres across',
-    groundMap.spacingM > 20 && groundMap.spacingM < 60);
+  // About thirteen metres, and that is a derived figure rather than a taste:
+  // the band's area over 546 cells is a 0.91M km2 region, and five
+  // subdivisions of 91 make the ground tile 146 m2. It was 21 m when the world
+  // map had 192 cells. The bound is wide because what it is guarding against
+  // is the ladder losing or gaining a whole layer, which moves this by 11x.
+  assert('a ground cell is about a dozen metres across',
+    groundMap.spacingM > 6 && groundMap.spacingM < 40);
 
   // Drainage must be a real catchment: heavily skewed, with a few big channels
   // rather than a uniform smear.
@@ -250,7 +257,31 @@ suite('sub-maps', () => {
     hi = Math.max(hi, groundMap.elevationM[c]);
   }
   measure('ground map relief m', hi - lo);
-  assert('a ground map has some relief', hi - lo > 0.5);
+
+  // AGAINST WHAT SELF-AFFINITY PREDICTS, not against a number of metres.
+  //
+  // This asked for more than 0.5 m and got 0.490 the moment the world was
+  // re-gridded -- not because the detail stopped working, but because a ground
+  // map went from 232 m across to 143 m, and less ground holds less relief. A
+  // threshold in metres is really a threshold on the span it was written
+  // beside, and the span is exactly what a re-grid changes.
+  //
+  // What the check is actually for, per the comment above, is that detail is
+  // being added at all rather than every ground tile coming out identical. So
+  // ask that: relief goes as span^H from the roughness the mesh recorded here,
+  // and the delivered figure has to be a real fraction of it. The bounds are
+  // wide on purpose -- an order of magnitude either side catches "no detail"
+  // and "detail has run away" and is not trying to fit anything.
+  const span = groundMap.spacingM * (2 * RADIUS + 1);
+  const meshSpacingM = (2 * Math.PI * A.EARTH_RADIUS_M) / MESH_COLS;
+  let meshRelief = 0;
+  for (let c = 0; c < SUBCELL_COUNT; c++) meshRelief += groundMap.reliefM[c];
+  meshRelief /= SUBCELL_COUNT;
+  const predicted = meshRelief * Math.pow(span / meshSpacingM, A.TOPOGRAPHY_HURST);
+  measure('ground map relief, as a share of what Hurst predicts',
+    (hi - lo) / Math.max(predicted, 1e-9));
+  assert('a ground map has relief, and of about the right size',
+    hi - lo > predicted * 0.1 && hi - lo < predicted * 3);
 
   // Generation must be reproducible, which is the whole persistence claim.
   const w2 = new World({ seed: SEED });

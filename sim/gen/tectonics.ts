@@ -3,7 +3,7 @@
 //
 // WHY THIS EXISTS
 //
-// Continents used to be decided at the resolution of the world map: 192 cells,
+// Continents used to be decided at the resolution of the world map: a few hundred cells,
 // 1,550 km across. Everything below inherited that and added noise, so a
 // coastline's large-scale shape was a cluster of hexagons however much detail
 // was painted inside them. No amount of child detail fixes a continent whose
@@ -13,7 +13,7 @@
 // run on a band of 196,608 cells at 49 km, and the world map samples that.
 // The gameplay ladder is unchanged; it just reads a field that knows about
 // mountain belts, rifts, island arcs and river valleys instead of one that
-// knows about 192 hexagons.
+// knows about 546 hexagons.
 //
 // 49 km is not arbitrary. It is about the width of a large river's floodplain
 // and a third the width of a mountain range, so the features that give a
@@ -49,13 +49,29 @@
 
 import * as A from '../anchors.ts';
 import { buildBand, bandCellAt, type Band } from '../geo/band.ts';
+import { ROWS, COLS } from '../geo/sphere.ts';
 import { fbm3, hash3, unit } from './noise.ts';
 import { clamp, dpow } from './mathx.ts';
 import { routeWater } from './hydrology.ts';
 
-/** Rows in the physics mesh. Columns are three times this; see geo/band.ts. */
-export const MESH_ROWS = 192;
-export const MESH_COLS = 3 * MESH_ROWS;
+/**
+ * The physics mesh: the world grid, refined.
+ *
+ * Derived from ROWS and COLS rather than written down again, and that is
+ * load-bearing rather than tidy. `BAND_SIN_LIMIT` is 2.72070 x ROWS/COLS, so
+ * two grids reach the same latitude if and only if they share that ratio --
+ * and the mesh has to reach at least as far as the world map, or the cells in
+ * the world's outermost row would be summarising a planet that stops short of
+ * them. Refining both counts by the same integer makes the two limits
+ * identical by construction, so the ratio cannot be broken by editing one of
+ * them.
+ *
+ * 15 gives 585 x 210 = 122,850 cells at 68.4 km, which is the resolution the
+ * tectonic model was calibrated at.
+ */
+const MESH_REFINE = 15;
+export const MESH_COLS = COLS * MESH_REFINE;
+export const MESH_ROWS = ROWS * MESH_REFINE;
 
 export interface Tectonics {
   band: Band;
@@ -217,6 +233,7 @@ export function simulateTectonics(seed: number, radiusM: number): Tectonics {
 
   solveSeaLevel(elevationM);
   erode(band, elevationM, radiusM, seed);
+  drownStormMargin(band, elevationM);
   solveSeaLevel(elevationM);
 
   // How rough each part of the world came out, measured rather than assumed.
@@ -461,6 +478,52 @@ function erode(band: Band, elevationM: Float32Array, radiusM: number, seed: numb
     // Creep: hillslopes round off between the channels, which is what stops
     // the result looking like a drainage network drawn on a plain.
     spread(band, elevationM, scratch, A.MESH_CREEP);
+  }
+}
+
+/**
+ * No land touches the storms.
+ *
+ * The two caps are permanent storms rather than ice, and nothing makes
+ * landfall against them: the last thing before the wall of weather is open
+ * water. So the outermost row of world cells -- the ones whose missing
+ * neighbours ARE the cap -- is drowned outright.
+ *
+ * The width is taken from the grid rather than chosen. "No land touches it"
+ * means no cell that borders a cap may be land, a cell that borders a cap is
+ * exactly one that sits in the outermost row, and a world row is
+ * `1.5 x CELL_R` of sine-latitude tall. That is the whole derivation. The
+ * taper over the half-row inside it is the one free part, and it is there so
+ * the coast recedes rather than ending on a drawn circle of latitude.
+ *
+ * WORTH KNOWING WHAT THIS COSTS. Sine-latitude compresses towards the pole, so
+ * one row up there is a great deal of latitude: the outermost row spans 56.8
+ * to 77.6 degrees, and drowning it means this world has no land above about 57
+ * degrees at all. There is no Scandinavia and no Siberia. That is inherent in
+ * "no land touches the caps" rather than a knob -- a whole cell is land or it
+ * is not -- and it suits a world whose poles are a permanent storm nobody
+ * sails into.
+ *
+ * Run before the final `solveSeaLevel`, which is what keeps the planet honest:
+ * the sea level is re-solved to Earth's land fraction afterwards, so the land
+ * drowned here comes back at lower latitudes instead of being lost.
+ */
+function drownStormMargin(band: Band, elev: Float32Array): void {
+  // The WORLD row height, not the mesh's. The mesh is the world grid refined
+  // by an integer, so one world row is that many mesh rows.
+  const rowH = 1.5 * band.cellR * MESH_REFINE;
+  const outer = band.sinLimit - rowH;
+  const inner = band.sinLimit - 1.5 * rowH;
+
+  // Deep water of this planet's own making rather than a depth typed in here.
+  const deep = quantile(elev, 0.10);
+
+  for (let c = 0; c < elev.length; c++) {
+    const s = band.sinLat[c] < 0 ? -band.sinLat[c] : band.sinLat[c];
+    if (s <= inner) continue;
+    const u = clamp((s - inner) / (outer - inner), 0, 1);
+    const t = u * u * (3 - 2 * u);
+    elev[c] = elev[c] * (1 - t) + deep * t;
   }
 }
 

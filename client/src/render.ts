@@ -269,11 +269,11 @@ export function drawGlobe(
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fill();
 
-  // Then the ice, before the cells, so the cells paint over its inner edge and
+  // Then the storms, before the cells, so the cells paint over the inner edge
   // no gap can open between them. The grid is a band that stops short of the
   // poles -- that is what buys a world with no pentagons in it -- and what
-  // lies beyond it is not a hole in the map, it is the ice cap.
-  drawIceCaps(ctx, cam, view);
+  // and what lies beyond is not a hole in the map, it is a storm cap.
+  drawStormCaps(ctx, cam, view);
 
   // Three ways to paint a cell, by how big it is on screen: out of its own
   // children, as their average, or flat. The ladder is what keeps a zoomed-out
@@ -391,27 +391,84 @@ export function drawGlobe(
 }
 
 /**
- * The two ice caps: everything poleward of where the hex band stops.
+ * The two storm caps: everything poleward of where the hex band stops.
  *
- * Drawn as a fan of triangles from the pole out to the band's edge, keeping
- * only those facing the viewer. A cap is a spherical cap and its outline
- * crosses the limb at most latitudes, so filling it as one polygon means
- * handling that crossing; a fan sidesteps it entirely, because each triangle
- * is small enough to be wholly in front or wholly behind.
+ * WHAT THEY ARE. Not ice. The poles of this world are two permanent storms,
+ * and the lore is in docs/world-lore.md: two pantheons face each other across
+ * the planet, and the weather over each is the edge of one of them. Nothing
+ * makes landfall against either -- the generator drowns the outermost row of
+ * cells so the last thing before the wall of weather is open water.
  *
- * The inner edge is drawn from the top row's CENTRE latitude rather than from
- * the band limit, so it runs under the cells rather than up to them. The band
- * edge is a zigzag -- hexagons have corners -- and matching a zigzag with a
- * circle leaves a row of little gaps.
+ * HOW THEY ARE DRAWN. A fan of quads from the pole out to the band's edge,
+ * keeping only those facing the viewer. A cap is a spherical cap and its
+ * outline crosses the limb at most latitudes, so filling it as one polygon
+ * means handling that crossing; a fan sidesteps it entirely, because each
+ * piece is small enough to be wholly in front or wholly behind.
+ *
+ * The ice version was a single ring of triangles, which was all a flat white
+ * disc needed. A storm needs structure to read as one, so the fan is
+ * subdivided radially as well and each piece is coloured by a spiral: the arms
+ * are a sine in (angle + twist x radius), which is what a cyclone's arms
+ * actually are, and they tighten towards the eye because the twist term grows
+ * as the radius falls.
+ *
+ * The inner edge is still drawn from the NOTCH rather than from the band
+ * limit, so it runs under the cells rather than up to them -- see below. That
+ * part is unchanged and is what keeps the hex grid clean.
  */
-function drawIceCaps(ctx: CanvasRenderingContext2D, cam: Camera, view: GlobeView): void {
+
+/** How many rings the fan is cut into. Enough to carry an arm across, cheap. */
+const STORM_RINGS = 16;
+
+/**
+ * How many arms, and how hard they wind.
+ *
+ * A LOGARITHMIC spiral, which is the one thing here taken from the real
+ * article: a cyclone's rainbands are log spirals, because a band winds by a
+ * constant angle for every constant *ratio* of radius rather than for every
+ * constant radius. The first attempt used `twist / radius`, which sends the
+ * winding to infinity at the eye -- the radial term then swamped the angular
+ * one completely and the cap came out as concentric rings with no arms in it
+ * at all. A logarithm winds without ever running away.
+ *
+ * The count and the tightness are ours; a storm is not a measured thing here.
+ * Tightness matters more than it sounds: at 2 arms and a twist of 2.2 the
+ * spiral turned twice over between rim and eye, and a spiral that wound that
+ * fast came out looking like concentric rings -- the arms were there, armT
+ * swept its full range, and none of it was legible. Under one turn end to end
+ * is what reads as a spiral.
+ */
+const STORM_ARMS = 3;
+const STORM_TWIST = 0.55;
+
+/**
+ * A palette each, because the two are opposed.
+ *
+ * The north storm is cold -- blue-white, lightning on slate. The south is
+ * warm against it, violet on near-black. Two pantheons that agree on nothing
+ * should not be the same colour, and it is the cheapest possible way to say
+ * so on a globe you can spin.
+ */
+const STORM_NORTH = { deep: '#16233a', arm: '#b9cde8', eye: '#dce9f7' };
+const STORM_SOUTH = { deep: '#241733', arm: '#cfb0dd', eye: '#f0dcf2' };
+
+function mixHex(a: string, b: string, t: number): string {
+  const na = parseInt(a.slice(1), 16);
+  const nb = parseInt(b.slice(1), 16);
+  const u = Math.max(0, Math.min(1, t));
+  const r = Math.round(((na >> 16) & 255) * (1 - u) + ((nb >> 16) & 255) * u);
+  const g = Math.round(((na >> 8) & 255) * (1 - u) + ((nb >> 8) & 255) * u);
+  const bl = Math.round((na & 255) * (1 - u) + (nb & 255) * u);
+  return `#${((r << 16) | (g << 8) | bl).toString(16).padStart(6, '0')}`;
+}
+
+function drawStormCaps(ctx: CanvasRenderingContext2D, cam: Camera, view: GlobeView): void {
   const { cx, cy, radius } = view;
   const rowCentre = BAND_SIN_LIMIT - 0.75 * CELL_R;
-  const step = SQRT3 * CELL_R;
+  const columns = COLS * 3;
 
   for (const pole of [1, -1]) {
-    const [ax, ay, az] = rotate(cam, 0, pole, 0);
-    const notch = rowCentre + 0.5 * CELL_R;
+    const palette = pole > 0 ? STORM_NORTH : STORM_SOUTH;
 
     // The cap is drawn down to the NOTCH -- the lower of the two heights the
     // band's upper edge takes, where two hexagons meet shoulder to shoulder --
@@ -419,42 +476,75 @@ function drawIceCaps(ctx: CanvasRenderingContext2D, cam: Camera, view: GlobeView
     //
     // The band's edge is a zigzag rather than a circle, because a pointy-top
     // hexagon reaches its full radius at its top vertex and only half of it at
-    // the two upper corners. Fanning the ice to that zigzag is exactly right
-    // and looks wrong: near the pole the projection stretches half a cell
-    // radius into ten degrees of latitude, so the ice runs down into every
-    // notch and the pole wears a spiked crown.
+    // the two upper corners. Fanning to that zigzag is exactly right and looks
+    // wrong: near the pole the projection stretches half a cell radius into
+    // degrees of latitude, so the cap runs down into every notch and the pole
+    // wears a spiked crown.
     //
-    // Taking the notch line instead, the ice is a clean disc and the hexagons
+    // Taking the notch line instead, the cap is a clean disc and the hexagons
     // poke their top vertices into it. Same boundary, opposite colour on the
     // in-between bit, and no gap either way.
-    const edge: number[] = [];
-    for (let col = 0; col < COLS * 3; col++) {
-      edge.push((col / (COLS * 3)) * 2 * Math.PI, notch);
+    const notch = rowCentre + 0.5 * CELL_R;
+
+    // Rings in sine-latitude, from the notch up to the pole. Spaced by the
+    // square of the normalised radius so the pieces stay a similar size on
+    // screen: sine-latitude compresses hard as it approaches 1.
+    const ringSin: number[] = [];
+    for (let r = 0; r <= STORM_RINGS; r++) {
+      const u = r / STORM_RINGS;
+      ringSin.push(notch + (1 - notch) * (1 - (1 - u) * (1 - u)));
     }
 
-    const points = edge.length / 2;
-    for (let i = 0; i < points; i++) {
-      const a0 = i * 2;
-      const a1 = ((i + 1) % points) * 2;
-      const s0 = edge[a0 + 1] * pole;
-      const s1 = edge[a1 + 1] * pole;
-      const c0 = Math.sqrt(Math.max(0, 1 - s0 * s0));
-      const c1 = Math.sqrt(Math.max(0, 1 - s1 * s1));
-      const [b0x, b0y, b0z] = rotate(cam, c0 * Math.cos(edge[a0]), s0, c0 * Math.sin(edge[a0]));
-      const [b1x, b1y, b1z] = rotate(cam, c1 * Math.cos(edge[a1]), s1, c1 * Math.sin(edge[a1]));
-      // Wholly behind the limb: skip. A sliver this narrow never straddles it
-      // by enough to matter.
-      if (az + b0z + b1z < 0) continue;
+    for (let r = 0; r < STORM_RINGS; r++) {
+      const sInner = ringSin[r];
+      const sOuter = ringSin[r + 1];
+      // 1 at the band edge, 0 at the eye.
+      const uMid = 1 - (0.5 * (sInner + sOuter) - notch) / (1 - notch);
 
-      ctx.beginPath();
-      ctx.moveTo(cx + ax * radius, cy - ay * radius);
-      ctx.lineTo(cx + b0x * radius, cy - b0y * radius);
-      ctx.lineTo(cx + b1x * radius, cy - b1y * radius);
-      ctx.closePath();
-      // Lit the way the ground is, so the cap belongs to the same ball.
-      const lambert = 0.55 + 0.45 * Math.max(0, (az + b0z + b1z) / 3);
-      ctx.fillStyle = shade(BIOME_COLOURS[1], lambert);
-      ctx.fill();
+      for (let col = 0; col < columns; col++) {
+        const a0 = (col / columns) * 2 * Math.PI;
+        const a1 = ((col + 1) / columns) * 2 * Math.PI;
+
+        const quad: number[][] = [];
+        for (const [sv, av] of [[sInner, a0], [sInner, a1], [sOuter, a1], [sOuter, a0]]) {
+          const sp = sv * pole;
+          const cp = Math.sqrt(Math.max(0, 1 - sp * sp));
+          quad.push(rotate(cam, cp * Math.cos(av), sp, cp * Math.sin(av)));
+        }
+
+        // Wholly behind the limb: skip.
+        const zSum = quad[0][2] + quad[1][2] + quad[2][2] + quad[3][2];
+        if (zSum < 0) continue;
+
+        // The arms, as a log spiral. The two poles wind OPPOSITE ways -- the
+        // `pole` factor on the angle -- which is both what Coriolis does either
+        // side of an equator and, here, the point: they are opposed.
+        const aMid = 0.5 * (a0 + a1);
+        const swirl = Math.sin(
+          STORM_ARMS * (aMid * pole + STORM_TWIST * Math.log(Math.max(uMid, 0.05))));
+        const armT = 0.5 + 0.5 * swirl;
+
+        // Arms show across most of the cap, fading only at the rim where the
+        // storm frays into ordinary weather and in the eye's glare. A plain
+        // sin(pi.u) was too narrow a window -- it confined the arms to a thin
+        // annulus and what was left either side read as plain banding.
+        const band = Math.pow(Math.sin(Math.PI * Math.max(0, Math.min(1, uMid))), 0.45);
+        const eyeT = Math.max(0, 1 - uMid * 2.6);
+
+        let colour = mixHex(palette.deep, palette.arm, armT * armT * band * 0.95);
+        colour = mixHex(colour, palette.eye, eyeT * eyeT * eyeT);
+
+        ctx.beginPath();
+        ctx.moveTo(cx + quad[0][0] * radius, cy - quad[0][1] * radius);
+        for (let i = 1; i < 4; i++) {
+          ctx.lineTo(cx + quad[i][0] * radius, cy - quad[i][1] * radius);
+        }
+        ctx.closePath();
+        // Lit the way the ground is, so the cap belongs to the same ball.
+        const lambert = 0.55 + 0.45 * Math.max(0, zSum / 4);
+        ctx.fillStyle = shade(colour, lambert);
+        ctx.fill();
+      }
     }
   }
 }

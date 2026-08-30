@@ -312,12 +312,33 @@ export const PRECIP_BACKGROUND_MM = 10.0;
  * land point sits 278 km from the sea where Earth's sits nearer 600 -- so a
  * given half-life dries out proportionally less of it.
  *
+ * Refitted AGAIN when the storms took the polar rows, and this time it moved
+ * back the other way: from a 578 km half-life to 1,386. Drowning the outermost
+ * row of cells leaves this world with no land above about 57 degrees, so its
+ * ground is proportionally less under the wet polar front and more in the dry
+ * subtropics than it was -- and a term tuned to dry out interiors was then
+ * drying out a world that had already lost its wettest latitudes. Desert cover
+ * ran to 32.8% against a target of 22.7, and forest fell to 22.9 against 41.1.
+ *
+ * The new value is also the more defensible one against the ground truth it
+ * came from: continentality across a real continental interior is measured at
+ * something over a 1,000 km half-life -- the Great Plains figure this anchor
+ * was originally argued from -- and 5.0e-4 gives 1,386 km where 1.2e-3 gave
+ * 578. The fit had been pulling it further from the measurement than it needed
+ * to be.
+ *
  * Fitted rather than chosen: the sweep in verify/calibrate_climate.ts scores
- * whole land-cover fractions against Earth's, renormalised to the band the
- * grid holds, and this is the value that wins. The fit error over four cover
- * classes is 0.050, against 0.187 for the old value on the new world.
+ * whole land-cover fractions against Earth's, restricted to the latitudes this
+ * world has land in, and this is the value that wins. The fit error over four
+ * cover classes is 0.068, against 0.253 for the old value on the new world.
+ *
+ * The first sweep after the re-grid returned all eight of its best rows at the
+ * bottom of its range, which is a sweep reporting that it ran out of room
+ * rather than that it found a minimum. Extending the range downward put the
+ * winner in the interior, with 3.5e-4 and 2.0e-4 both scoring worse. That check
+ * -- is the winner on a boundary? -- is worth making every time this is refit.
  */
-export const CONTINENTALITY_PER_KM = 1.2e-3;
+export const CONTINENTALITY_PER_KM = 5.0e-4;
 
 /**
  * How wide a mountain range is, metres. A plate boundary is a line and a

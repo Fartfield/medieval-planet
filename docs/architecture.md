@@ -89,10 +89,17 @@ centres changed.
 
 ### What it costs
 
-**The poles are not gridded.** The band runs to 65.05°, which is the polar
-circle to within a degree and a half, and beyond it are two ice caps that are
-not cells. Twelve pentagons became two ice caps: the defects moved from twelve
-places scattered through the temperate world to the two places nobody farms.
+**The poles are not gridded.** The band runs to 77.58°, and beyond it are two
+caps that are not cells. Twelve pentagons became two caps: the defects moved
+from twelve places scattered through the temperate world to the two places
+nobody goes.
+
+Those caps are now permanent storms rather than ice, with lore attached — see
+`docs/world-lore.md` — and that changed the arithmetic from a consequence into
+a decision. The band's reach is `2.72070 × ROWS/COLS` and depends on nothing
+else in the grid, so halving the caps' width is what set the aspect at 14 rows
+to 39 columns. No land touches either storm: the generator drowns the outermost
+row, which costs this world every latitude above about 57°.
 
 **Cells stretch towards the poles.** Equal area guarantees the area and says
 nothing about the shape, so a cell at ±52° is 2.7 times taller than it is wide.
@@ -101,19 +108,25 @@ least likely to be looked at. It is a *metric* distortion rather than a
 *topological* one, which is the important difference: the cells still tessellate
 exactly, every corner still shared, no cell has five neighbours.
 
-**Twenty-four by eight, and eight rows is not negotiable.** Six rows was closer
-to the old cell count and too coarse to hold a climate: one band lands squarely
-on the subtropical desert belt and the world comes out 33.3% desert — which is
-exactly two rows in six, and the giveaway. Eight rows straddle the belt.
+**Thirty-nine by fourteen, and the ratio is the caps.** The aspect was solved
+backwards from how wide the storms should be; the resolution came along with
+it. Resolution matters too, though it is no longer the thing being chosen: six
+rows was once tried and was too coarse to hold a climate, because one band
+landed squarely on the subtropical desert belt and the world came out 33.3%
+desert — exactly two rows in six, which was the giveaway. Fourteen rows resolve
+the belt rather than straddling it.
+
+COLS is odd, which is allowed: the wrap is a modulo on the column and nothing
+else, so a hex band on a cylinder tiles seamlessly for any COLS at all.
 
 | | Goldberg globe | wrapped band |
 |---|---|---|
-| cells | 92 | 192 |
+| cells | 92 | 546 |
 | pentagons | 12 (13%) | **0** |
 | cell shape | near-regular | up to 2.7:1 at ±52° |
-| poles | gridded | ice caps, ungridded |
-| region | 5.54M km² | 2.41M km² |
-| plot layer | 888 m² | 386 m² |
+| poles | gridded | storm caps, ungridded |
+| region | 5.54M km² | 0.91M km² |
+| plot layer | 888 m² | 146 m² |
 
 ## Generation cascades downward
 

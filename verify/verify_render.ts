@@ -512,7 +512,13 @@ suite('tiles on the globe tessellate', () => {
   // by construction rather than by tolerance.
   const world = new World({ seed: 20260826 });
   const cam = newCamera();
-  const view = globeView(W, H);
+  // A LARGER GLOBE THAN THE OTHER SUITES USE, on purpose. This one measures
+  // the shape of a tile, and a region is 0.91M km2 now rather than 2.41M, so
+  // at the shared 1200x800 view its tiles fall to a fraction of a pixel and
+  // "is this a hexagon or a sliver" stops being answerable in pixels at all.
+  // Scaled by the square root of the cell-count change, so tiles are the size
+  // they were when the check was written.
+  const view = globeView(Math.round(W * 1.69), Math.round(H * 1.69));
   const kids = world.subMap([4]);
   const polys = tilePolygons(kids, cam, view, 4);
 

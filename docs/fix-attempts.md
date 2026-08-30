@@ -1445,3 +1445,93 @@ actually failing. The assertion is unchanged and now has something to bite on.
 
 This is the stale-assertion category from testing.md, but with the twist worth
 remembering: the assertion was fine and the *sample* was stale.
+
+## A compute budget was doing a geographer's job
+
+Re-gridding the world map from 24x8 to 39x14 -- done to halve the storm caps --
+made every settlement in the world 57% poorer, and nothing about the terrain
+had changed.
+
+Symptom: carrying capacity at the reference site fell from 490 people to 209.
+Settlements hit their land limit three times sooner, so a kingdom that threw
+seven daughter villages in forty years threw seventy-nine, the first founding
+moved from turn 696 to turn 90, and the turn rate collapsed from 110 a second
+to 6.8 under the weight of eighty settlements.
+
+The tempting reading is that this is what a finer grid means -- smaller regions,
+smaller tiles, smaller villages. It is not, and the measurement that says so is
+worth keeping. **Ask what area the catchment actually reached, and compare it
+with the disc it asked for:**
+
+    pop   radius   maps          reached      wanted     coverage
+     20   1010 m   127 CAPPED    1.73 km2     3.20 km2      54%
+     60   1578 m   127 CAPPED    1.73 km2     7.82 km2      22%
+    120   2465 m   127 CAPPED    1.73 km2    19.09 km2       9%
+    400   3852 m   127 CAPPED    1.73 km2    46.61 km2       4%
+
+The reached figure never moves. `World.CATCHMENT_MAPS` was 127 -- a cap on how
+many sub-maps a catchment may gather -- and **a count of maps is a quantity of
+work, not a quantity of world.** A ground tile went from 425.7 m2 to 149.7, so
+the same 127 maps covered 1.73 km2 instead of 4.92, and every settlement lost
+nearly two thirds of its farmland to a change of map resolution.
+
+Worse, at that tile size the cap bound at *every* population, a hamlet of
+twenty included. So `limitedBy: 'land'` had quietly stopped meaning the land had
+run out and started meaning the search had -- and it reported the same word
+either way, which is why this survived a re-grid without anybody noticing.
+
+Fix: state the budget as an AREA, `CATCHMENT_REACH_M2 = 4.92e6`, and derive the
+map count from it and the tile size. A finer grid then costs more maps to cover
+the same ground instead of silently covering less. Capacity came back to 415.
+
+Two things worth carrying out of this:
+
+* The 4.92 km2 is what the old cap happened to work out to. That is a fine
+  figure to inherit -- 492 hectares is about what a village of a few hundred
+  works once waste, wood and pasture are counted -- but it is a budget, and the
+  comment says so rather than dressing it as a measurement.
+* This is the second time in two days that a constant expressed in the wrong
+  unit has survived a change of resolution. The other was the mosaic threshold,
+  written once in parent-pixels and once in tile-pixels. The pattern: anything
+  measured in *cells* is a bug waiting for the grid to change, because the grid
+  is exactly the thing cells are not invariant to.
+
+## Three constants in a row that a re-grid quietly invalidated
+
+Re-gridding the world map from 24x8 to 39x14 broke four checks that had nothing
+to do with the caps it was done for. Each was the same mistake in a different
+costume, and together they are the clearest statement of it this project has:
+
+**a constant expressed in cells, maps, pixels or metres-beside-an-implied-span
+is not invariant to the grid, and the grid is the one thing that changes under
+it.**
+
+| what it said | unit | what broke |
+|---|---|---|
+| `CATCHMENT_MAPS = 127` | sub-maps | catchments covered 1.73 km2 instead of 4.92, so every settlement lost 57% of its farmland |
+| `maxStep / minStep < 3.5` | ratio fitted to one band | 3.90 on a band reaching 77.6 degrees, which is inherent rather than faulty |
+| `smallest > 1` px2 | screen pixels | tiles fell to 0.449 px2 at a viewport sized when regions were 2.6x larger |
+| `hi - lo > 0.5` m | metres beside a 232 m span | 0.490 m across a span that had shrunk to 143 m |
+
+Only the first was a bug in the simulation. The other three were checks that
+had quietly encoded the old resolution, and the fixes are all the same shape --
+say the thing in units the grid cannot move:
+
+* the catchment budget became an AREA, with the map count derived from it;
+* the neighbour spread became a PREDICTION from the projection's own arithmetic,
+  computed for the outermost row, rather than a ratio somebody liked;
+* the tile-degeneracy check got a viewport scaled by the square root of the
+  cell-count change, because it measures shape and shape needs pixels;
+* the ground-relief check became a FRACTION of what the Hurst exponent predicts
+  from the mesh roughness across the map's own span.
+
+The tell for the whole class: a check that fails on a change of resolution while
+the thing it describes is physically unchanged. Every one of these four went
+from passing to failing without a single line of physics moving.
+
+Worth noting which one was real. `CATCHMENT_MAPS` was doing a geographer's job
+with a compute budget, and it reported its own truncation as `limitedBy:
+'land'` -- indistinguishable, in the output, from the land genuinely running
+out. That is why it survived a re-grid unnoticed while the other three failed
+loudly and immediately. A cap that lies about why it stopped is worth more
+suspicion than one that simply stops.

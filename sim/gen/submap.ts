@@ -272,9 +272,9 @@ export function cellContaining(b: Basis, radiusRad: number, x: number, y: number
  */
 export function samplePlanet(planet: Planet, x: number, y: number, z: number): ParentSample {
   // Straight off the tectonic mesh, not interpolated between the world map's
-  // 192 cells.
+  // 546 cells.
   //
-  // That is the whole point of the mesh existing. Interpolating 192 cells
+  // That is the whole point of the mesh existing. Interpolating 546 cells
   // 1,550 km across can only ever give back a coastline shaped like a dozen
   // hexagons, however much detail is added underneath; reading a field
   // simulated at 49 km gives back mountain belts, island arcs, rift valleys
