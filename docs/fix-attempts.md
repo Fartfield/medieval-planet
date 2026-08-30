@@ -1535,3 +1535,50 @@ with a compute budget, and it reported its own truncation as `limitedBy:
 out. That is why it survived a re-grid unnoticed while the other three failed
 loudly and immediately. A cap that lies about why it stopped is worth more
 suspicion than one that simply stops.
+
+## "The constituent hexes are not being drawn", the fourth time
+
+Reported after the world map went from 192 cells to 546. The tiles were being
+drawn perfectly and none of them were visible.
+
+The measurement that separated those two possibilities, and the reason it was
+worth taking before touching anything: **count fills and strokes separately.**
+
+    window | tile px | fills  | strokes
+       520 |    4.26 |  26296 |       4
+       900 |    7.37 |  26296 |       4
+      1000 |    8.19 |  26296 |   24153
+
+The fills never move. Every tile was being filled at every window size, so the
+mosaic gate -- the thing blamed the previous three times -- was fine. What
+switched at 1000 px was the *outlines*, and without them 26,296 filled hexagons
+of nearly the same colour merge into one flat field. The grid was invisible
+while being drawn.
+
+The cause was reusing `GRID_MIN_PX = 8` for two different questions. It guards a
+REGION's outline, which is a 1.5 px line at full opacity, and the eight pixels
+is an argument about that line swamping a small shape -- the comment says so:
+"outlining a 3 px hexagon paints over everything it was supposed to bound". A
+TILE's edge is a 0.5 px hairline at 35% alpha and can swamp nothing. Held to the
+same eight pixels anyway, it switched off the moment a tile fell from 11.98 px
+to 7.37, which is exactly what tripling the cell count does.
+
+Fix: the hairline's weight scales with the tile instead of the tile being
+required to reach a weight. `tileEdgeWidth` gives a line one sixteenth of the
+tile's width -- which reproduces the old 0.5 px exactly at the 8 px tile it was
+written for -- clamped to 0.25..0.6. A line that is always the same fraction of
+what it bounds cannot paint over it, so it can be drawn wherever a tile is drawn
+at all, and this is back to one threshold rather than two.
+
+The pattern, since this is the fourth report of the same sentence:
+
+* twice the cause was how the tiles were drawn (fixed-size hexagons dropped at
+  projected centres; then a tint standing in for the mosaic),
+* twice it has been the line deciding whether to draw them -- first
+  `MOSAIC_MIN_PX` stated in two different units, now `GRID_MIN_PX` answering two
+  different questions.
+
+Both of the latter were resolution-dependent constants, and both surfaced on a
+re-grid rather than on a rendering change. When this sentence is reported again,
+count fills and strokes first: it says in one line which half of the pipeline to
+look at.

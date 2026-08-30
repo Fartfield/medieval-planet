@@ -149,6 +149,39 @@ export const MOSAIC_MIN_PX = 4;
 export const GRID_MIN_PX = 8;
 
 /**
+ * How heavy a tile's hairline is, as a share of the tile.
+ *
+ * The tile grid on the world view used to be gated on GRID_MIN_PX, the same
+ * eight pixels that guards a REGION's outline -- and the two are not the same
+ * question. A region outline is a 1.5 px line at full opacity, and the argument
+ * for eight pixels is about that line swamping a small shape. A tile's edge is
+ * a 0.5 px hairline at 35% alpha, which cannot swamp anything.
+ *
+ * Held to eight anyway, it vanished the moment the world map went from 192
+ * cells to 546: a tile at a 900 px window fell from 11.98 px to 7.37, the
+ * hairlines switched off, and 26,296 filled tiles merged into flat colour.
+ * The mosaic was drawing perfectly and none of it was visible -- the fourth
+ * time "the constituent hexes are not being drawn" has been reported, and the
+ * second time the cause was the line deciding whether to outline them.
+ *
+ * So the weight scales with the tile instead of the tile being required to
+ * reach a weight. A hairline that is always the same fraction of the shape it
+ * bounds cannot paint over it, which means it can be drawn wherever a tile is
+ * drawn at all, and there is one threshold on this again rather than two.
+ * 1/16th reproduces the old 0.5 px exactly at the 8 px tile it was written
+ * for.
+ */
+const TILE_EDGE_SHARE = 1 / 16;
+const TILE_EDGE_MIN = 0.25;
+const TILE_EDGE_MAX = 0.6;
+
+/** The hairline weight for a tile of this width, or 0 if it is not worth one. */
+export function tileEdgeWidth(tilePx: number): number {
+  if (tilePx < MOSAIC_MIN_PX) return 0;
+  return Math.min(TILE_EDGE_MAX, Math.max(TILE_EDGE_MIN, tilePx * TILE_EDGE_SHARE));
+}
+
+/**
  * A child hexagon's circumradius against its parent's, and the turn that makes
  * their edges parallel.
  *
@@ -269,10 +302,10 @@ export function drawGlobe(
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fill();
 
-  // Then the storms, before the cells, so the cells paint over the inner edge
-  // no gap can open between them. The grid is a band that stops short of the
-  // poles -- that is what buys a world with no pentagons in it -- and what
-  // and what lies beyond is not a hole in the map, it is a storm cap.
+  // Then the storms, before the cells, so the cells paint over their inner
+  // edge and no gap can open between them. The grid is a band that stops short
+  // of the poles -- that is what buys a world with no pentagons in it -- and
+  // what lies beyond is not a hole in the map, it is a storm cap.
   drawStormCaps(ctx, cam, view);
 
   // Three ways to paint a cell, by how big it is on screen: out of its own
@@ -284,7 +317,7 @@ export function drawGlobe(
   // from the lattice itself rather than from a number computed here.
   const childPx = (radius * CELL_R) / Math.sqrt(SUBCELL_COUNT);
   const wantMosaic = children !== null && childPx * 2 >= MOSAIC_MIN_PX;
-  const childEdges = childPx * 2 >= GRID_MIN_PX;
+  const childEdges = tileEdgeWidth(childPx * 2);
 
   for (let c = 0; c < CELL_COUNT; c++) {
     const [, cyy, cz] = rotate(cam, centres[c * 3], centres[c * 3 + 1], centres[c * 3 + 2]);
@@ -776,13 +809,14 @@ function drawGlobeChildren(
   cam: Camera,
   view: GlobeView,
   lambert: number,
-  drawEdges: boolean,
+  edgeWidth: number,
 ): void {
   const polys = tilePolygons(kids, cam, view);
 
+  const drawEdges = edgeWidth > 0;
   if (drawEdges) {
     ctx.strokeStyle = 'rgba(10,16,24,0.35)';
-    ctx.lineWidth = 0.5;
+    ctx.lineWidth = edgeWidth;
   }
 
   for (let k = 0; k < SUBCELL_COUNT; k++) {
@@ -877,7 +911,7 @@ export function drawSubMap(
   // Tile edges, on the same terms as the globe's. Without them a run of tiles
   // sharing a biome merges into one flat area and the grid disappears exactly
   // where the ground is uniform -- which is most of a map.
-  const childEdges = childSize * 2 >= GRID_MIN_PX;
+  const childEdges = tileEdgeWidth(childSize * 2);
 
   let lo = Infinity;
   let hi = -Infinity;
@@ -913,9 +947,9 @@ export function drawSubMap(
       if (kids !== null) {
         ctx.save();
         ctx.clip();
-        if (childEdges) {
+        if (childEdges > 0) {
           ctx.strokeStyle = 'rgba(10,16,24,0.30)';
-          ctx.lineWidth = 0.5;
+          ctx.lineWidth = childEdges;
         }
         for (let k = 0; k < SUBCELL_COUNT; k++) {
           const q = toPixel(k, childSize);
@@ -934,7 +968,7 @@ export function drawSubMap(
           for (let i = 1; i < 6; i++) ctx.lineTo(kx + childShape[i].x, ky + childShape[i].y);
           ctx.closePath();
           ctx.fill();
-          if (childEdges) ctx.stroke();
+          if (childEdges > 0) ctx.stroke();
         }
         ctx.restore();
 
