@@ -133,14 +133,27 @@ export class World {
     if (depth === 1) {
       const region = address[0];
       if (region < 0 || region >= CELL_COUNT) throw new RangeError(`no region ${region}`);
-      basis = basisAt(centres[region * 3], centres[region * 3 + 1], centres[region * 3 + 2]);
+      // Turned to face the region's own first neighbour, so the 91 tiles lie
+      // on the same lattice the region does. See basisAt.
+      const nb = neighbours[region * 6] >= 0 ? neighbours[region * 6] : neighbours[region * 6 + 1];
+      basis = basisAt(
+        centres[region * 3], centres[region * 3 + 1], centres[region * 3 + 2],
+        centres[nb * 3], centres[nb * 3 + 1], centres[nb * 3 + 2]);
       sample = (x, y, z) => samplePlanet(this.planet, x, y, z);
       inflow = inflowFromPlanet(this.planet, region);
     } else {
       const above = this.subMap(parentOf(address));
       const cell = address[address.length - 1];
       if (cell < 0 || cell >= SUBCELL_COUNT) throw new RangeError(`no cell ${cell}`);
-      basis = basisAt(above.dirs[cell * 3], above.dirs[cell * 3 + 1], above.dirs[cell * 3 + 2]);
+      // Same rule one layer down: face this cell's first neighbour inside the
+      // map that holds it, so every layer's lattice agrees with its parent's.
+      let nb = -1;
+      for (let i = 0; i < 6 && nb < 0; i++) nb = subNeighbours[cell * 6 + i];
+      basis = nb >= 0
+        ? basisAt(
+          above.dirs[cell * 3], above.dirs[cell * 3 + 1], above.dirs[cell * 3 + 2],
+          above.dirs[nb * 3], above.dirs[nb * 3 + 1], above.dirs[nb * 3 + 2])
+        : basisAt(above.dirs[cell * 3], above.dirs[cell * 3 + 1], above.dirs[cell * 3 + 2]);
       sample = (x, y, z) => sampleSubMap(above, x, y, z, this.neighbouring(depth - 1));
       inflow = inflowFromSubMap(above, cell);
     }

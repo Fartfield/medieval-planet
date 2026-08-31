@@ -210,13 +210,48 @@ export function cellRadiusRad(depth: number): number {
   return r;
 }
 
-/** Build a tangent frame at a point on the sphere. */
-export function basisAt(ox: number, oy: number, oz: number): Basis {
-  // East is the pole crossed with the position. At a pole that degenerates, so
-  // fall back to another axis; nothing sits exactly on a pole now that the
-  // caps are ungridded, but a NaN basis is not worth risking for one branch.
-  let ex = oz, ey = 0, ez = -ox;
-  let len = Math.sqrt(ex * ex + ez * ez);
+/**
+ * Build a tangent frame at a point on the sphere.
+ *
+ * `toward` ORIENTS IT, and that is the load-bearing part rather than a
+ * convenience. A sub-map is a hexagon of hexagons laid out in this frame, with
+ * its lattice running east: cell 0's first neighbour sits at azimuth zero, and
+ * the patch's own corners fall 30 degrees off that. So the frame's east decides
+ * which way the whole patch is turned inside its parent.
+ *
+ * Left to itself the frame took east from the pole, which points somewhere
+ * unrelated to the cell it is covering. On the wrapped band that was harmless:
+ * every cell there was a hexagon in one shared projection, at one shared
+ * orientation, so an arbitrary east happened to line up. On a geodesic each
+ * cell is turned differently -- measured, their corners sat at 59, 87, 88, 30
+ * and 34 degrees in their own frames -- and the patch was rotated by that much
+ * inside its cell. The tiles were all drawn and none of them lined up with the
+ * cell holding them, which reads exactly like the constituent parts not being
+ * drawn at all.
+ *
+ * Pointing east at the cell's own first neighbour makes the patch's lattice and
+ * the cell's lattice the same lattice.
+ */
+export function basisAt(
+  ox: number, oy: number, oz: number,
+  tx?: number, ty?: number, tz?: number,
+): Basis {
+  let ex: number, ey: number, ez: number;
+
+  if (tx !== undefined && ty !== undefined && tz !== undefined) {
+    // The part of the target that lies in this point's tangent plane.
+    const dot = tx * ox + ty * oy + tz * oz;
+    ex = tx - dot * ox;
+    ey = ty - dot * oy;
+    ez = tz - dot * oz;
+  } else {
+    // No target: east from the pole, which is fine only where nothing depends
+    // on which way the frame is turned.
+    ex = oz; ey = 0; ez = -ox;
+  }
+
+  let len = Math.sqrt(ex * ex + ey * ey + ez * ez);
+  if (len < 1e-9) { ex = oz; ey = 0; ez = -ox; len = Math.sqrt(ex * ex + ez * ez); }
   if (len < 1e-9) { ex = 1; ey = 0; ez = 0; len = 1; }
   ex /= len; ey /= len; ez /= len;
 
