@@ -376,22 +376,30 @@ export function drawGlobe(
       ctx.strokeStyle = houseColour(owner);
       ctx.lineWidth = 1.5;
       ctx.stroke();
-    } else if (!wantMosaic && regionPx >= GRID_MIN_PX) {
-      // ONLY WHEN THERE IS NO MOSAIC. A region is 2,500 km across, so its
-      // outline is a line drawn across a continent -- and at that weight it
-      // wins. Every landmass came out as a honeycomb of enormous hexagons with
-      // the real coastline, which the tiles inside were drawing perfectly
-      // well, reduced to texture inside the facets.
+    } else if (regionPx >= GRID_MIN_PX) {
+      // THE REGION'S OWN EDGE, DRAWN OVER ITS TILES.
       //
-      // The tile grid is the grid the player is looking at once it is being
-      // drawn. Region borders still appear where they carry information --
-      // ownership below, and the selection -- but not merely to say where one
-      // administrative hexagon stops.
+      // This used to be suppressed whenever a mosaic was drawn, and the note
+      // here said why: at 92 cells a region was 2,500 km across, its outline
+      // was a line drawn clean across a continent, and every landmass came out
+      // a honeycomb of enormous hexagons with the real coastline reduced to
+      // texture inside the facets.
+      //
+      // That was an argument about WEIGHT, not about whether the edge belongs.
+      // The flat maps have always drawn it -- a sub-map's cells are outlined
+      // over their own children, which is exactly what makes them read as
+      // tiles made of tiles -- and the globe was the odd one out. At 480 cells
+      // a region is about a thousand kilometres, and the line is a fifth of
+      // what it was.
+      //
+      // So it is drawn, at a weight scaled to the region the way a tile's
+      // hairline is scaled to the tile. A line that stays the same fraction of
+      // what it bounds cannot swamp it, which is the same reasoning that let
+      // the tile grid come back, and it means the two levels of the map are
+      // both legible at once instead of one hiding the other.
       globeCellPath(ctx, c, cam, view);
-      // Fainter towards the limb, where cells are edge-on and their outlines
-      // crowd into a solid band that reads as a rim rather than as a grid.
-      ctx.strokeStyle = `rgba(12,20,30,${(0.2 + 0.45 * cz).toFixed(3)})`;
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(8,14,22,0.5)';
+      ctx.lineWidth = Math.min(1.1, Math.max(0.4, regionPx / 90));
       ctx.stroke();
     }
   }

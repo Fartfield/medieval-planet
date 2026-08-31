@@ -464,13 +464,26 @@ suite('the hex grid is drawn on the globe', () => {
   assert('the axis is drawn even when tiny', smallRaw.strokes > 0);
   check('neither produced a NaN', bigRaw.nans + smallRaw.nans, 0, 0);
 
-  // A REGION OUTLINE IS A LINE DRAWN ACROSS A CONTINENT. At 2,500 km a
-  // region's border is wider than most countries, and at the weight it needs
-  // to be visible when there is nothing else it buries the tiles inside it:
-  // every landmass came out as a honeycomb of enormous hexagons, with the real
-  // coastline -- which the tiles were drawing perfectly well -- demoted to
-  // texture inside the facets. So once the tiles are being drawn, they are the
-  // grid, and the region border stands down.
+  // BOTH LEVELS OF THE GRID, DRAWN TOGETHER.
+  //
+  // This used to assert the opposite -- that a region's outline stood down as
+  // soon as its tiles were drawn -- and the reasoning was sound for the map it
+  // was written against. At 92 cells a region was 2,500 km across, its border
+  // wider than most countries, and at the weight it needed to be seen on its
+  // own it buried the tiles inside it: every landmass came out a honeycomb of
+  // enormous hexagons with the real coastline demoted to texture in the facets.
+  //
+  // That was an argument about WEIGHT. Standing the line down was one way to
+  // answer it and scaling the line is another, and the second is what the flat
+  // maps have always done -- a sub-map outlines its cells over their own
+  // children, and that is exactly what makes them read as tiles made of tiles.
+  // The globe was the odd one out, and at 480 cells a region is about a
+  // thousand kilometres, so the line is a fifth of what the old argument was
+  // about.
+  //
+  // So the claim inverts: there should now be ROUGHLY ONE STROKE PER TILE PLUS
+  // ONE PER VISIBLE REGION. The bound below is what would catch the line coming
+  // back at full weight or being drawn twice.
   const mosaicked = stub();
   drawGlobe(mosaicked, world.planet, cam, globeView(W, H), -1, new Map(), null,
     (c) => world.subMap([c]));
@@ -481,8 +494,15 @@ suite('the hex grid is drawn on the globe', () => {
   // Every stroke should belong to a tile, not to a region: at most one per
   // tile drawn, and nowhere near one per region on top of that.
   measure('strokes on a mosaicked globe', mosaicRaw.strokes);
-  assert('no region is outlined once its tiles are',
-    mosaicRaw.strokes <= tiles + 4);
+  // Regions facing us, which is what may contribute an outline.
+  let facing = 0;
+  for (let c = 0; c < CELL_COUNT; c++) {
+    const [, , z] = rotate(cam, centres[c * 3], centres[c * 3 + 1], centres[c * 3 + 2]);
+    if (z >= 0) facing++;
+  }
+  measure('regions facing the camera', facing);
+  assert('every region is outlined over its own tiles',
+    mosaicRaw.strokes > tiles && mosaicRaw.strokes <= tiles + facing + 4);
 
   // A house border replaces the grid line on an owned cell rather than adding
   // a second stroke over it.
