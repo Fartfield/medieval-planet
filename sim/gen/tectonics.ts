@@ -70,11 +70,32 @@ import { routeWater } from './hydrology.ts';
  * inside the storm margin that gets drowned anyway. verify_geometry checks the
  * relationship rather than trusting this comment.
  *
- * 585 x 210 = 122,850 cells at 68.4 km, which is the resolution the tectonic
- * model was calibrated at.
+ * 1170 x 420 = 491,400 cells at 34.2 km.
+ *
+ * DOUBLED FROM 585 x 210, and the reason is aliasing rather than detail for its
+ * own sake. The relief octaves run down to 1/96 of a radian, which at 68 km
+ * cells IS the cell spacing -- so the finest octave was sampled at one point per
+ * wavelength and contributed almost nothing from one cell to the next. The mesh
+ * was smoother than its own Hurst anchor claimed: an exponent of 0.88 measured
+ * between 68 and 137 km where the anchor says 0.70.
+ *
+ * At 34 km that octave is finally represented, and the world it feeds is
+ * rougher at every scale below it. Measured over 5,460 samples following the
+ * highest ground:
+ *
+ *              median   99th    max
+ *   68 km      0.64     12.76   19.89 degrees
+ *   34 km      0.86     19.87   30.18
+ *
+ * Costs 2.7 to 10.5 seconds per world. Tectonics is memoised by seed, so that
+ * is once per world rather than once per map.
+ *
+ * The ratio to the world grid is unchanged -- 1170/420 is the same 2.786 as
+ * 585/210 -- so both bands still reach exactly the same latitude, which
+ * verify_geometry checks.
  */
-export const MESH_COLS = 585;
-export const MESH_ROWS = 210;
+export const MESH_COLS = 1170;
+export const MESH_ROWS = 420;
 
 export interface Tectonics {
   band: Band;

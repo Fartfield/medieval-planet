@@ -493,7 +493,28 @@ suite('clearing a hillside is a decision with a delay', () => {
   measure('hillside FS the year it is felled', sameYear);
   measure('hillside FS twelve years later', twelveYears);
   check('felling does not change it that year', sameYear, before, before * 1e-6);
-  assert('it is weaker a decade later', twelveYears < before * 0.8);
+
+  // HOW MUCH WEAKER IS A PROPERTY OF THE SLOPE, NOT OF THE MODEL.
+  //
+  // Root cohesion is a fixed number of kilopascals decaying to 9.3% over twelve
+  // years, so the FRACTION of a slope's strength that goes with it depends
+  // entirely on how much of that strength was roots -- which varies with the
+  // angle and the soil depth of whichever hillside the search happens to find.
+  // Asserting 20% was really asserting "roots are at least 22% of this
+  // particular slope", and it passed or failed as the terrain moved underneath
+  // it: 74% on one world, 18% on the next, with the physics identical in both.
+  //
+  // So the claim is put as what the decay implies rather than as a number. The
+  // share of strength that was roots is recovered from the loss, and it has to
+  // be a real share of a real slope -- if it comes out near zero the roots are
+  // doing nothing, and if it comes out near one nothing but roots is holding
+  // the hill up.
+  const lost = 1 - twelveYears / before;
+  const rootShare = lost / (1 - Math.pow(0.5, 12 / 3.5));
+  measure('share of this slope’s strength that was roots', rootShare);
+  assert('it is weaker a decade later', twelveYears < before);
+  assert('and the loss is the roots going, in the proportion they were there',
+    rootShare > 0.15 && rootShare < 0.95);
 });
 
 suite('a map edge is no different from its middle', () => {

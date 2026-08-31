@@ -119,9 +119,32 @@ function keyToAddress(key: string): number[] {
 
 console.log('\n  end to end: a real server, two real clients\n');
 
+/**
+ * Wait until the server will actually answer, rather than for a fixed time.
+ *
+ * This used to be `sleep(2500)`, which is a guess about how long a world takes
+ * to build -- and the guess expired the moment the physics mesh went from
+ * 122,850 cells to 491,400 and the build from 2.7 seconds to 10.5. Both clients
+ * then failed to connect and the run reported it as the handshake being broken,
+ * which it was not.
+ *
+ * Polling the thing you are waiting for is right whatever the build costs next.
+ */
+async function waitForServer(timeoutMs = 90_000): Promise<boolean> {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    try {
+      const res = await fetch(`http://localhost:${PORT}/`);
+      if (res.ok) { await res.text(); return true; }
+    } catch { /* not listening yet */ }
+    await sleep(200);
+  }
+  return false;
+}
+
 rmSync(DATA, { recursive: true, force: true });
 let server = startServer();
-await sleep(2500);
+check('the server comes up', await waitForServer());
 
 const alice = new TestClient('alice');
 const bob = new TestClient('bob');
@@ -288,7 +311,7 @@ const savedBytes = existsSync(join(DATA, 'deltas.jsonl'))
 check('the whole saved world is tiny', savedBytes < 20000, `${savedBytes} bytes of deltas`);
 
 server = startServer();
-await sleep(2500);
+check('the server comes back up', await waitForServer());
 const carol = new TestClient('carol');
 check('a client connects to the reloaded world', await carol.waitForWelcome());
 

@@ -44,44 +44,31 @@ would be choosing the answer.
 where a classification boundary needs it. A game with two-minute weeks will
 eventually want real seasons, and that is a layer-1 concern.
 
-**The world is smoother than Earth at every scale, and the cause is the mesh's
-own resolution.** Measured with the scales matched, which matters because slope
-depends heavily on the cell size it is measured over:
+**The world is still smoother than Earth in the middle of the distribution.**
+Doubling the physics mesh to 34 km cells fixed the aliasing that caused most of
+it -- the finest relief octave used to sit at exactly one cell and contributed
+almost nothing -- and bought a third more slope everywhere. Measured over 5,460
+samples following the highest ground:
 
-    cell size    ours     Earth
-    68 km        0.13     --
-    1.2 km       0.3      about 1.5 at 1 km
-    129 m        0.6      about 2 at 90 m
-    14 m         1.1
+                median   99th    max
+    68 km mesh  0.64     12.76   19.89 degrees
+    34 km mesh  0.86     19.87   30.18
 
-The SCALING is right: slope grows 2.0x for every 9x finer cell, which is the
-0.3 exponent H = 0.70 implies, and the steep tail is right too -- 22.6 degrees
-at the 99th percentile and 30.7 at the steepest against Earth's 25-to-35-degree
-mountainsides. It is the middle of the distribution that is flat.
+The steep ground is now right: 30 degrees at the steepest against Earth's 25-to-
+35-degree mountainsides. The middle is still gentle -- about 0.9 degrees at a
+129 m cell against Earth's roughly 2 at 90 m.
 
-It starts at the mesh. At its own 68 km cells the mesh has a median land slope
-of 0.13 degrees, and its structure function gives an exponent of 0.88 between 68
-and 137 km where the anchor says 0.70 -- the finest noise octave sits at the
-mesh spacing itself, so it is aliased away and contributes almost nothing
-cell to cell. The ladder below then scales that faithfully down, because its
-detail amplitude is derived from `reliefM`, which IS the mesh's roughness. An
-under-rough mesh produces an under-rough world all the way down.
+Doubling again would cost another factor of four in build time, currently 10.5
+seconds a world, for a diminishing return. The other lever is anchoring the
+ladder's detail amplitude to a MEASURED local relief instead of to the mesh's
+own spread, so the fine scales stop inheriting the mesh's resolution at all.
+That is a redesign rather than a constant, and it has not been done.
 
-Three things were swept and none of them moves it:
-
-    MESH_RELIEF_M   900 -> 2700    median slope 0.13 -> 0.22
-    MESH_CREEP      0.18 -> 0.02   median slope 0.13 -> 0.20
-    noise octaves   3 -> 1         median slope 0.13 -> 0.13
-
-Amplitude does not help because `solveSeaLevel` pins mean land elevation at
-Earth's 840 m: add roughness and the stretch that hits the mean scales it back
-out. The hypsometry is already close to Earth's -- quartiles 213/485/848 against
-roughly 100/300/900 -- so the distribution is not the fault either.
-
-What would fix it is anchoring the ladder's detail to a MEASURED local relief
-rather than to the mesh's own spread, so the fine scales stop inheriting the
-mesh's resolution limit. That is a redesign of where detail amplitude comes
-from, not a constant, and it has not been done.
+Three things that do NOT move it, measured, so the next attempt can skip them:
+raising MESH_RELIEF_M (900 to 2700 gives 0.13 to 0.22 at the mesh's own scale,
+because solveSeaLevel scales the extra straight back out to keep mean land
+elevation at 840 m), cutting MESH_CREEP (0.18 to 0.02 gives 0.13 to 0.20), and
+reducing the noise's inner octaves (3 to 1 changes nothing at all).
 
 **Neighbouring maps' tiles interleave along a seam.** A hexagon of 91 hexagons
 covers about 91% of the hexagon holding it, so the children of two adjacent
