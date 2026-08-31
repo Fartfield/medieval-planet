@@ -1636,3 +1636,42 @@ Worth keeping from this: **a construction that changes a count is easier to
 debug than one that changes a shape.** Both failures above produced plausible
 pictures; only one of them changed 492 to 478, and that was the one found in a
 minute rather than an hour.
+
+## The 57% relief shortfall was an error in the ruler, not the terrain
+
+Recorded in known-gaps as: the ladder delivers 0.565 of the relief its own Hurst
+anchor predicts, constant across six layers, so one amplitude constant is low by
+1.8x. The constancy was the evidence -- a fixed ratio across three orders of
+magnitude looks exactly like a single wrong multiplier.
+
+It was the ruler. `reliefM` is the elevation spread over a cell **and its six
+neighbours**, so the span it describes is about TWO cell widths, 137 km, and the
+prediction divided by ONE, 68 km. Relief goes as span^0.7, so the prediction was
+too big by (137/68)^0.7 = 1.62 -- almost exactly the 1.8 the "missing" amplitude
+was supposed to supply.
+
+Corrected, the ladder tracks its anchor to 0.68, 0.58, 0.52, 0.76, 1.10, 0.91,
+0.81 by layer: scatter around 1, worst at the middle layers, and the deep layers
+where detail dominates averaging 0.94. There is no missing multiplier.
+
+WHAT SAVED IT WAS A SECOND MEASUREMENT DISAGREEING. Before changing anything the
+detail amplitude was swept, and matching the anchor exactly needed a factor of
+1.8 -- which produced **70.8-degree cliffs**. Terrain that steep is not terrain,
+so either the ladder or the anchor was wrong, and only then did the baseline get
+checked. Had the sweep produced something plausible the world would have been
+inflated 1.8x to satisfy an arithmetic mistake.
+
+    K      layers 3-7 vs anchor        steepest
+    1.0    0.61 0.75 0.86 0.85 0.87    below 70
+    1.5    0.61 0.75 0.86 0.85 0.87    67.3 deg
+    1.8    0.71 0.88 1.03 1.02 1.04    70.8 deg
+
+Two things worth keeping. The first is that a constant ratio is evidence of a
+single wrong factor and says nothing about WHICH side it is on -- the anchor is
+as likely to be wrong as the thing being anchored, and the anchor is the one
+nobody re-derives. The second is that a fix which has to make the world
+physically absurd to satisfy a number is telling you the number is wrong.
+
+What survives is smaller and is measured: the median land slope is 1.1 degrees
+against Earth's 2 to 3, while the tail is right at 22.4 degrees for the 99th
+percentile and 30.7 at the steepest. Gentle middling ground, not a flat world.

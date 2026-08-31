@@ -12,22 +12,9 @@ would replace both. The fit is good enough that land cover matches Earth to
 within 2.6 points, and until something needs seasons or interannual variation
 that is enough.
 
-**Tundra and ice sit 2.6 points low** against Earth. Within the suite's
-tolerance. Likeliest cause is that the seasonal amplitude model — a single
-sin²(latitude) term — is too crude near the poles.
-
 **The moisture-capacity term is linear in temperature.** It stands in for the
 Clausius-Clapeyron relation, which is exponential. Replacing it is cheap; it has
 not been done because the calibration currently absorbs the difference.
-
-**Rivers are crude and do not cross a sub-map boundary.** Flow accumulation
-runs within one map, and a map is 91 cells now — a third of which are rim. A
-channel over 91 cells is a rough thing and a river reaching the edge stops
-there. Both follow from the adjacency gap above.
-
-**Sinks are not filled.** A basin with no outlet keeps its water, which is
-correct — that is a lake, and the Caspian is not a bug — but nothing yet marks
-it as one or lets it overflow.
 
 **The model makes about three times as much tundra as Earth would.** Measured
 against Earth's land below 65 degrees, which is where this world's land is:
@@ -46,25 +33,15 @@ the whole derivation -- so it is recorded instead.
 where a classification boundary needs it. A game with two-minute weeks will
 eventually want real seasons, and that is a layer-1 concern.
 
-**The ladder delivers 57% of the relief its own anchor predicts.** Measured, at
-every layer: the Hurst law says a map spanning `S` should carry
-`reliefM x (S / 69.5 km)^0.70` of relief, and the ratio of what is produced to
-what is predicted came out 0.61, 0.56, 0.55, 0.63, 0.46, 0.58 across spans from
-1,900 km down to 24 m.
+**The world's median land slope is 1.1 degrees against Earth's 2 to 3.** The
+tail is right -- 22.4 degrees at the 99th percentile and 30.7 at the steepest,
+against Earth's 25-to-35-degree mountainsides -- so this is gentle middling
+ground rather than a flat world. Whether it is worth correcting is open; the
+honest measurement is here rather than a claim in either direction.
 
-The constancy is the useful part. Self-affinity is *correct* -- the implied
-Hurst exponent is 0.728 against the 0.70 anchor -- so this is a single
-amplitude constant being low by about 1.8x, not a scaling error. It is that the
-fbm's realised peak-to-peak across a map is smaller than the [-1, 1] its range
-suggests, and the amplitude is applied as though it were not.
-
-The visible cost is a world at the smooth end of every band it is checked
-against: median land slope about 1.1 degrees where Earth is 2-3. Every anchored
-landscape check passes, so this is a calibration rather than a defect, and the
-honest fix is to measure the noise's realised range once and divide by it
-rather than to pick a multiplier.
-
-## Geometry
+This entry used to say the ladder delivered 57% of the relief its own Hurst
+anchor predicts, and that was an error in the measurement rather than in the
+terrain. See docs/fix-attempts.md.
 
 **The storms are five-pointed stars rather than discs.** Removing a pentagon
 and its ring of five leaves a five-fold symmetric hole, and at this resolution
@@ -78,37 +55,6 @@ a cap of 17 degrees instead of 12. A rounder cap of the right size needs a finer
 grid -- frequency 9 would put cells at 7 and 12 degrees and allow it -- at 812
 cells against 480, with the economy shifting again for it.
 
-**Cells were stretched toward the poles on the wrapped band, by up to 2.7 to 1.** The world map is a
-wrapped hex band in the Lambert cylindrical equal-area projection, so every cell
-has the same *area* but not the same shape: a cell at 52 degrees is nearly three
-times as wide as it is tall.
-
-This replaced a worse problem. A closed sphere tiled with hexagons needs exactly
-twelve pentagons -- Euler forces it, and no cleverness avoids it -- and at 92
-regions those were 13% of the world map. A cylinder has Euler characteristic
-zero, so a band that wraps needs none at all, and the map is now hexagons only.
-The cost moved from topology to shape, which is the better place for it: a
-stretched hexagon still tiles, still has six neighbours, and still subdivides.
-
-That was the wrapped band, and it is gone: the grid is a geodesic now and its
-cells are near-regular everywhere -- neighbour spacing spread 1.207 against the
-band's 3.90. The price is Euler's twelve pentagons, ten of them visible at
-26.57 degrees north and south and two hidden inside the storms.
-
-The pentagons are 0.679 of the mean cell area and always will be smaller: they
-are where the sphere's curvature is concentrated. Sub-maps are sized per cell so
-that a pentagon's children cover the pentagon rather than 63% more ground, but
-the cell itself is genuinely smaller than its neighbours.
-
-Nothing lands against the storms: the cells bordering them are drowned, which
-costs this world the land above about 65 degrees -- a whole climate band better
-than the 57 the band's tall outer row cost.
-
-**A 2,900 km cell cannot resolve a mountain range.** Uplift smearing is scaled
-to a real distance and at this resolution correctly does nothing, so relief at
-the world layer is blocky. Everything finer is generated below it.
-
-
 **Cross-boundary adjacency is still not implemented, but area queries are.**
 A cell on the rim of a sub-map has fewer than six neighbours and no way to name
 the missing one, so rivers still stop at a map edge and nothing can walk across
@@ -117,16 +63,7 @@ of a point, found by descending rather than walking, so catchments, trade and
 settlement all reach past a boundary. Measured: 4,096 cells within 2 km across
 60 different parent maps. Adjacency is the remaining half.
 
-**`cellAt` is a greedy walk with no spatial index.** About 50 steps, which is
-fine for a click and would not be fine for a bulk query.
-
 ## Simulation
-
-**A catchment spreads to 128 sub-maps and no further.** That is about 1,035
-hectares, which supports roughly 1,200 people — a large village or a small
-town. Beyond that a settlement is land-limited and throws off daughters, which
-is the designed behaviour, but it does mean no single settlement can become a
-city. Raising the cap is a cost decision, not a code one.
 
 **No roads and no terrain cost.** A cart track is assumed passable between any
 two land tiles, which is generous — real terrain has bogs and gorges. It is the
@@ -213,11 +150,6 @@ does not need 32 Hz — and should be revisited rather than deleted.
 region shows its 91 children and nothing finer, so zooming the globe never
 reveals more detail — you have to descend. Two layers of mosaic would look
 better and cost 91 times as much.
-
-**Mosaic tiles are drawn as squares.** At a few pixels across nobody can tell a
-square from a hexagon, and it saves six sides of work on every one of eight
-thousand shapes. It would show if the threshold were ever lowered.
-
 
 **No spatial index on the delta store.** "Which changed tiles are inside this
 region" is a prefix scan over string keys today. Fine at small numbers, not
