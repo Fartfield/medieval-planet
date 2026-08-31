@@ -9,7 +9,7 @@
 // realm and ground with nothing but a scale change.
 
 import {
-  CELL_COUNT, centres, outline, BAND_SIN_LIMIT, CELL_R,
+  CELL_COUNT, centres, outline, BAND_SIN_LIMIT, CELL_R, CAP_RADIUS_RAD,
 } from '../../sim/geo/sphere.ts';
 import {
   RADIUS, SUBCELL_COUNT, coords, DIRECTIONS, toPixel, fromPixel,
@@ -307,12 +307,6 @@ export function drawGlobe(
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fill();
 
-  // Then the storms, before the cells, so the cells paint over their inner
-  // edge and no gap can open between them. The grid is a band that stops short
-  // of the poles -- that is what buys a world with no pentagons in it -- and
-  // what lies beyond is not a hole in the map, it is a storm cap.
-  drawStormCaps(ctx, cam, view);
-
   // Three ways to paint a cell, by how big it is on screen: out of its own
   // children, as their average, or flat. The ladder is what keeps a zoomed-out
   // globe from asking for ten thousand sub-maps to fill a dozen shapes.
@@ -408,6 +402,11 @@ export function drawGlobe(
     }
   }
 
+  // The storms LAST, over the cells rather than under them, so their soft edge
+  // covers the ragged boundary of the hole in the grid rather than revealing
+  // it. See drawStormCaps.
+  drawStormCaps(ctx, cam, view);
+
   if (highlight >= 0) {
     const [, , hz] = rotate(cam, centres[highlight * 3], centres[highlight * 3 + 1], centres[highlight * 3 + 2]);
     if (hz >= 0) {
@@ -462,135 +461,6 @@ export function drawGlobe(
  * limit, so it runs under the cells rather than up to them -- see below. That
  * part is unchanged and is what keeps the hex grid clean.
  */
-
-/** How many rings the fan is cut into. Enough to carry an arm across, cheap. */
-const STORM_RINGS = 16;
-
-/**
- * How many arms, and how hard they wind.
- *
- * A LOGARITHMIC spiral, which is the one thing here taken from the real
- * article: a cyclone's rainbands are log spirals, because a band winds by a
- * constant angle for every constant *ratio* of radius rather than for every
- * constant radius. The first attempt used `twist / radius`, which sends the
- * winding to infinity at the eye -- the radial term then swamped the angular
- * one completely and the cap came out as concentric rings with no arms in it
- * at all. A logarithm winds without ever running away.
- *
- * The count and the tightness are ours; a storm is not a measured thing here.
- * Tightness matters more than it sounds: at 2 arms and a twist of 2.2 the
- * spiral turned twice over between rim and eye, and a spiral that wound that
- * fast came out looking like concentric rings -- the arms were there, armT
- * swept its full range, and none of it was legible. Under one turn end to end
- * is what reads as a spiral.
- */
-const STORM_ARMS = 3;
-const STORM_TWIST = 0.55;
-
-/**
- * A palette each, because the two are opposed.
- *
- * The north storm is cold -- blue-white, lightning on slate. The south is
- * warm against it, violet on near-black. Two pantheons that agree on nothing
- * should not be the same colour, and it is the cheapest possible way to say
- * so on a globe you can spin.
- */
-const STORM_NORTH = { deep: '#16233a', arm: '#b9cde8', eye: '#dce9f7' };
-const STORM_SOUTH = { deep: '#241733', arm: '#cfb0dd', eye: '#f0dcf2' };
-
-function mixHex(a: string, b: string, t: number): string {
-  const na = parseInt(a.slice(1), 16);
-  const nb = parseInt(b.slice(1), 16);
-  const u = Math.max(0, Math.min(1, t));
-  const r = Math.round(((na >> 16) & 255) * (1 - u) + ((nb >> 16) & 255) * u);
-  const g = Math.round(((na >> 8) & 255) * (1 - u) + ((nb >> 8) & 255) * u);
-  const bl = Math.round((na & 255) * (1 - u) + (nb & 255) * u);
-  return `#${((r << 16) | (g << 8) | bl).toString(16).padStart(6, '0')}`;
-}
-
-function drawStormCaps(ctx: CanvasRenderingContext2D, cam: Camera, view: GlobeView): void {
-  const { cx, cy, radius } = view;
-  // How many wedges the fan is cut into around the pole. Was COLS * 3 when the
-  // grid had columns; now simply enough to keep the rim smooth at any zoom.
-  const columns = 120;
-
-  for (const pole of [1, -1]) {
-    const palette = pole > 0 ? STORM_NORTH : STORM_SOUTH;
-
-    // Drawn to the INNER extent of the grid's ragged edge, with the cells
-    // painted over it afterwards.
-    //
-    // The edge is a ring of hexagon sides, so its corners reach further from
-    // the pole than its edge midpoints -- 81.1 degrees against 68.3 on this
-    // grid. Fanning the storm to that outline exactly is correct and looks
-    // wrong; taking the inner line instead gives a clean disc that the
-    // hexagons poke into, which is the same boundary with the in-between bit
-    // the opposite colour, and no gap either way. The band's version of this
-    // was the same trick applied to a zigzag row.
-    const notch = BAND_SIN_LIMIT;
-
-    // Rings in sine-latitude, from the notch up to the pole. Spaced by the
-    // square of the normalised radius so the pieces stay a similar size on
-    // screen: sine-latitude compresses hard as it approaches 1.
-    const ringSin: number[] = [];
-    for (let r = 0; r <= STORM_RINGS; r++) {
-      const u = r / STORM_RINGS;
-      ringSin.push(notch + (1 - notch) * (1 - (1 - u) * (1 - u)));
-    }
-
-    for (let r = 0; r < STORM_RINGS; r++) {
-      const sInner = ringSin[r];
-      const sOuter = ringSin[r + 1];
-      // 1 at the band edge, 0 at the eye.
-      const uMid = 1 - (0.5 * (sInner + sOuter) - notch) / (1 - notch);
-
-      for (let col = 0; col < columns; col++) {
-        const a0 = (col / columns) * 2 * Math.PI;
-        const a1 = ((col + 1) / columns) * 2 * Math.PI;
-
-        const quad: number[][] = [];
-        for (const [sv, av] of [[sInner, a0], [sInner, a1], [sOuter, a1], [sOuter, a0]]) {
-          const sp = sv * pole;
-          const cp = Math.sqrt(Math.max(0, 1 - sp * sp));
-          quad.push(rotate(cam, cp * Math.cos(av), sp, cp * Math.sin(av)));
-        }
-
-        // Wholly behind the limb: skip.
-        const zSum = quad[0][2] + quad[1][2] + quad[2][2] + quad[3][2];
-        if (zSum < 0) continue;
-
-        // The arms, as a log spiral. The two poles wind OPPOSITE ways -- the
-        // `pole` factor on the angle -- which is both what Coriolis does either
-        // side of an equator and, here, the point: they are opposed.
-        const aMid = 0.5 * (a0 + a1);
-        const swirl = Math.sin(
-          STORM_ARMS * (aMid * pole + STORM_TWIST * Math.log(Math.max(uMid, 0.05))));
-        const armT = 0.5 + 0.5 * swirl;
-
-        // Arms show across most of the cap, fading only at the rim where the
-        // storm frays into ordinary weather and in the eye's glare. A plain
-        // sin(pi.u) was too narrow a window -- it confined the arms to a thin
-        // annulus and what was left either side read as plain banding.
-        const band = Math.pow(Math.sin(Math.PI * Math.max(0, Math.min(1, uMid))), 0.45);
-        const eyeT = Math.max(0, 1 - uMid * 2.6);
-
-        let colour = mixHex(palette.deep, palette.arm, armT * armT * band * 0.95);
-        colour = mixHex(colour, palette.eye, eyeT * eyeT * eyeT);
-
-        ctx.beginPath();
-        ctx.moveTo(cx + quad[0][0] * radius, cy - quad[0][1] * radius);
-        for (let i = 1; i < 4; i++) {
-          ctx.lineTo(cx + quad[i][0] * radius, cy - quad[i][1] * radius);
-        }
-        ctx.closePath();
-        // Lit the way the ground is, so the cap belongs to the same ball.
-        const lambert = 0.55 + 0.45 * Math.max(0, zSum / 4);
-        ctx.fillStyle = shade(colour, lambert);
-        ctx.fill();
-      }
-    }
-  }
-}
 
 /**
  * The polar axis and the equator.
@@ -673,6 +543,148 @@ function globeCellPath(
     if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
   }
   ctx.closePath();
+}
+
+/** How many rings the fan is cut into. Enough to carry an arm across, cheap. */
+const STORM_RINGS = 16;
+
+/**
+ * How many arms, and how hard they wind.
+ *
+ * A LOGARITHMIC spiral, which is the one thing here taken from the real
+ * article: a cyclone's rainbands are log spirals, because a band winds by a
+ * constant angle for every constant *ratio* of radius rather than for every
+ * constant radius. The first attempt used `twist / radius`, which sends the
+ * winding to infinity at the eye -- the radial term then swamped the angular
+ * one completely and the cap came out as concentric rings with no arms in it
+ * at all. A logarithm winds without ever running away.
+ *
+ * The count and the tightness are ours; a storm is not a measured thing here.
+ * Tightness matters more than it sounds: at 2 arms and a twist of 2.2 the
+ * spiral turned twice over between rim and eye, and a spiral that wound that
+ * fast came out looking like concentric rings -- the arms were there, armT
+ * swept its full range, and none of it was legible. Under one turn end to end
+ * is what reads as a spiral.
+ */
+/**
+ * How far the storm's edge is spread, in radians.
+ *
+ * Wide enough to swallow the raggedness it is hiding: the grid's boundary runs
+ * from 9.0 to 13.5 degrees, so a fade of about 3.5 degrees either side of the
+ * 12.4-degree area radius leaves the whole of it inside the gradient.
+ */
+const FEATHER_RAD = (3.5 * Math.PI) / 180;
+
+const STORM_ARMS = 3;
+const STORM_TWIST = 0.55;
+
+/**
+ * A palette each, because the two are opposed.
+ *
+ * The north storm is cold -- blue-white, lightning on slate. The south is
+ * warm against it, violet on near-black. Two pantheons that agree on nothing
+ * should not be the same colour, and it is the cheapest possible way to say
+ * so on a globe you can spin.
+ */
+const STORM_NORTH = { deep: '#16233a', arm: '#b9cde8', eye: '#dce9f7' };
+const STORM_SOUTH = { deep: '#241733', arm: '#cfb0dd', eye: '#f0dcf2' };
+
+function mixHex(a: string, b: string, t: number): string {
+  const na = parseInt(a.slice(1), 16);
+  const nb = parseInt(b.slice(1), 16);
+  const u = Math.max(0, Math.min(1, t));
+  const r = Math.round(((na >> 16) & 255) * (1 - u) + ((nb >> 16) & 255) * u);
+  const g = Math.round(((na >> 8) & 255) * (1 - u) + ((nb >> 8) & 255) * u);
+  const bl = Math.round((na & 255) * (1 - u) + (nb & 255) * u);
+  return `#${((r << 16) | (g << 8) | bl).toString(16).padStart(6, '0')}`;
+}
+
+function drawStormCaps(ctx: CanvasRenderingContext2D, cam: Camera, view: GlobeView): void {
+  const { cx, cy, radius } = view;
+  const columns = 120;
+
+  // DRAWN OVER THE CELLS, WITH A SOFT EDGE, and that is the whole trick.
+  //
+  // The storms used to be drawn underneath and the cells painted over them, so
+  // what you saw of a storm was the shape of the hole in the grid. That hole is
+  // a ring of hexagon sides around a five-fold vertex, which is pentagon-ish
+  // and not round: measured, 9.0 degrees across the flats against 13.5 to the
+  // points, and it came out on screen as a five-pointed star.
+  //
+  // Subdividing does not fix it. At frequency 9 the out-of-round ratio is 1.50,
+  // which is exactly what it is at 7 -- the five-fold symmetry belongs to the
+  // icosahedron, not to the resolution. Frequency 12 reaches 1.30 at three
+  // times the cells and a cap a quarter wider, which is a great deal to pay for
+  // a shape.
+  //
+  // A storm does not have a crisp edge in any case. So it is drawn on top, at
+  // the radius its AREA implies, fading out across the width of the raggedness
+  // -- opaque well inside the hole, gone well outside it, and the ragged
+  // boundary somewhere in the gradient where no eye can find it. The cells
+  // underneath are untouched and still simulated; this is weather over a map,
+  // which is what it is meant to look like.
+  const capR = CAP_RADIUS_RAD;
+  const solid = capR - FEATHER_RAD;
+  const clear = capR + FEATHER_RAD;
+
+  for (const pole of [1, -1]) {
+    const palette = pole > 0 ? STORM_NORTH : STORM_SOUTH;
+
+    for (let r = 0; r < STORM_RINGS; r++) {
+      const t0 = (r / STORM_RINGS) * clear;
+      const t1 = ((r + 1) / STORM_RINGS) * clear;
+      const tMid = 0.5 * (t0 + t1);
+
+      // Opaque inside, gone outside, smooth between.
+      let alpha = 1;
+      if (tMid > solid) {
+        const u = Math.min(1, (tMid - solid) / (clear - solid));
+        alpha = 1 - u * u * (3 - 2 * u);
+      }
+      if (alpha <= 0.004) continue;
+
+      // 0 at the eye, 1 at the nominal edge: what the arms are drawn against.
+      const uMid = Math.min(1, tMid / capR);
+
+      for (let col = 0; col < columns; col++) {
+        const a0 = (col / columns) * 2 * Math.PI;
+        const a1 = ((col + 1) / columns) * 2 * Math.PI;
+
+        const quad: number[][] = [];
+        for (const [tv, av] of [[t0, a0], [t0, a1], [t1, a1], [t1, a0]]) {
+          const sp = Math.cos(tv) * pole;
+          const cp = Math.sin(tv);
+          quad.push(rotate(cam, cp * Math.cos(av), sp, cp * Math.sin(av)));
+        }
+
+        const zSum = quad[0][2] + quad[1][2] + quad[2][2] + quad[3][2];
+        if (zSum < 0) continue;
+
+        // Arms as a log spiral, winding opposite ways at the two poles.
+        const aMid = 0.5 * (a0 + a1);
+        const swirl = Math.sin(
+          STORM_ARMS * (aMid * pole + STORM_TWIST * Math.log(Math.max(uMid, 0.05))));
+        const armT = 0.5 + 0.5 * swirl;
+        const band = Math.pow(Math.sin(Math.PI * Math.max(0, Math.min(1, uMid))), 0.45);
+        const eyeT = Math.max(0, 1 - uMid * 2.6);
+
+        let colour = mixHex(palette.deep, palette.arm, armT * armT * band * 0.95);
+        colour = mixHex(colour, palette.eye, eyeT * eyeT * eyeT);
+
+        ctx.globalAlpha = alpha;
+        ctx.beginPath();
+        ctx.moveTo(cx + quad[0][0] * radius, cy - quad[0][1] * radius);
+        for (let i = 1; i < 4; i++) {
+          ctx.lineTo(cx + quad[i][0] * radius, cy - quad[i][1] * radius);
+        }
+        ctx.closePath();
+        const lambert = 0.55 + 0.45 * Math.max(0, zSum / 4);
+        ctx.fillStyle = shade(colour, lambert);
+        ctx.fill();
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
 }
 
 /**

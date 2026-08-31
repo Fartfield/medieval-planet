@@ -54,18 +54,6 @@ This entry used to say the ladder delivered 57% of the relief its own Hurst
 anchor predicts, and that was an error in the measurement rather than in the
 terrain. See docs/fix-attempts.md.
 
-**The storms are five-pointed stars rather than discs.** Removing a pentagon
-and its ring of five leaves a five-fold symmetric hole, and at this resolution
-a 12-degree cap is barely more than one cell across -- so it cannot be round.
-The tiling around it is clean and there are no gaps; the shape is simply what
-the grid gives.
-
-Rounding it means removing a different set, and at frequency 7 there is no
-middle ground: the next cells out sit at 15 to 18 degrees, so taking them makes
-a cap of 17 degrees instead of 12. A rounder cap of the right size needs a finer
-grid -- frequency 9 would put cells at 7 and 12 degrees and allow it -- at 812
-cells against 480, with the economy shifting again for it.
-
 **Cross-boundary adjacency is still not implemented, but water and area
 queries both cross.** A cell on the rim of a sub-map has fewer than six
 neighbours and no way to NAME the missing one, so nothing can walk from a tile

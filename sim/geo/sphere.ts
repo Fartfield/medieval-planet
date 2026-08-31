@@ -58,6 +58,18 @@ export const FREQUENCY = 7;
 /** Cells in the closed tiling, before the caps are taken out of it. */
 const FULL_COUNT = 10 * FREQUENCY * FREQUENCY + 2;
 
+/**
+ * How far from each pole the storms take, in degrees.
+ *
+ * Ten degrees takes the pole cell and the ring of five around it -- the first
+ * ring sits at 63.435/7 = 9.06 degrees -- which is the same six cells the
+ * previous "pole and its neighbours" rule removed. Written as a DISTANCE
+ * because that is the thing being decided; the ring structure is how the grid
+ * happens to answer it, and at another frequency the same distance takes a
+ * different number of rings.
+ */
+const CAP_REMOVE_DEG = 10;
+
 const SQRT3 = Math.sqrt(3);
 /** Area of a regular hexagon of circumradius 1. */
 const HEX_AREA = (3 * SQRT3) / 2;
@@ -76,6 +88,7 @@ interface Grid {
   toFull: Int32Array;
   gridSinLimit: number;
   capSinLimit: number;
+  capRadiusRad: number;
 }
 
 const grid = build();
@@ -164,6 +177,21 @@ export const CAP_SIN_LIMIT = grid.capSinLimit;
 
 /** What the renderer always actually wanted: where do the storms begin. */
 export const BAND_SIN_LIMIT = grid.capSinLimit;
+
+/**
+ * The angular radius of a disc covering the same area as one storm cap.
+ *
+ * The cap's real boundary is a ring of hexagon sides around a five-fold vertex,
+ * so it is pentagon-ish rather than round: 9.0 degrees across the flats and
+ * 13.5 to the points. Raising the grid's frequency does not fix that -- at
+ * frequency 9 the out-of-round ratio is 1.50, exactly what it is at 7, because
+ * the five-fold symmetry is the icosahedron's and not the resolution's.
+ *
+ * So the renderer draws a storm of THIS radius over the top, with a soft edge.
+ * A storm has a diffuse edge in any case, and a diffuse edge is what hides a
+ * boundary that no amount of subdividing will make circular.
+ */
+export const CAP_RADIUS_RAD = grid.capRadiusRad;
 
 // ---------------------------------------------------------------------------
 
@@ -415,15 +443,10 @@ function build(): Grid {
 
   // --- take the storms out --------------------------------------------------
   const keep = new Uint8Array(n).fill(1);
+  const cut = Math.cos((CAP_REMOVE_DEG * PI) / 180);
   for (const sign of [1, -1]) {
-    let pole = 0;
-    for (let c = 1; c < n; c++) {
-      if (fullCentres[c * 3 + 1] * sign > fullCentres[pole * 3 + 1] * sign) pole = c;
-    }
-    keep[pole] = 0;
-    for (let i = 0; i < 6; i++) {
-      const nb = fullNeighbours[pole * 6 + i];
-      if (nb >= 0) keep[nb] = 0;
+    for (let c = 0; c < n; c++) {
+      if (fullCentres[c * 3 + 1] * sign >= cut) keep[c] = 0;
     }
   }
 
@@ -461,6 +484,7 @@ function build(): Grid {
   // solid angle, with no conversion.
   const radiusScale = new Float64Array(count);
   const meanSolid = (4 * PI) / FULL_COUNT;
+  let covered = 0;
   for (let k = 0; k < count; k++) {
     const f = toFull[k];
     const around: number[] = [];
@@ -489,8 +513,19 @@ function build(): Grid {
       if (dx < -PI) dx += 2 * PI;
       a2 += dx * (ay + by);
     }
-    radiusScale[k] = Math.sqrt(Math.abs(a2) / 2 / meanSolid);
+    const solid = Math.abs(a2) / 2;
+    covered += solid;
+    radiusScale[k] = Math.sqrt(solid / meanSolid);
   }
+
+  // THE CAP'S HONEST SIZE: the angular radius of a disc with the area the
+  // storms actually cover. The boundary is a ring of hexagon sides and is not
+  // a circle -- measured, it runs from 9.0 to 13.5 degrees, half again as far
+  // in one direction as another -- so no single radius describes it. This is
+  // the one that gets the AREA right, which is what "the same size as before"
+  // was asking about, and it is what the renderer feathers around.
+  const capSolid = (4 * PI - covered) / 2;
+  const capRadiusRad = Math.acos(1 - capSolid / (2 * PI));
 
   // --- where the storms begin, measured off the corners ---------------------
   let gridSinLimit = 0;
@@ -530,6 +565,7 @@ function build(): Grid {
     toFull,
     gridSinLimit,
     capSinLimit,
+    capRadiusRad,
   };
 }
 
