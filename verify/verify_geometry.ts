@@ -20,6 +20,10 @@ import * as A from '../sim/anchors.ts';
 import { World } from '../sim/world.ts';
 import { cellContaining } from '../sim/gen/submap.ts';
 import { MESH_ROWS, MESH_COLS } from '../sim/gen/tectonics.ts';
+import {
+  PENT_SUBCELL_COUNT, PENT_RADIUS, pentRing, pentCentres,
+  pentNeighbours, pentNeighbourCount, pentFromPoint,
+} from '../sim/geo/pentgrid.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 /**
@@ -307,6 +311,85 @@ suite('nothing makes landfall against a storm', () => {
   measure('world land fraction with the storms in place', land / CELL_COUNT);
   assert('the world did not lose its land to the storms',
     land / CELL_COUNT > 0.2 && land / CELL_COUNT < 0.4);
+});
+
+suite('the pentagon sub-map', () => {
+  // Ten of the world's cells are pentagons, and a hexagon of 91 hexagons does
+  // not fit inside one. This is the five-sided patch: the same construction as
+  // the hexagonal one with N = 5 rather than 6.
+  check('cells', PENT_SUBCELL_COUNT, 76, 0);
+  check('which is 1 + 5 x (1+2+3+4+5)', PENT_SUBCELL_COUNT, 1 + 5 * 15, 0);
+
+  // Ring i holds exactly 5i cells -- i along each of five sides. Getting this
+  // wrong is how a patch ends up a disc with empty corners instead of a
+  // pentagon.
+  const ringSize = new Map<number, number>();
+  for (let c = 0; c < PENT_SUBCELL_COUNT; c++) {
+    ringSize.set(pentRing[c], (ringSize.get(pentRing[c]) ?? 0) + 1);
+  }
+  let ringsRight = ringSize.get(0) === 1;
+  for (let r = 1; r <= PENT_RADIUS; r++) if (ringSize.get(r) !== 5 * r) ringsRight = false;
+  assert('every ring holds five cells per step out', ringsRight);
+
+  // THE DEFECT IS AT THE CENTRE AND NOWHERE ELSE. That is the whole point of a
+  // five-sided patch: the five-fold vertex is the cell being subdivided, so it
+  // sits in the middle where it belongs rather than being smeared over a rim.
+  check('the centre has five neighbours', pentNeighbourCount(0), 5, 0);
+
+  let interiorSix = 0;
+  let interiorOther = 0;
+  for (let c = 1; c < PENT_SUBCELL_COUNT; c++) {
+    if (pentRing[c] >= PENT_RADIUS) continue;
+    if (pentNeighbourCount(c) === 6) interiorSix++; else interiorOther++;
+  }
+  measure('interior cells with six neighbours', interiorSix);
+  check('and no interior cell has any other number', interiorOther, 0, 0);
+
+  // Adjacency built by proximity, so reciprocity is a property to check rather
+  // than one the construction gives away.
+  let asymmetric = 0;
+  for (let c = 0; c < PENT_SUBCELL_COUNT; c++) {
+    for (let k = 0; k < 6; k++) {
+      const nb = pentNeighbours[c * 6 + k];
+      if (nb < 0) continue;
+      let mutual = false;
+      for (let j = 0; j < 6; j++) if (pentNeighbours[nb * 6 + j] === c) mutual = true;
+      if (!mutual) asymmetric++;
+    }
+  }
+  check('adjacency is symmetric', asymmetric, 0, 0);
+
+  // Connected, or a walk over the patch would strand cells.
+  const seen = new Set<number>([0]);
+  const queue = [0];
+  while (queue.length > 0) {
+    const c = queue.pop()!;
+    for (let k = 0; k < 6; k++) {
+      const nb = pentNeighbours[c * 6 + k];
+      if (nb >= 0 && !seen.has(nb)) { seen.add(nb); queue.push(nb); }
+    }
+  }
+  check('every cell is reachable from the centre', seen.size, PENT_SUBCELL_COUNT, 0);
+
+  // Spacing: cells one ring apart along a side are one unit apart by
+  // construction, and nothing should be closer.
+  let closest = Infinity;
+  for (let a = 0; a < PENT_SUBCELL_COUNT; a++) {
+    for (let b = a + 1; b < PENT_SUBCELL_COUNT; b++) {
+      const dx = pentCentres[a * 2] - pentCentres[b * 2];
+      const dy = pentCentres[a * 2 + 1] - pentCentres[b * 2 + 1];
+      closest = Math.min(closest, Math.hypot(dx, dy));
+    }
+  }
+  measure('closest pair of cells, in ring spacings', closest);
+  assert('no two cells sit on top of each other', closest > 0.5);
+
+  // And the lookup finds what it should.
+  let wrong = 0;
+  for (let c = 0; c < PENT_SUBCELL_COUNT; c++) {
+    if (pentFromPoint(pentCentres[c * 2], pentCentres[c * 2 + 1]) !== c) wrong++;
+  }
+  check('every cell is found at its own centre', wrong, 0, 0);
 });
 
 suite('sub-map', () => {
