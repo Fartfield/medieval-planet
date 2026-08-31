@@ -9,7 +9,7 @@
 import * as A from '../sim/anchors.ts';
 import { World } from '../sim/world.ts';
 import { resolveTurn } from '../sim/turn.ts';
-import { toKey } from '../sim/geo/address.ts';
+import { toKey, type Address } from '../sim/geo/address.ts';
 import { CELL_COUNT } from '../sim/geo/sphere.ts';
 import { SUBCELL_COUNT } from '../sim/geo/hexgrid.ts';
 import { yieldsFor } from '../sim/gen/submap.ts';
@@ -229,15 +229,21 @@ suite('specialisation', () => {
   measure('mine site ore richness', mineOre);
   assert('the mine site is much the poorer ground', mineYield < farmYield * 0.5);
 
+  // Narrowed once here rather than asserted at each use: the guard above has
+  // already returned if either is null, but the closure below is a separate
+  // scope and the compiler cannot carry the narrowing into it.
+  const farmSite: Address = farm;
+  const mineSite: Address = mine;
+
   function play(withNeighbour: boolean, years: number): { pop: number; share: number; iron: number; grainIn: number } {
     const w = new World({ seed: SEED });
     if (withNeighbour) {
-      w.setDelta(farm, {
+      w.setDelta(farmSite, {
         owner: 0, population: 400, populationHealth: 1,
         grainStock: 400 * 330, farmShare: 1,
       });
     }
-    w.setDelta(mine!, {
+    w.setDelta(mineSite, {
       owner: 0, population: 60, populationHealth: 1,
       grainStock: 60 * 30, farmShare: 1,
     });
@@ -246,7 +252,7 @@ suite('specialisation', () => {
     const turns = Math.round(years * A.TURNS_PER_YEAR);
     for (let t = 0; t < turns; t++) {
       const res = resolveTurn(w, [], 1);
-      last = res.reports.get(toKey(mine!)) ?? null;
+      last = res.reports.get(toKey(mineSite)) ?? null;
       if (last === null) break;
     }
     return last === null

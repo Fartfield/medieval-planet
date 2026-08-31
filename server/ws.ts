@@ -49,7 +49,10 @@ export interface WsHandlers {
 }
 
 export class WsConnection {
-  private buffer = Buffer.alloc(0);
+  // Typed as the general Buffer rather than the ArrayBuffer-backed one that
+  // `Buffer.alloc` infers: a chunk off a socket may be backed by anything, and
+  // the narrower inferred type made concat with a real chunk a type error.
+  private buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   private closed = false;
   private handlers: WsHandlers = {};
   /** Parts of a fragmented message, joined when the FIN frame arrives. */

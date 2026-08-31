@@ -12,7 +12,7 @@ import * as A from '../sim/anchors.ts';
 import { SUBCELL_COUNT, RADIUS } from '../sim/geo/hexgrid.ts';
 import { CELL_COUNT } from '../sim/geo/sphere.ts';
 import { toKey, fromKey, GROUND_DEPTH, MAX_DEPTH } from '../sim/geo/address.ts';
-import { Biome, miamiNPP, biotemperature } from '../sim/model/biome.ts';
+import { Biome, type BiomeId, miamiNPP, biotemperature } from '../sim/model/biome.ts';
 import { deriveSoil, leachingFraction, decompositionRate } from '../sim/model/soil.ts';
 import { Mineral, gameHeadPerKm2, timberTPerHa } from '../sim/model/resources.ts';
 import { Landform } from '../sim/model/tile.ts';
@@ -35,7 +35,7 @@ suite('soil', () => {
   // tundra at 24 degrees, which is how the first version of this test managed
   // to report a leaching fraction of 1.00 on permanently frozen ground.
   const at = (t: number, p: number, sinLat: number, biome: number) =>
-    deriveSoil({ temperatureC: t, precipMm: p, sinLat, slope: 0.01, alluvial: 0.2, biome });
+    deriveSoil({ temperatureC: t, precipMm: p, sinLat, slope: 0.01, alluvial: 0.2, biome: biome as BiomeId });
 
   const grassland = at(9, 480, 0.65, Biome.TemperateGrassland);
   const savanna = at(24, 800, 0.20, Biome.Savanna);

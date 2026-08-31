@@ -25,7 +25,7 @@ import {
   STABILITY_CAP, cellContaining,
   cellRadiusRad, type SubMap, type Neighbouring,
 } from './gen/submap.ts';
-import { classify } from './model/biome.ts';
+import { classify, type BiomeId } from './model/biome.ts';
 import {
   factorOfSafety, rootCohesionAfterClearing, standingCoverOf, type RockId,
 } from './model/rock.ts';
@@ -284,7 +284,7 @@ export class World {
       slope: map.slope[c],
       drainage,
       waterlogging: waterlog,
-      biome,
+      biome: biome as BiomeId,
       aridity,
     });
     if (delta?.depleted) {
@@ -294,7 +294,7 @@ export class World {
     }
 
     const cleared = delta?.cleared ?? 0;
-    const standing = timberTPerHa(biome, npp) * (1 - clamp(cleared, 0, 1));
+    const standing = timberTPerHa(biome as BiomeId, npp) * (1 - clamp(cleared, 0, 1));
 
     // Whether this hillside is still standing up, as it is TODAY rather than
     // as generated. The generated field assumes whatever the biome grows; this
@@ -321,7 +321,7 @@ export class World {
     return {
       address,
       dir: [map.dirs[c * 3], map.dirs[c * 3 + 1], map.dirs[c * 3 + 2]],
-      biome,
+      biome: biome as BiomeId,
       landform: classifyLandform(map.elevationM[c], map.slope[c], drainage, waterlog, nearCoast),
       elevationM: map.elevationM[c],
       slope: map.slope[c],
@@ -346,7 +346,7 @@ export class World {
         forage: GRAZEABLE_FRACTION[biome] * clamp(npp / A.MIAMI_MAX_NPP, 0, 1),
       },
       fauna: {
-        gameHeadPerKm2: gameHeadPerKm2(biome, npp),
+        gameHeadPerKm2: gameHeadPerKm2(biome as BiomeId, npp),
         fish: map.elevationM[c] < 0 || drainage > 0.7
           ? clamp(0.35 + 0.65 * drainage, 0, 1)
           : 0,

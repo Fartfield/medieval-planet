@@ -16,7 +16,7 @@ import {
 } from '../../sim/geo/hexgrid.ts';
 import { BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import type { Planet } from '../../sim/gen/planet.ts';
-import type { SubMap } from '../../sim/gen/submap.ts';
+import type { SubMap, Basis } from '../../sim/gen/submap.ts';
 import { toDirection } from '../../sim/gen/submap.ts';
 
 /**
@@ -705,7 +705,12 @@ export interface ChildFrame {
   dirs: Float64Array;
   biome: Uint8Array;
   elevationM: Float32Array;
-  basis: { lon: number; sinLat: number };
+  // The WHOLE basis, not the two fields the old cylindrical layout happened to
+  // read. `tilePolygons` calls `toDirection` with it now -- the generator's own
+  // transform rather than a copy -- and that needs the frame's axes. Typed as
+  // the narrow shape it silently worked, because the object passed in has
+  // always been a full Basis; the type was the only thing that disagreed.
+  basis: Basis;
   cellRadiusRad: number;
 }
 

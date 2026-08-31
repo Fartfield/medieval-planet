@@ -544,7 +544,7 @@ suite('tiles on the globe tessellate', () => {
   // they were when the check was written.
   const view = globeView(Math.round(W * 1.69), Math.round(H * 1.69));
   const kids = world.subMap([equatorial]);
-  const polys = tilePolygons(kids, cam, view, equatorial);
+  const polys = tilePolygons(kids, cam, view);
 
   let drawn = 0;
   for (const poly of polys) if (poly !== null) drawn++;
@@ -603,7 +603,7 @@ suite('tiles on the globe tessellate', () => {
   // putting this to cell 4 -- which the re-tiling moved to 67 degrees -- was
   // asking whether yaw hides something yaw cannot hide.
   const behind = tilePolygons(world.subMap([equatorial]),
-    { ...cam, yaw: cam.yaw + Math.PI }, view, 4);
+    { ...cam, yaw: cam.yaw + Math.PI }, view);
   let front = 0;
   for (const poly of behind) if (poly !== null) front++;
   measure('tiles facing us with the globe turned away', front);
@@ -650,7 +650,7 @@ suite('every cell is served the same, there being only one kind now', () => {
       pitch: Math.atan2(centres[cell * 3 + 1],
         Math.hypot(centres[cell * 3], centres[cell * 3 + 2])),
     };
-    const polys = tilePolygons(kids, facing, view, cell);
+    const polys = tilePolygons(kids, facing, view);
 
     let furthest = 0;
     for (const poly of polys) {

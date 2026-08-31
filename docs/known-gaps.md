@@ -155,13 +155,6 @@ better and cost 91 times as much.
 region" is a prefix scan over string keys today. Fine at small numbers, not
 fine at a million.
 
-**Type checking is not wired into `run_all`.** `npm run typecheck` needs an npm
-install the project otherwise does not, so nothing runs `tsc`. This is not
-free: `erasableSyntaxOnly` in `tsconfig.json` would have caught three separate
-parameter-property crashes at type-check time rather than at load.
-`verify_purity.ts` now catches that class by reading the source, which is a
-worse tool that happens to be available.
-
 **The WebSocket implementation is hand-rolled.** No compression, no
 fragmentation on send, no backpressure. Fine for a few players on a LAN;
 replace it with `ws` before it faces anything else.

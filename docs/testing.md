@@ -62,6 +62,20 @@ on one engine, so they cannot prove the cross-engine reproducibility that
 different OS and a different Node version is the real evidence** — run it there
 before trusting a world to survive a migration.
 
+## The type checker runs as a suite
+
+`verify_types.ts` shells out to `tsc --noEmit` and fails the run on any error,
+so a type is a constraint again rather than a comment that looks like one. It
+needs the dev dependencies present:
+
+```
+npm install
+```
+
+Without them the suite fails on "typescript is installed" rather than quietly
+passing -- a suite that skips is indistinguishable from one that succeeds, and
+that is exactly how this check came to be missing for so long.
+
 ## Run the real thing
 
 ```
