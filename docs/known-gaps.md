@@ -66,13 +66,21 @@ a cap of 17 degrees instead of 12. A rounder cap of the right size needs a finer
 grid -- frequency 9 would put cells at 7 and 12 degrees and allow it -- at 812
 cells against 480, with the economy shifting again for it.
 
-**Cross-boundary adjacency is still not implemented, but area queries are.**
-A cell on the rim of a sub-map has fewer than six neighbours and no way to name
-the missing one, so rivers still stop at a map edge and nothing can walk across
-one. What *does* cross now is `World.cellsWithin` — every cell within a radius
-of a point, found by descending rather than walking, so catchments, trade and
-settlement all reach past a boundary. Measured: 4,096 cells within 2 km across
-60 different parent maps. Adjacency is the remaining half.
+**Cross-boundary adjacency is still not implemented, but water and area
+queries both cross.** A cell on the rim of a sub-map has fewer than six
+neighbours and no way to NAME the missing one, so nothing can walk from a tile
+to its neighbour across an edge.
+
+Two things this entry used to claim were also missing, and both work. Rivers
+cross: a trunk channel measured 10,211 m³/s at the region and 9,767 at every
+one of the four layers below it, which only holds if water enters each map from
+outside — `resolveInflow` picks the rim cell facing each source. And
+`World.cellsWithin` finds every cell within a radius of a point by descending
+rather than walking, so catchments, trade and settlement all reach past a
+boundary.
+
+Tile-to-tile adjacency is the remaining half, and it is the half nothing has
+needed yet.
 
 ## Simulation
 
