@@ -138,11 +138,18 @@ alliances, no representation on the map beyond the colour.
 **Players are identified by name.** Rejoining by name is enough to play with
 and not enough for anything else.
 
-**`derive.ts` still describes a real-time battle.** Tick rates, charge speeds,
-turn rates and formation spacing were derived for an RTS and survive because
-the underlying anchors are sound and supply lines will want the march rates.
-The tick-rate derivation in particular no longer applies — a two-minute turn
-does not need 32 Hz — and should be revisited rather than deleted.
+**`derive.ts` still describes a real-time battle, and 32 of its 37 exports are
+dead.** Measured: only `SOLDIER_GRAIN_KG_PER_DAY`, `NAVIGABLE_M3_PER_S`,
+`INFANTRY_MARCH_MS`, `STREAM_M3_PER_S` and `EROSION_K_REFERENCE` are imported
+anywhere. The other thirty-two -- arrow flight, charge ranges, cavalry gaits,
+formation pitch, tick rates, horse forage -- were derived for an RTS and are
+reachable only from the file that defines them.
+
+The tick-rate derivation in particular no longer applies: a two-minute turn does
+not need 32 Hz. They survive because the anchors under them are sound and a
+combat model will want them back, so deleting is a decision rather than a
+tidy-up, and it has not been taken. What has been fixed is that the file no
+longer claims checks that do not exist -- see verify_derive.ts.
 
 ## Infrastructure
 

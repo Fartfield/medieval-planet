@@ -586,7 +586,8 @@ export const CROPPED_FRACTION_THREE_FIELD = 2.0 / 3.0;
 // transport falls out in the same units as the cargo -- no price, no currency,
 // just what fraction of a load is consumed getting it there.
 //
-// Two independent measurements check the result, and derive.ts asserts both:
+// Two independent measurements check the result, and verify_supply.ts asserts
+// both of them -- derive.ts asserts nothing, and this line used to say it did:
 //
 //   Diocletian's Price Edict (301 AD) implies sea transport cost roughly a
 //   fortieth of road transport over the same distance.

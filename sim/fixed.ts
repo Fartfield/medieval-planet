@@ -35,8 +35,9 @@
 // that is 1% slow arrives at the flank a full second late over 100 m. At 1/4096
 // the per-tick step rounds to 179 units against a true 179.2, an error of 0.1%.
 // At 1/1024 it would round to 45 against 44.8, an error of 0.4%, and the map
-// would gain 49 km nobody asked for. See verify/verify_fixed.ts, which walks
-// both limits, and verify/verify_derive.ts, which measures the drift directly.
+// would gain 49 km nobody asked for. See the "fixed point" suite in
+// verify/verify_math.ts, which walks both limits. This used to name
+// verify_fixed.ts and verify_derive.ts, neither of which existed.
 
 export const SHIFT = 12;
 export const SCALE = 1 << SHIFT; // 4096

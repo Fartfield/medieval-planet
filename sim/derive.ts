@@ -2,8 +2,10 @@
 //
 // Nothing in this file is typed in. Where a value genuinely is ours rather
 // than the world's, it is marked FREE PARAMETER and the comment says why no
-// measurement could settle it. There are four of them at the time of writing;
-// if that count grows, something has gone wrong.
+// measurement could settle it. There are FIVE of them, and verify_derive.ts
+// counts them against that number rather than leaving it to be noticed -- the
+// header said four for a long time while there were five, because a sentence
+// is not a check. Growing the count is allowed; growing it silently is not.
 //
 // The arithmetic here runs once, at module load, in floating point -- and that
 // is safe in a way the simulation proper is not, because it uses only + - * /
