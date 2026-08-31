@@ -173,7 +173,7 @@ export function findSite(
   for (let m = 0; m < maps.length; m++) {
     const map = maps[m];
     const yields = yieldsFor(map);
-    for (let c = 0; c < SUBCELL_COUNT; c++) {
+    for (let c = 0; c < map.patch.count; c++) {
       if (map.elevationM[c] < 0) continue;
       const y = yields[c];
       if (y <= 0) continue;

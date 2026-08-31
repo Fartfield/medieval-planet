@@ -345,6 +345,23 @@ suite('the pentagon sub-map', () => {
   measure('interior cells with six neighbours', interiorSix);
   check('and no interior cell has any other number', interiorOther, 0, 0);
 
+  // NOTHING MAY NAME A CELL THAT IS NOT ONE.
+  //
+  // pentgrid builds one ring past the map so rim tiles have corners to be made
+  // from, and the first version handed that halo-inclusive list out as the
+  // map's adjacency. 55 of the 76 cells then named a neighbour that does not
+  // exist: the water router walked into index 95 of a 76-long array, read
+  // undefined, and propagated NaN. The suite went from four minutes to
+  // thirteen. A halo is for looking at, never for walking.
+  let outside = 0;
+  for (let c = 0; c < PENT_SUBCELL_COUNT; c++) {
+    for (let k = 0; k < 6; k++) {
+      const nb = pentNeighbours[c * 6 + k];
+      if (nb >= PENT_SUBCELL_COUNT) outside++;
+    }
+  }
+  check('no neighbour points outside the map', outside, 0, 0);
+
   // Adjacency built by proximity, so reciprocity is a property to check rather
   // than one the construction gives away.
   let asymmetric = 0;

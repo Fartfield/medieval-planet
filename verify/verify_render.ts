@@ -655,7 +655,10 @@ suite('every cell is served the same, there being only one kind now', () => {
     let furthest = 0;
     for (const poly of polys) {
       if (poly === null) continue;
-      for (let i = 0; i < 6; i++) {
+      // The polygon's own corner count. A pentagonal patch's centre cell has
+      // five, and reading a sixth off it gives undefined, which makes the
+      // whole measurement NaN rather than merely wrong.
+      for (let i = 0; i < poly.length / 2; i++) {
         furthest = Math.max(furthest,
           Math.hypot(poly[i * 2] - view.cx, poly[i * 2 + 1] - view.cy));
       }

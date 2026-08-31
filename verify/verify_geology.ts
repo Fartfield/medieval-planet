@@ -45,11 +45,14 @@ function plotMaps(w: World, limit = 24): ReturnType<World['subMap']>[] {
     while (a.length < 5) {
       const map = w.subMap(a);
       let pick = 0;
-      for (let c = 0; c < SUBCELL_COUNT; c++) {
+      for (let c = 0; c < map.patch.count; c++) {
         if (map.elevationM[c] > map.elevationM[pick]) pick = c;
       }
       // Stepped rather than always-steepest, so the sample is not all ridges.
-      a = [...a, (pick * 7 + a.length * 13) % SUBCELL_COUNT];
+      // Stepped rather than always-steepest, and taken modulo THIS map's cell
+      // count: a pentagon's map has 76, so % 91 can name a cell that is not
+      // there.
+      a = [...a, (pick * 7 + a.length * 13) % map.patch.count];
     }
     out.push(w.subMap(a));
   }
@@ -450,13 +453,13 @@ suite('clearing a hillside is a decision with a delay', () => {
     while (a.length < 5) {
       const map = w.subMap(a);
       let pick = 0;
-      for (let c = 0; c < SUBCELL_COUNT; c++) {
+      for (let c = 0; c < map.patch.count; c++) {
         if (map.slope[c] > map.slope[pick] && map.elevationM[c] > 0) pick = c;
       }
       a = [...a, pick];
     }
     const map = w.subMap(a);
-    for (let c = 0; c < SUBCELL_COUNT; c++) {
+    for (let c = 0; c < map.patch.count; c++) {
       if (map.elevationM[c] <= 0 || map.regolithM[c] <= 0.2) continue;
       if (map.slope[c] <= steepest) continue;
       // AND STABLE WHILE IT IS WOODED. The claim is that felling is a decision
@@ -514,10 +517,13 @@ suite('a map edge is no different from its middle', () => {
 
   for (let region = 0; region < CELL_COUNT; region += 2) {
     if (w.planet.elevationM[region] <= 0) continue;
-    for (let k = 0; k < SUBCELL_COUNT; k += 17) {
+    // The OUTER index is a cell of the region's own map, so it is bounded by
+    // that map's count -- 76 if the region is one of the ten pentagons.
+    const parent = w.subMap([region]);
+    for (let k = 0; k < parent.patch.count; k += 17) {
       const map = w.subMap([region, k]);
-      for (let c = 0; c < SUBCELL_COUNT; c++) {
-        if (ringOf(c) === RADIUS) {
+      for (let c = 0; c < map.patch.count; c++) {
+        if (map.patch.ring(c) === map.patch.radius) {
           rimSum += map.slope[c]; rimN++;
           worstRim = Math.max(worstRim, map.slope[c]);
         } else {
@@ -568,15 +574,16 @@ suite('a coastline survives the descent', () => {
   let land1 = 0, all1 = 0;
   for (let c = 0; c < CELL_COUNT; c++) {
     const map = w.subMap([c]);
-    for (let k = 0; k < SUBCELL_COUNT; k++) { all1++; if (map.elevationM[k] >= 0) land1++; }
+    for (let k = 0; k < map.patch.count; k++) { all1++; if (map.elevationM[k] >= 0) land1++; }
   }
   const f1 = land1 / all1;
 
   let land2 = 0, all2 = 0;
   for (let c = 0; c < CELL_COUNT; c++) {
-    for (let k = 0; k < SUBCELL_COUNT; k += 13) {
-      const map = w.subMap([c, k]);
-      for (let j = 0; j < SUBCELL_COUNT; j++) { all2++; if (map.elevationM[j] >= 0) land2++; }
+    const parent = w.subMap([c]);
+    for (let k = 0; k < parent.patch.count; k += 13) {
+      const child = w.subMap([c, k]);
+      for (let j = 0; j < child.patch.count; j++) { all2++; if (child.elevationM[j] >= 0) land2++; }
     }
   }
   const f2 = land2 / all2;

@@ -32,6 +32,7 @@ import {
 import { addressSeed, SALT, type Address } from '../geo/address.ts';
 import { fbm3, ridged3 } from './noise.ts';
 import { clamp, smoothstep, dpow, lerp, dsin, dcos, datan2, PI } from './mathx.ts';
+import { patchFor, cellRadiusForAddress, HEX_PATCH, type Patch } from '../geo/patch.ts';
 import {
   routeWater, runoffM as runoffDepthM, drainageOf, alluvialFraction,
   type Boundary, type Flow,
@@ -121,6 +122,13 @@ export interface SubMap {
   hiM: number;
   /** The roughness field, carried down unchanged from the mesh. */
   reliefM: Float32Array;
+  /**
+   * Which lattice this map is built on, and how many cells it has.
+   *
+   * 91 hexagons for a hexagonal parent, 76 for a pentagonal one. Everything
+   * that used to read SUBCELL_COUNT and assume it applied reads this instead.
+   */
+  patch: Patch;
   /** Depth of water leaving each cell in a year, metres. */
   runoffM: Float32Array;
   /** Fraction of each cell that is river floodplain, 0..1. */
@@ -336,10 +344,24 @@ function toLocal(b: Basis, x: number, y: number, z: number): { x: number; y: num
   };
 }
 
-/** A direction on the sphere back to the sub-map cell containing it, or -1. */
-export function cellContaining(b: Basis, radiusRad: number, x: number, y: number, z: number): number {
+/**
+ * A direction on the sphere back to the sub-map cell containing it, or -1.
+ *
+ * TAKES THE PATCH, because the answer depends on which lattice is being asked
+ * about. Defaulting to the hexagonal one was fine while there was only one;
+ * once pentagons had 76 cells this returned indices up to 90 for them, and a
+ * caller built an address naming cell 83 of a 76-cell map.
+ */
+export function cellContaining(
+  b: Basis,
+  radiusRad: number,
+  x: number,
+  y: number,
+  z: number,
+  patch: Patch = HEX_PATCH,
+): number {
   const p = toLocal(b, x, y, z);
-  return fromPixel(p.x, p.y, radiusRad);
+  return patch.at(p.x, p.y, radiusRad);
 }
 
 /**
@@ -503,6 +525,28 @@ export interface CellValue {
 }
 
 /**
+ * The patch cell nearest a point, clamped in rather than refused.
+ *
+ * hexgrid has `nearestCell`, which cube-rounds and then scans if the point
+ * falls outside. A five-fold lattice has nothing to round with -- no axial
+ * coordinates, which is the same reason it has no neighbour table -- so this
+ * scans outright. Seventy-six comparisons, only on a pentagon's own map, of
+ * which there are ten in the world.
+ */
+function nearestPatchCell(patch: Patch, x: number, y: number, size: number): number {
+  const inside = patch.at(x, y, size);
+  if (inside >= 0) return inside;
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < patch.count; i++) {
+    const p = patch.centre(i, size);
+    const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+/**
  * Look up a cell of the SAME layer that this map does not hold.
  *
  * A rim cell is missing two or three neighbours, and those neighbours are not
@@ -565,9 +609,11 @@ function sampleSubMapRaw(
   const lx = local.x;
   const ly = local.y;
 
-  const c = nearestCell(lx, ly, map.cellRadiusRad);
+  const c = map.patch.sides === 6
+    ? nearestCell(lx, ly, map.cellRadiusRad)
+    : nearestPatchCell(map.patch, lx, ly, map.cellRadiusRad);
 
-  const p0 = toPixel(c, map.cellRadiusRad);
+  const p0 = map.patch.centre(c, map.cellRadiusRad);
 
   // Hex centres are a triangular lattice, so the containing triangle is the
   // cell and two neighbours adjacent to each other. Six to try, and normally
@@ -588,11 +634,11 @@ function sampleSubMapRaw(
   // outside the triangle rather than inside it -- and the gradient carries on
   // across the rim instead of flattening against it.
   for (let i = 0; i < 6; i++) {
-    const na = subNeighbours[c * 6 + i];
-    const nb = subNeighbours[c * 6 + ((i + 1) % 6)];
+    const na = map.patch.neighbours[c * 6 + i];
+    const nb = map.patch.neighbours[c * 6 + ((i + 1) % 6)];
     if (na < 0 || nb < 0) continue;
-    const p1 = toPixel(na, map.cellRadiusRad);
-    const p2 = toPixel(nb, map.cellRadiusRad);
+    const p1 = map.patch.centre(na, map.cellRadiusRad);
+    const p2 = map.patch.centre(nb, map.cellRadiusRad);
 
     const det = (p1.y - p2.y) * (p0.x - p2.x) + (p2.x - p1.x) * (p0.y - p2.y);
     if (det === 0) continue;
@@ -742,9 +788,9 @@ function planeAt(
   const u0 = map.upliftM[c];
 
   for (let i = 0; i < 6; i++) {
-    const n = subNeighbours[c * 6 + i];
+    const n = map.patch.neighbours[c * 6 + i];
     if (n < 0) continue;
-    const pn = toPixel(n, map.cellRadiusRad);
+    const pn = map.patch.centre(n, map.cellRadiusRad);
     const dx = pn.x - p0.x;
     const dy = pn.y - p0.y;
     sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
@@ -778,7 +824,7 @@ function planeAt(
   // beyond that it is inventing ground nobody measured.
   let vlo = e0, vhi = e0;
   for (let i = 0; i < 6; i++) {
-    const nb = subNeighbours[c * 6 + i];
+    const nb = map.patch.neighbours[c * 6 + i];
     if (nb < 0) continue;
     if (map.elevationM[nb] < vlo) vlo = map.elevationM[nb];
     if (map.elevationM[nb] > vhi) vhi = map.elevationM[nb];
@@ -821,7 +867,16 @@ export function generateSubMap(
   // Scaled by how big THIS cell actually is. Cells are near-uniform but the ten
   // pentagons are 0.679 of the mean, and a map sized for the average covers
   // ground its parent does not own. See cellRadiusScale.
-  const cellRad = cellRadiusRad(depth) * cellRadiusScale(parentAddress[0]);
+  // WHICH LATTICE, and therefore how many cells. A pentagonal cell gets 76 and
+  // a hexagonal one 91; see geo/patch.ts for why the pentagons run down the
+  // centre of a branch and nowhere else.
+  const patch = patchFor(parentAddress);
+  const N = patch.count;
+
+  // Walked layer by layer rather than raised to a power, because a pentagonal
+  // layer divides by sqrt(76) where a hexagonal one divides by sqrt(91).
+  const cellRad = cellRadiusForAddress(
+    parentAddress, CELL_R, cellRadiusScale(parentAddress[0]));
   const spacingM = Math.sqrt(3) * cellRad * radiusM;
   // ONE NOISE FIELD PER LAYER, shared by every map on it.
   //
@@ -842,28 +897,28 @@ export function generateSubMap(
   // other -- which is what the header claimed all along.
   const fieldSeed = addressSeed(worldSeed, [depth], SALT.submap);
 
-  const dirs = new Float64Array(SUBCELL_COUNT * 3);
+  const dirs = new Float64Array(N * 3);
   // The parent's fields at each of our cells. Kept rather than re-sampled in
   // the climate pass below: sampling walks the parent's neighbour ring, and
   // doing it twice for 9,919 cells doubled the cost of opening a map.
-  const parentElev = new Float32Array(SUBCELL_COUNT);
-  const parentPrecip = new Float32Array(SUBCELL_COUNT);
-  const elevationM = new Float32Array(SUBCELL_COUNT);
-  const precipMm = new Float32Array(SUBCELL_COUNT);
-  const upliftM = new Float32Array(SUBCELL_COUNT);
-  const temperatureC = new Float32Array(SUBCELL_COUNT);
-  const slope = new Float32Array(SUBCELL_COUNT);
-  const drainage = new Float32Array(SUBCELL_COUNT);
-  const runoffM = new Float32Array(SUBCELL_COUNT);
-  const reliefM = new Float32Array(SUBCELL_COUNT);
-  const rock = new Uint8Array(SUBCELL_COUNT);
-  const erosionMPerYr = new Float32Array(SUBCELL_COUNT);
-  const regolithM = new Float32Array(SUBCELL_COUNT);
-  const stability = new Float32Array(SUBCELL_COUNT);
-  const alluvial = new Float32Array(SUBCELL_COUNT);
-  const waterlogging = new Float32Array(SUBCELL_COUNT);
-  const nppGm2 = new Float32Array(SUBCELL_COUNT);
-  const biome = new Uint8Array(SUBCELL_COUNT);
+  const parentElev = new Float32Array(N);
+  const parentPrecip = new Float32Array(N);
+  const elevationM = new Float32Array(N);
+  const precipMm = new Float32Array(N);
+  const upliftM = new Float32Array(N);
+  const temperatureC = new Float32Array(N);
+  const slope = new Float32Array(N);
+  const drainage = new Float32Array(N);
+  const runoffM = new Float32Array(N);
+  const reliefM = new Float32Array(N);
+  const rock = new Uint8Array(N);
+  const erosionMPerYr = new Float32Array(N);
+  const regolithM = new Float32Array(N);
+  const stability = new Float32Array(N);
+  const alluvial = new Float32Array(N);
+  const waterlogging = new Float32Array(N);
+  const nppGm2 = new Float32Array(N);
+  const biome = new Uint8Array(N);
 
   // Detail frequency: the noise wavelength has to shrink with the cells, or a
   // ground map inherits the same three hills its region already had. Tie it to
@@ -885,8 +940,8 @@ export function generateSubMap(
   const meshSpacingM = (2 * Math.PI * radiusM) / MESH_COLS;
   const belowMesh = clamp((meshSpacingM - spacingM) / (meshSpacingM * 0.75), 0, 1);
 
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
-    const p = toPixel(c, cellRad);
+  for (let c = 0; c < N; c++) {
+    const p = patch.centre(c, cellRad);
     toDirection(basis, p.x, p.y, dirs, c * 3);
     const parent = sample(dirs[c * 3], dirs[c * 3 + 1], dirs[c * 3 + 2]);
     upliftM[c] = parent.upliftM;
@@ -914,7 +969,7 @@ export function generateSubMap(
   // inheriting 2,197 m of relief. A field is continuous by construction, so
   // neighbours agree because they are reading the same thing.
 
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
+  for (let c = 0; c < N; c++) {
     const x = dirs[c * 3], y = dirs[c * 3 + 1], z = dirs[c * 3 + 2];
 
     // Rolling detail everywhere, plus ridges gated to ground that is already
@@ -934,16 +989,16 @@ export function generateSubMap(
 
   let mapLo = Infinity;
   let mapHi = -Infinity;
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
+  for (let c = 0; c < N; c++) {
     if (elevationM[c] < mapLo) mapLo = elevationM[c];
     if (elevationM[c] > mapHi) mapHi = elevationM[c];
   }
 
   // --- slope, from the neighbours we have -----------------------------------
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
+  for (let c = 0; c < N; c++) {
     let worst = 0;
     for (let d = 0; d < 6; d++) {
-      const n = subNeighbours[c * 6 + d];
+      const n = patch.neighbours[c * 6 + d];
       if (n < 0) continue;
       worst = Math.max(worst, Math.abs(elevationM[c] - elevationM[n]) / spacingM);
     }
@@ -955,7 +1010,7 @@ export function generateSubMap(
   // runoff needs temperature and rainfall, and the biome needs the drainage the
   // water produces. Having both in one loop is what forced the old drainage
   // model to work from elevation alone.
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
+  for (let c = 0; c < N; c++) {
     const sinLat = dirs[c * 3 + 1];
     const u = sinLat * sinLat;
     const seaLevelT = A.TEMP_EQUATOR_C - A.TEMP_QUAD_COEFF * u - A.TEMP_CUBIC_COEFF * u * u * u;
@@ -976,14 +1031,14 @@ export function generateSubMap(
   }
 
   // --- water, with what the layer above is sending us ------------------------
-  const resolved = resolveInflow(inflow, basis, dirs, elevationM);
-  const isOutlet = new Uint8Array(SUBCELL_COUNT);
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
-    isOutlet[c] = (ringOf(c) === RADIUS || elevationM[c] < 0) ? 1 : 0;
+  const resolved = resolveInflow(inflow, basis, dirs, elevationM, patch);
+  const isOutlet = new Uint8Array(N);
+  for (let c = 0; c < N; c++) {
+    isOutlet[c] = (patch.ring(c) === patch.radius || elevationM[c] < 0) ? 1 : 0;
   }
   const flow = routeWater({
-    count: SUBCELL_COUNT,
-    neighbours: subNeighbours,
+    count: N,
+    neighbours: patch.neighbours,
     degree: 6,
     elevationM,
     // A hexagon of circumradius r has area 3*sqrt(3)/2 * r^2 and a spacing of
@@ -995,13 +1050,13 @@ export function generateSubMap(
     isOutlet,
     inflow: resolved,
   });
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
+  for (let c = 0; c < N; c++) {
     drainage[c] = drainageOf(flow.dischargeM3S[c]);
     alluvial[c] = alluvialFraction(flow.dischargeM3S[c], spacingM);
   }
 
   // --- everything that reads the water ---------------------------------------
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
+  for (let c = 0; c < N; c++) {
     const sinLat = dirs[c * 3 + 1];
     // Ordering: waterlogging is needed to classify the biome, and the biome is
     // needed to derive the soil. Waterlogging itself does not read the biome,
@@ -1029,7 +1084,7 @@ export function generateSubMap(
   // Last, because it reads the catchment (erosion), the gradient (both) and
   // the biome (root cohesion). The order through this whole function is one
   // long dependency chain and every reordering of it so far has been a bug.
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
+  for (let c = 0; c < N; c++) {
     const r = rockAt({
       x: dirs[c * 3], y: dirs[c * 3 + 1], z: dirs[c * 3 + 2],
       upliftM: upliftM[c],
@@ -1058,7 +1113,7 @@ export function generateSubMap(
   return {
     parent: parentAddress, depth, basis, cellRadiusRad: cellRad, spacingM,
     dirs, elevationM, slope, temperatureC, precipMm, drainage, runoffM, flow,
-    loM: mapLo, hiM: mapHi, reliefM,
+    loM: mapLo, hiM: mapHi, reliefM, patch,
     alluvial, rock, erosionMPerYr, regolithM, stability,
     hillslopesResolved: spacingM <= A.HILLSLOPE_LENGTH_M,
     waterlogging, nppGm2, biome, upliftM,
@@ -1089,6 +1144,7 @@ function resolveInflow(
   basis: Basis,
   dirs: Float64Array,
   elevationM: Float32Array,
+  patch: Patch,
 ): Boundary[] {
   if (inflow.length === 0) return [];
   const out: Boundary[] = [];
@@ -1110,8 +1166,8 @@ function resolveInflow(
     let fallback = -1;
     let fallbackScore = -Infinity;
 
-    for (let c = 0; c < SUBCELL_COUNT; c++) {
-      if (ringOf(c) !== RADIUS) continue;
+    for (let c = 0; c < patch.count; c++) {
+      if (patch.ring(c) !== patch.radius) continue;
       const cx = dirs[c * 3], cy = dirs[c * 3 + 1], cz = dirs[c * 3 + 2];
       const cd = cx * basis.ox + cy * basis.oy + cz * basis.oz;
       const tx = cx - cd * basis.ox;
@@ -1156,8 +1212,8 @@ export function soilAt(map: SubMap, cell: number): Soil {
  */
 export function yieldsFor(map: SubMap): Float32Array {
   if (map.yieldKgPerHa !== null) return map.yieldKgPerHa;
-  const out = new Float32Array(SUBCELL_COUNT);
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
+  const out = new Float32Array(map.patch.count);
+  for (let c = 0; c < map.patch.count; c++) {
     if (map.elevationM[c] < 0) continue;
     const suitability = cropSuitability(
       map.precipMm[c], map.temperatureC[c], map.dirs[c * 3 + 1]);

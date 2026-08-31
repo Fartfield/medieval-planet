@@ -178,7 +178,7 @@ export function buildCatchment(
   for (let m = 0; m < maps.length; m++) {
     const map = maps[m];
     const yields = yieldsFor(map);
-    for (let c = 0; c < SUBCELL_COUNT; c++) {
+    for (let c = 0; c < map.patch.count; c++) {
       if (map.elevationM[c] < 0) continue;
 
       // Chord distance first: it needs no trigonometry and is within 0.002% of

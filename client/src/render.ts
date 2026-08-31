@@ -18,6 +18,10 @@ import { BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import type { Planet } from '../../sim/gen/planet.ts';
 import type { SubMap, Basis } from '../../sim/gen/submap.ts';
 import { toDirection } from '../../sim/gen/submap.ts';
+import type { Patch } from '../../sim/geo/patch.ts';
+import {
+  PENT_HALO_COUNT, pentCornerNeighbours,
+} from '../../sim/geo/pentgrid.ts';
 
 /**
  * Corner offsets of a pointy-top hexagon.
@@ -712,6 +716,60 @@ export interface ChildFrame {
   // always been a full Basis; the type was the only thing that disagreed.
   basis: Basis;
   cellRadiusRad: number;
+  /** 91 hexagons or 76 pentagon-patch cells. See sim/geo/patch.ts. */
+  patch: Patch;
+}
+
+/**
+ * Tile outlines for a pentagonal patch.
+ *
+ * Same dual construction as the hexagonal path and the same guarantee: two
+ * neighbouring tiles build a shared corner from the same three cells, so the
+ * tiling closes by construction rather than by tolerance. What differs is only
+ * how the three are found.
+ *
+ * Positions are taken for the halo ring as well as the map, so a rim tile has
+ * somewhere to put its outer corners. Nothing addresses the halo as a cell --
+ * it exists to be a corner source and for nothing else.
+ */
+function pentagonTilePolygons(
+  kids: ChildFrame,
+  cam: Camera,
+  view: GlobeView,
+): (Float64Array | null)[] {
+  const { cx, cy, radius } = view;
+  const b = kids.basis;
+  const r = kids.cellRadiusRad;
+  const dir = new Float64Array(3);
+
+  const sx = new Float64Array(PENT_HALO_COUNT);
+  const sy = new Float64Array(PENT_HALO_COUNT);
+  const front = new Uint8Array(PENT_HALO_COUNT);
+  for (let c = 0; c < PENT_HALO_COUNT; c++) {
+    const p = kids.patch.centre(c, r);
+    toDirection(b, p.x, p.y, dir, 0);
+    const [rx, ry, rz] = rotate(cam, dir[0], dir[1], dir[2]);
+    sx[c] = cx + rx * radius;
+    sy[c] = cy - ry * radius;
+    front[c] = rz >= 0 ? 1 : 0;
+  }
+
+  const out: (Float64Array | null)[] = new Array(kids.patch.count).fill(null);
+  for (let k = 0; k < kids.patch.count; k++) {
+    if (front[k] === 0) continue;
+    const ring = pentCornerNeighbours(k);
+    if (ring.length < 3) continue;
+
+    const poly = new Float64Array(ring.length * 2);
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i];
+      const c2 = ring[(i + 1) % ring.length];
+      poly[i * 2] = (sx[k] + sx[a] + sx[c2]) / 3;
+      poly[i * 2 + 1] = (sy[k] + sy[a] + sy[c2]) / 3;
+    }
+    out[k] = poly;
+  }
+  return out;
 }
 
 /**
@@ -744,6 +802,14 @@ export function tilePolygons(
   const { cx, cy, radius } = view;
   const b = kids.basis;
   const r = kids.cellRadiusRad;
+
+  // A FIVE-FOLD PATCH TAKES A DIFFERENT ROUTE, because the machinery below is
+  // axial and a five-fold lattice has no axial coordinates. The construction is
+  // the same one -- a corner is the centroid of three touching cells -- but the
+  // triples come from the patch's own cyclic neighbour list rather than from
+  // walking (q, r) offsets. pentgrid builds one ring past the map for exactly
+  // this, so a rim tile has real cells to make its outer corners from.
+  if (kids.patch.sides === 5) return pentagonTilePolygons(kids, cam, view);
 
   // Every lattice point the region needs, one ring wider than the map itself
   // so the outermost tiles have corners to be built from. The halo points are
@@ -780,8 +846,8 @@ export function tilePolygons(
     }
   }
 
-  const out: (Float64Array | null)[] = new Array(SUBCELL_COUNT).fill(null);
-  for (let k = 0; k < SUBCELL_COUNT; k++) {
+  const out: (Float64Array | null)[] = new Array(kids.patch.count).fill(null);
+  for (let k = 0; k < kids.patch.count; k++) {
     const [, , pz] = rotate(cam, kids.dirs[k * 3], kids.dirs[k * 3 + 1], kids.dirs[k * 3 + 2]);
     if (pz < 0) continue;
 
@@ -820,7 +886,7 @@ function drawGlobeChildren(
     ctx.lineWidth = edgeWidth;
   }
 
-  for (let k = 0; k < SUBCELL_COUNT; k++) {
+  for (let k = 0; k < kids.patch.count; k++) {
     const poly = polys[k];
     if (poly === null) continue;
 
@@ -829,9 +895,14 @@ function drawGlobeChildren(
       ? shade(OCEAN, lambert)
       : shade(BIOME_COLOURS[kids.biome[k]], lambert * alt);
 
+    // The polygon's OWN corner count, not six. A pentagonal patch has one cell
+    // with five -- its centre, which is the pentagon -- and reading a sixth
+    // corner off it gives undefined, which draws as NaN and silently drops the
+    // shape.
+    const corners = poly.length / 2;
     ctx.beginPath();
     ctx.moveTo(poly[0], poly[1]);
-    for (let i = 1; i < 6; i++) ctx.lineTo(poly[i * 2], poly[i * 2 + 1]);
+    for (let i = 1; i < corners; i++) ctx.lineTo(poly[i * 2], poly[i * 2 + 1]);
     ctx.closePath();
     ctx.fill();
     if (drawEdges) ctx.stroke();
@@ -916,14 +987,14 @@ export function drawSubMap(
 
   let lo = Infinity;
   let hi = -Infinity;
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
+  for (let c = 0; c < map.patch.count; c++) {
     if (map.elevationM[c] < lo) lo = map.elevationM[c];
     if (map.elevationM[c] > hi) hi = map.elevationM[c];
   }
   const span = Math.max(1, hi - lo);
 
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
-    const p = toPixel(c, size);
+  for (let c = 0; c < map.patch.count; c++) {
+    const p = map.patch.centre(c, size);
     const x = cx + p.x;
     const y = cy + p.y;
     // Cull off-screen. At full zoom on a ground map this skips most of them.
@@ -952,8 +1023,8 @@ export function drawSubMap(
           ctx.strokeStyle = 'rgba(10,16,24,0.30)';
           ctx.lineWidth = childEdges;
         }
-        for (let k = 0; k < SUBCELL_COUNT; k++) {
-          const q = toPixel(k, childSize);
+        for (let k = 0; k < kids.patch.count; k++) {
+          const q = kids.patch.centre(k, childSize);
           // The thirty-degree turn, applied to the layout as well as to the
           // shape. Turning one and not the other puts them out of register.
           const qx = q.x * COS30 - q.y * SIN30;
@@ -986,9 +1057,9 @@ export function drawSubMap(
   }
 
   // Water second, so channels sit on top of the ground they cut through.
-  for (let c = 0; c < SUBCELL_COUNT; c++) {
+  for (let c = 0; c < map.patch.count; c++) {
     if (map.drainage[c] < 0.55 || map.elevationM[c] < 0) continue;
-    const p = toPixel(c, size);
+    const p = map.patch.centre(c, size);
     const x = cx + p.x;
     const y = cy + p.y;
     if (x < -size * 2 || y < -size * 2 || x > ctx.canvas.width + size * 2 || y > ctx.canvas.height + size * 2) {

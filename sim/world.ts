@@ -94,6 +94,8 @@ export class World {
 
   /** Total cells at a depth. Layer 2 is 1,007,675,157,762. */
   totalCellsAt(depth: number): number {
+    // Approximate now, and only here: ten branches divide by 76 rather than 91,
+    // so the true count is a shade lower. Used for reporting, not for indexing.
     return CELL_COUNT * SUBCELL_COUNT ** depth;
   }
 
@@ -144,7 +146,7 @@ export class World {
     } else {
       const above = this.subMap(parentOf(address));
       const cell = address[address.length - 1];
-      if (cell < 0 || cell >= SUBCELL_COUNT) throw new RangeError(`no cell ${cell}`);
+      if (cell < 0 || cell >= above.patch.count) throw new RangeError(`no cell ${cell}`);
       // Same rule one layer down: face this cell's first neighbour inside the
       // map that holds it, so every layer's lattice agrees with its parent's.
       let nb = -1;
@@ -219,11 +221,11 @@ export class World {
     const address: number[] = [cellAt(x, y, z)];
     while (address.length < length) {
       const map = this.subMap(address);
-      let cell = cellContaining(map.basis, map.cellRadiusRad, x, y, z);
+      let cell = cellContaining(map.basis, map.cellRadiusRad, x, y, z, map.patch);
       if (cell < 0) {
         let best = 0;
         let bestD = Infinity;
-        for (let c = 0; c < SUBCELL_COUNT; c++) {
+        for (let c = 0; c < map.patch.count; c++) {
           const dx = map.dirs[c * 3] - x;
           const dy = map.dirs[c * 3 + 1] - y;
           const dz = map.dirs[c * 3 + 2] - z;
@@ -247,7 +249,7 @@ export class World {
     if (address.length < 2) throw new RangeError('tiles start at the realm layer');
     const map = this.subMap(parentOf(address));
     const c = address[address.length - 1];
-    if (c < 0 || c >= SUBCELL_COUNT) throw new RangeError(`no cell ${c}`);
+    if (c < 0 || c >= map.patch.count) throw new RangeError(`no cell ${c}`);
 
     const key = toKey(address);
     const delta = this.deltas.get(key);
@@ -429,6 +431,9 @@ export class World {
 
     // Derived from the reach, so the same ground is searched at any resolution.
     const mapCap = Math.max(
+      // SUBCELL_COUNT rather than the patch's own count: this sizes a budget
+      // over many maps, almost all of them hexagonal, and a pentagon's 76
+      // would only make the cap 20% generous on ten maps in the world.
       1, Math.ceil(World.CATCHMENT_REACH_M2 / (SUBCELL_COUNT * areaM2)));
     const { maps, addresses } = this.mapsAround(address, radiusM, mapCap);
     const built = buildCatchment(
@@ -504,7 +509,7 @@ export class World {
       const scored: { address: Address; d: number }[] = [];
       for (const parent of level) {
         const map = this.subMap(parent);
-        for (let c = 0; c < SUBCELL_COUNT; c++) {
+        for (let c = 0; c < map.patch.count; c++) {
           const dx = map.dirs[c * 3] - x;
           const dy = map.dirs[c * 3 + 1] - y;
           const dz = map.dirs[c * 3 + 2] - z;
