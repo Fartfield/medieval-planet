@@ -313,6 +313,68 @@ suite('nothing makes landfall against a storm', () => {
     land / CELL_COUNT > 0.2 && land / CELL_COUNT < 0.4);
 });
 
+suite('a tile can name what is across its edge', () => {
+  // THE HALF OF CROSS-BOUNDARY WORK THAT WAS MISSING. Rivers have crossed an
+  // edge for a while and area queries have too, because `cellsWithin` descends
+  // from the globe rather than walking sideways. What nothing could do was name
+  // the tile ADJACENT to a given one across a boundary -- which is the first
+  // thing a road, a border or any pathfinding asks for.
+  const w = new World({ seed: 20260826 });
+  const map = w.subMap([3]);
+
+  let deep = 0;
+  let deepSix = 0;
+  let rimLinks = 0;
+  let crossing = 0;
+  let mutual = 0;
+  let mostNeighbours = 0;
+
+  for (let c = 0; c < map.patch.count; c++) {
+    const ring = map.patch.ring(c);
+    const ns = w.neighboursOf([3, c]);
+    mostNeighbours = Math.max(mostNeighbours, ns.length);
+
+    // WELL INSIDE means two rings clear of the rim, not merely "has six
+    // lattice neighbours". A hexagon of hexagons covers about 91% of its
+    // parent, so the children of two neighbouring parents INTERLEAVE along the
+    // seam: measured, a cell three rings out picks up a tile of the next map
+    // 0.76 spacings away -- nearer than its own lattice neighbours at 1.00.
+    // The intrusion reaches in about two rings and stops.
+    if (ring <= PENT_RADIUS - 3) {
+      deep++;
+      if (ns.length === 6) deepSix++;
+      continue;
+    }
+    if (ring < map.patch.radius) continue;
+    for (const n of ns) {
+      rimLinks++;
+      if (n[0] !== 3) crossing++;
+      if (w.neighboursOf(n).some((r) => toKey(r) === toKey([3, c]))) mutual++;
+    }
+  }
+
+  // Away from a seam nothing has changed: a hexagon has six neighbours.
+  measure('tiles well inside the map', deep);
+  check('a tile well inside still has exactly six neighbours', deepSix, deep, 0);
+
+  // And near one, it has more. Recorded rather than asserted tightly, because
+  // how many depends on how the two lattices happen to meet.
+  measure('most neighbours any tile has', mostNeighbours);
+  assert('a seam gives a tile more neighbours, not fewer', mostNeighbours > 6);
+
+  measure('links from rim tiles', rimLinks);
+  measure('of those, links that cross a map boundary', crossing);
+  assert('tiles on a rim do reach across', crossing > 20);
+
+  // SYMMETRY IS THE POINT. Defining a neighbour by DIRECTION -- which cell lies
+  // that way -- gave links that did not come back: 44% mutual, because two
+  // hexagonal lattices meeting at an arbitrary angle have no mutually-nearest
+  // cells, like two brick walls laid askew. An edge that exists one way and not
+  // the other is a trap for anything that walks, so adjacency is defined by
+  // DISTANCE, which is symmetric whatever the lattices are doing.
+  check('every link is mutual', mutual, rimLinks, 0);
+});
+
 suite('the pentagon sub-map', () => {
   // Ten of the world's cells are pentagons, and a hexagon of 91 hexagons does
   // not fit inside one. This is the five-sided patch: the same construction as

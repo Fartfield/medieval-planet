@@ -54,21 +54,27 @@ This entry used to say the ladder delivered 57% of the relief its own Hurst
 anchor predicts, and that was an error in the measurement rather than in the
 terrain. See docs/fix-attempts.md.
 
-**Cross-boundary adjacency is still not implemented, but water and area
-queries both cross.** A cell on the rim of a sub-map has fewer than six
-neighbours and no way to NAME the missing one, so nothing can walk from a tile
-to its neighbour across an edge.
+**Neighbouring maps' tiles interleave along a seam.** A hexagon of 91 hexagons
+covers about 91% of the hexagon holding it, so the children of two adjacent
+parents do not meet edge to edge -- they overlap. Measured: a tile three rings
+from a map's rim picks up a tile of the next map 0.76 cell-spacings away, nearer
+than its own lattice neighbours at 1.00, and the intrusion reaches about two
+rings in before it stops.
 
-Two things this entry used to claim were also missing, and both work. Rivers
-cross: a trunk channel measured 10,211 m³/s at the region and 9,767 at every
-one of the four layers below it, which only holds if water enters each map from
-outside — `resolveInflow` picks the rim cell facing each source. And
-`World.cellsWithin` finds every cell within a radius of a point by descending
-rather than walking, so catchments, trade and settlement all reach past a
-boundary.
+    ring from centre   neighbours
+    0 to 2             6 always
+    3                  6, sometimes 7
+    4                  6 to 10
+    5 (the rim)        4 to 10
 
-Tile-to-tile adjacency is the remaining half, and it is the half nothing has
-needed yet.
+`World.neighboursOf` reports this honestly rather than forcing six: adjacency is
+defined by DISTANCE, so it is symmetric, and a tile on a seam simply has more
+neighbours than one in the middle. For a road or a border that is the truth of
+the terrain rather than an inconvenience.
+
+What would remove it is a sub-map whose children tile their parent exactly, and
+no hexagon of hexagons does -- the stepped edge is inherent. It is recorded
+because anything measuring "how many neighbours does a tile have" will meet it.
 
 ## Simulation
 

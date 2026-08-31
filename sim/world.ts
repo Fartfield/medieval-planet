@@ -16,13 +16,13 @@ import { CELL_COUNT, centres, cellAt, neighbours } from './geo/sphere.ts';
 import { SUBCELL_COUNT, subNeighbours } from './geo/hexgrid.ts';
 import {
   type Address, toKey, fromKey, addressSeed, SALT, MAX_DEPTH, GROUND_DEPTH,
-  layerName, parent as parentOf,
+  layerName, parent as parentOf, equals,
 } from './geo/address.ts';
 import { generatePlanet, type Planet } from './gen/planet.ts';
 import type { Boundary } from './gen/hydrology.ts';
 import {
   generateSubMap, basisAt, samplePlanet, sampleSubMap, soilAt, aridityAt,
-  STABILITY_CAP, cellContaining,
+  STABILITY_CAP, cellContaining, toDirection,
   cellRadiusRad, type SubMap, type Neighbouring,
 } from './gen/submap.ts';
 import { classify, type BiomeId } from './model/biome.ts';
@@ -55,6 +55,11 @@ export interface WorldOptions {
    * regression hard to notice.
    */
   cacheSize?: number;
+}
+
+/** How closely a map's cell faces a direction. Bigger is nearer. */
+function dot3(dirs: Float64Array, cell: number, d: Float64Array): number {
+  return dirs[cell * 3] * d[0] + dirs[cell * 3 + 1] * d[1] + dirs[cell * 3 + 2] * d[2];
 }
 
 export class World {
@@ -204,6 +209,122 @@ export class World {
         upliftM: holder.upliftM[cell],
       };
     };
+  }
+
+  /**
+   * The tile on the other side of an edge, named.
+   *
+   * THE HALF OF CROSS-BOUNDARY WORK THAT WAS MISSING. Rivers have crossed a map
+   * edge for a while -- a trunk channel holds 9,767 m3/s through four layers --
+   * and so have area queries, because `cellsWithin` descends from the globe
+   * rather than walking sideways. What nothing could do was name the cell
+   * ADJACENT to a given one across a boundary, which is what a road, a border,
+   * or any pathfinding wants first.
+   *
+   * It is the same answer as everything else here: descend, do not walk. The
+   * neighbour's POSITION is known even when its index is not -- the hex lattice
+   * continues past the array, and pentgrid keeps a halo ring for the same
+   * reason -- so ask the patch where the neighbour sits, turn that into a
+   * direction on the sphere, and let `addressAt` say whose it is.
+   *
+   * `slot` is an index into the cell's own neighbour list, 0..5. Returns null
+   * where there is genuinely nothing: a pentagon's sixth slot, or a cell on the
+   * rim of the world map facing a storm.
+   */
+  neighbourOf(address: Address, slot: number): Address | null {
+    if (address.length < 2) return null;
+    const parent = address.slice(0, -1);
+    const cell = address[address.length - 1];
+    const map = this.subMap(parent);
+
+    // Inside the same map: no descent needed, and no chance of disagreeing
+    // with one.
+    const inside = map.patch.neighbours[cell * 6 + slot];
+    if (inside >= 0) return [...parent, inside];
+
+    const p = map.patch.neighbourPosition(cell, slot, map.cellRadiusRad);
+    if (p === null) return null;
+
+    const dir = new Float64Array(3);
+    toDirection(map.basis, p.x, p.y, dir, 0);
+    const landed = this.addressAt(dir[0], dir[1], dir[2], address.length);
+    if (landed === null) return null;
+    let found: Address = landed;
+
+    // THEN WALK TO THE NEAREST, because "the cell containing this point" and
+    // "the cell nearest this point" are not the same cell. A cell's drawn
+    // hexagon and the region it really owns differ at the edges, so the descent
+    // can land one cell out -- measured before this, the neighbour it named sat
+    // anywhere from 0.68 to 1.74 cell spacings away when a neighbour should be
+    // about 1.00.
+    //
+    // Voronoi regions are convex, so stepping to whichever neighbour is nearer
+    // until none is cannot stop anywhere but the true nearest. The same climb
+    // sphere.ts uses to find a cell on the globe.
+    for (;;) {
+      const fp = found.slice(0, -1);
+      const fc = found[found.length - 1];
+      const fmap = this.subMap(fp);
+      let bestD = dot3(fmap.dirs, fc, dir);
+      let moved: Address | null = null;
+      for (let k = 0; k < 6; k++) {
+        const nb = fmap.patch.neighbours[fc * 6 + k];
+        if (nb < 0) continue;
+        const d = dot3(fmap.dirs, nb, dir);
+        if (d > bestD) { bestD = d; moved = [...fp, nb]; }
+      }
+      if (moved === null) break;
+      found = moved;
+    }
+
+    // The descent lands on whatever cell actually holds that point. If it comes
+    // back with the cell we started from, the point was inside our own
+    // territory after all -- the drawn hexagon and the Voronoi region a cell
+    // really owns are not quite the same shape -- and there is no neighbour to
+    // report rather than a wrong one.
+    if (equals(found, address)) return null;
+    return found;
+  }
+
+  /**
+   * Every tile touching this one, on either side of any boundary.
+   *
+   * SYMMETRIC BY CONSTRUCTION, and that is why it is defined by distance rather
+   * than by direction. `neighbourOf` asks "which cell lies that way", which is
+   * the natural question and gives an answer that does not come back: measured
+   * across a map edge, only 44% of the links it found were mutual. That is not
+   * a bug to fix -- two hexagonal lattices meeting at an arbitrary angle simply
+   * do not have mutually-nearest cells, any more than two brick walls laid
+   * askew have matching courses -- but an edge that exists one way and not the
+   * other is a trap for anything that walks, which is what this is for.
+   *
+   * Distance is symmetric whatever the lattices are doing. Two tiles touch if
+   * their centres are within `ADJACENT_SPACINGS` of each other, so A finds B
+   * exactly when B finds A, and a cell on a rim may end up with more than six
+   * neighbours where the lattices interleave. For a road or a border that is
+   * the truth of it rather than an inconvenience.
+   */
+  neighboursOf(address: Address): Address[] {
+    if (address.length < 2) return [];
+    const parent = address.slice(0, -1);
+    const cell = address[address.length - 1];
+    const map = this.subMap(parent);
+    const here = this.tile(address).dir;
+    const reach = map.spacingM * World.ADJACENT_SPACINGS;
+
+    const near = this.cellsWithin(here[0], here[1], here[2], reach, address.length, 64);
+    const out: Address[] = [];
+    const mine = toKey(address);
+    for (const a of near) {
+      if (toKey(a) === mine) continue;
+      const there = this.tile(a).dir;
+      const d = Math.acos(Math.min(1,
+        here[0] * there[0] + here[1] * there[1] + here[2] * there[2])) * this.radiusM;
+      if (d <= reach) out.push(a);
+    }
+    // A stable order, so a walk over this is reproducible.
+    out.sort((a, b) => toKey(a).localeCompare(toKey(b)));
+    return out;
   }
 
   /**
@@ -396,6 +517,17 @@ export class World {
    * only stops that search becoming unbounded.
    */
   static readonly CATCHMENT_REACH_M2 = 4.92e6;
+
+  /**
+   * How far apart two tiles may be and still touch, in cell spacings.
+   *
+   * Adjacent cells of one lattice sit exactly 1.0 apart. Across a boundary the
+   * two lattices are turned relative to each other, so a touching pair can sit
+   * anywhere from about 0.7 to 1.4 -- measured, 0.68 to 1.74 when the nearest
+   * was taken by direction. 1.35 admits the genuine neighbours without reaching
+   * the ring beyond, which starts at 1.73.
+   */
+  static readonly ADJACENT_SPACINGS = 1.35;
 
   /**
    * The land a settlement at `address` can reach, with the maps it needs

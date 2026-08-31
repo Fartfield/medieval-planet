@@ -25,10 +25,11 @@
 
 import {
   SUBCELL_COUNT, RADIUS, subNeighbours, toPixel, fromPixel, ringOf,
+  pixelOfAxial, coords, DIRECTIONS,
 } from './hexgrid.ts';
 import {
-  PENT_SUBCELL_COUNT, PENT_RADIUS, pentNeighbours, pentCentres,
-  pentFromPoint, pentRing,
+  PENT_SUBCELL_COUNT, PENT_RADIUS, pentNeighbours, pentAllNeighbours,
+  pentCentres, pentFromPoint, pentRing,
 } from './pentgrid.ts';
 import { isPentagon } from './sphere.ts';
 import type { Address } from './address.ts';
@@ -53,6 +54,18 @@ export interface Patch {
   at(x: number, y: number, size: number): number;
   /** Rings out from the centre. Drives edge blending. */
   ring(cell: number): number;
+  /**
+   * Where the neighbour in this slot SITS, whether or not it is in the map.
+   *
+   * The rim is the point of it. A cell on the edge has no in-map neighbour
+   * outwards, but the cell on the other side of that edge exists -- it belongs
+   * to a different parent -- and it has a position. Given the position, the
+   * world can descend to it from the globe and name it, which is how every
+   * other cross-boundary query here works.
+   *
+   * Null only where there is genuinely no neighbour: a pentagon's sixth slot.
+   */
+  neighbourPosition(cell: number, slot: number, size: number): { x: number; y: number } | null;
 }
 
 export const HEX_PATCH: Patch = {
@@ -63,6 +76,13 @@ export const HEX_PATCH: Patch = {
   centre: (cell, size) => toPixel(cell, size),
   at: (x, y, size) => fromPixel(x, y, size),
   ring: (cell) => ringOf(cell),
+  // The axial lattice continues past the array, so a rim cell's outward
+  // neighbour has coordinates even though it has no index.
+  neighbourPosition: (cell, slot, size) => pixelOfAxial(
+    coords[cell * 2] + DIRECTIONS[slot][0],
+    coords[cell * 2 + 1] + DIRECTIONS[slot][1],
+    size,
+  ),
 };
 
 export const PENT_PATCH: Patch = {
@@ -84,6 +104,17 @@ export const PENT_PATCH: Patch = {
   }),
   at: (x, y, size) => pentFromPoint(x / (SQRT3 * size), y / (SQRT3 * size)),
   ring: (cell) => pentRing[cell],
+  // No axial coordinates to continue, so the halo ring pentgrid builds for
+  // corners does this job too: a rim cell's outward neighbour IS a halo cell,
+  // and a halo cell has a position like any other.
+  neighbourPosition: (cell, slot, size) => {
+    const nb = pentAllNeighbours[cell * 6 + slot];
+    if (nb < 0) return null;
+    return {
+      x: pentCentres[nb * 2] * SQRT3 * size,
+      y: pentCentres[nb * 2 + 1] * SQRT3 * size,
+    };
+  },
 };
 
 /**
