@@ -44,15 +44,44 @@ would be choosing the answer.
 where a classification boundary needs it. A game with two-minute weeks will
 eventually want real seasons, and that is a layer-1 concern.
 
-**The world's median land slope is 1.1 degrees against Earth's 2 to 3.** The
-tail is right -- 22.4 degrees at the 99th percentile and 30.7 at the steepest,
-against Earth's 25-to-35-degree mountainsides -- so this is gentle middling
-ground rather than a flat world. Whether it is worth correcting is open; the
-honest measurement is here rather than a claim in either direction.
+**The world is smoother than Earth at every scale, and the cause is the mesh's
+own resolution.** Measured with the scales matched, which matters because slope
+depends heavily on the cell size it is measured over:
 
-This entry used to say the ladder delivered 57% of the relief its own Hurst
-anchor predicts, and that was an error in the measurement rather than in the
-terrain. See docs/fix-attempts.md.
+    cell size    ours     Earth
+    68 km        0.13     --
+    1.2 km       0.3      about 1.5 at 1 km
+    129 m        0.6      about 2 at 90 m
+    14 m         1.1
+
+The SCALING is right: slope grows 2.0x for every 9x finer cell, which is the
+0.3 exponent H = 0.70 implies, and the steep tail is right too -- 22.6 degrees
+at the 99th percentile and 30.7 at the steepest against Earth's 25-to-35-degree
+mountainsides. It is the middle of the distribution that is flat.
+
+It starts at the mesh. At its own 68 km cells the mesh has a median land slope
+of 0.13 degrees, and its structure function gives an exponent of 0.88 between 68
+and 137 km where the anchor says 0.70 -- the finest noise octave sits at the
+mesh spacing itself, so it is aliased away and contributes almost nothing
+cell to cell. The ladder below then scales that faithfully down, because its
+detail amplitude is derived from `reliefM`, which IS the mesh's roughness. An
+under-rough mesh produces an under-rough world all the way down.
+
+Three things were swept and none of them moves it:
+
+    MESH_RELIEF_M   900 -> 2700    median slope 0.13 -> 0.22
+    MESH_CREEP      0.18 -> 0.02   median slope 0.13 -> 0.20
+    noise octaves   3 -> 1         median slope 0.13 -> 0.13
+
+Amplitude does not help because `solveSeaLevel` pins mean land elevation at
+Earth's 840 m: add roughness and the stretch that hits the mean scales it back
+out. The hypsometry is already close to Earth's -- quartiles 213/485/848 against
+roughly 100/300/900 -- so the distribution is not the fault either.
+
+What would fix it is anchoring the ladder's detail to a MEASURED local relief
+rather than to the mesh's own spread, so the fine scales stop inheriting the
+mesh's resolution limit. That is a redesign of where detail amplitude comes
+from, not a constant, and it has not been done.
 
 **Neighbouring maps' tiles interleave along a seam.** A hexagon of 91 hexagons
 covers about 91% of the hexagon holding it, so the children of two adjacent
