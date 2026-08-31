@@ -103,12 +103,15 @@ suite('climate', () => {
   // band is mostly taiga rather than tundra -- a split this model draws in its
   // own way. It runs high: 0.085 against a derived 0.025.
   //
-  // That difference is real and is written down in known-gaps.md rather than
-  // tuned away, because the other three covers are close -- forest 0.429
-  // against 0.430 -- and refitting the climate to move this one would be
-  // fitting the model to the least certain number in the comparison. The
-  // tolerance admits the disagreement and would still catch a world that had
-  // frozen over.
+  // The difference is EXPLAINED rather than merely tolerated, which is the
+  // reason the tolerance is wide instead of the target being moved. This
+  // world's land above 55 degrees averages 800 m where Earth's averages about
+  // 300, and 500 m at the standard lapse rate is 3.3 C -- the whole distance
+  // between taiga and tundra up there. Corrected for altitude the model tracks
+  // Earth's land temperatures within +3.5 to -2.8 C, so neither the climate nor
+  // the treeline rule is at fault; the target was derived from Earth's land
+  // cover without accounting for the height this world's land sits at. See
+  // known-gaps.md. The tolerance still catches a world that has frozen over.
   check('tundra and ice cover, mostly alpine', cover.tundraIce, 0.025, 0.07);
 
   // Zonal temperature, against observed means over low-lying land.

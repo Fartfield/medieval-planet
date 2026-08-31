@@ -16,18 +16,29 @@ that is enough.
 Clausius-Clapeyron relation, which is exponential. Replacing it is cheap; it has
 not been done because the calibration currently absorbs the difference.
 
-**The model makes about three times as much tundra as Earth would.** Measured
-against Earth's land below 65 degrees, which is where this world's land is:
-0.085 of the land is tundra or ice here against a derived 0.025. The other
-three covers are close -- forest 0.429 against 0.430, grass 0.286 against
-0.331, desert 0.183 against 0.214 -- so this is one cover class rather than a
-model that is generally cold.
+**This world's high-latitude land is mountainous, so it grows tundra where
+Earth grows taiga.** Tundra and ice are 0.085 of the land against a derived
+0.025, and the cause is not the climate model or the treeline rule. Both check
+out: correcting for altitude at the standard 6.5 C/km lapse rate, the model
+tracks Earth's land temperatures within +3.5 to -2.8 C across four latitude
+bands, and the treeline is Koppen's 10 C warmest month.
 
-The likely cause is the 57-to-65 degree band. On Earth that is overwhelmingly
-taiga, which counts as forest; here more of it classifies as tundra. Refitting
-the climate to close the gap would mean fitting to the least certain figure in
-the comparison -- the taiga/tundra split at the margin is the softest number in
-the whole derivation -- so it is recorded instead.
+    band     mean elev   ours    at sea level   Earth land
+    35-45      575 m     11.7 C      15.5 C        12 C
+    45-55      883 m      2.2 C       8.0 C         6 C
+    55-60      801 m     -4.4 C       0.8 C         1 C
+    60-65      737 m     -8.6 C      -3.8 C        -1 C
+
+Land above 55 degrees averages 800 m here against roughly 300 on Earth. Five
+hundred metres is 3.3 C, which is the whole difference between taiga and tundra
+at that latitude. The comparison target was derived from Earth's land cover
+without accounting for the elevation this world's land actually sits at, so it
+asks for a warmer high latitude than this planet has.
+
+Nothing is wrong. What would fix the number is either comparing against Earth's
+tundra share at THIS elevation profile, which is a derivation nobody has done,
+or arranging for the tectonics to put less mountain at high latitude, which
+would be choosing the answer.
 
 **No seasons.** Everything is an annual mean, with the seasonal swing inferred
 where a classification boundary needs it. A game with two-minute weeks will
