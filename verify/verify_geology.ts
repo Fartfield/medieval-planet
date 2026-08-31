@@ -457,10 +457,22 @@ suite('clearing a hillside is a decision with a delay', () => {
     }
     const map = w.subMap(a);
     for (let c = 0; c < SUBCELL_COUNT; c++) {
-      if (map.elevationM[c] > 0 && map.regolithM[c] > 0.2 && map.slope[c] > steepest) {
-        steepest = map.slope[c];
-        found = [...a, c];
-      }
+      if (map.elevationM[c] <= 0 || map.regolithM[c] <= 0.2) continue;
+      if (map.slope[c] <= steepest) continue;
+      // AND STABLE WHILE IT IS WOODED. The claim is that felling is a decision
+      // with a delay, which presupposes there is something to lose: a slope
+      // already at a factor of safety of 1 is at the point of failure with its
+      // trees still on it, and felling cannot make it weaker because the model
+      // floors it there. Searching for the steepest hillside without this found
+      // exactly that -- 51.6 degrees, FS 1 before and 1 after -- and read it as
+      // the physics failing.
+      //
+      // 1.5 is the conventional design factor of safety in slope engineering,
+      // not a number picked to make this pass: below it a slope is not called
+      // stable by anybody who builds on them.
+      if (w.tile([...a, c]).stability < 1.5) continue;
+      steepest = map.slope[c];
+      found = [...a, c];
     }
   }
   measure('felled hillside, degrees', (Math.atan(steepest) * 180) / Math.PI);

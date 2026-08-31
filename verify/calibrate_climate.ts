@@ -24,8 +24,8 @@ import { Biome } from '../sim/model/biome.ts';
 /**
  * Earth's land cover, restricted to the latitudes THIS world has land in.
  *
- * The storms drown the outermost row of cells, so nothing here lives above
- * about 57 degrees -- see docs/world-lore.md. Comparing against Earth's global
+ * The storms drown the cells that border them, so nothing here lives above
+ * about 65 degrees -- see docs/world-lore.md. Comparing against Earth's global
  * shares would ask this world to grow a taiga it has no room for and an ice
  * sheet it has no poles for, so the comparison is made against Earth below 57
  * degrees instead.
@@ -35,19 +35,19 @@ import { Biome } from '../sim/model/biome.ts';
  *   Earth's land                        149.0
  *     less Antarctica                   -14.0   entirely above 60S
  *     less Greenland                     -2.2   almost entirely above 60N
- *     less other land above 57           -12.0  northern Canada, Alaska,
- *                                               northern Russia, Scandinavia
- *   land at or below 57 degrees         120.8
+ *     less other land above 65            -6.0  the high Arctic of Canada,
+ *                                               Alaska and Russia
+ *   land at or below 65 degrees         126.8
  *
  * and within it:
  *
- *   forest    46.2 global (FAO: 31% of land) less ~8.2 of boreal
- *             lying above 57                                       38.0
+ *   forest    46.2 global (FAO: 31% of land) less ~4.0 of boreal
+ *             lying above 65                                       42.2
  *   grass     savanna and temperate grassland                      32.5
- *   desert    subtropical desert, nearly all of it below 57        21.0
- *   tundra    alpine only, the rest having been cut                 1.0
+ *   desert    subtropical desert, nearly all of it below 65        21.0
+ *   tundra    alpine, plus the little that lies between 57 and 65   2.5
  *                                                                 -----
- *                                                                  92.5
+ *                                                                  98.2
  *
  * RENORMALISED OVER THOSE FOUR, which is the fair comparison rather than a
  * convenience: Earth's remaining 28 million km2 is cropland, wetland,
@@ -60,12 +60,14 @@ import { Biome } from '../sim/model/biome.ts';
  * kept whole because it lies well south of the cut. The tolerance downstream is
  * wide for exactly that reason.
  *
- * The previous figures were the same exercise against a band ending at 65
- * degrees: forest 0.356, grass 0.287, desert 0.218, tundra/ice 0.080. Tundra
- * collapsing to 0.011 is the honest headline -- a world with no land above 57
- * degrees has no tundra except on mountains.
+ * This has now been done three times, for three grids: the wrapped band ending
+ * at 65 degrees (0.356 / 0.287 / 0.218 / 0.080), the same band once the storm
+ * margin took everything above 57 (0.411 / 0.351 / 0.227 / 0.011), and now the
+ * geodesic, whose uniform cells put the margin back up at 65. The numbers move
+ * because the world's LATITUDES move, not because the model does -- which is
+ * the argument for deriving them each time rather than nudging them.
  */
-const EARTH = { forest: 0.411, grass: 0.351, desert: 0.227, tundraIce: 0.011 };
+const EARTH = { forest: 0.430, grass: 0.331, desert: 0.214, tundraIce: 0.025 };
 
 /**
  * One seed, and that is an increase in sample size rather than a cut.

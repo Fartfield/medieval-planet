@@ -1582,3 +1582,57 @@ Both of the latter were resolution-dependent constants, and both surfaced on a
 re-grid rather than on a rendering change. When this sentence is reported again,
 count fills and strokes first: it says in one line which half of the pipeline to
 look at.
+
+## Making the cells the same size, and two ways that did not
+
+The band gave every cell identical AREA and wildly different shape: 1.01:1 at
+the equator, 2.56:1 at 50 degrees, 5.60:1 in the outermost row. Asked for cells
+that are the same size as each other, the answer is that you cannot have uniform
+shape, uniform area and no pentagons at once -- Gauss says a flat hexagonal
+lattice does not lie on a sphere without distortion, Euler says twelve pentagons
+if you want a closed hexagonal tiling -- so the tiling moved to a geodesic and
+took the twelve, two of which hide inside the storms.
+
+The raw geodesic was not good enough on its own. Its pentagons came out **half**
+the area of its hexagons, because the subdivision walks the flat icosahedron
+face in even steps and then pushes each point out to the sphere: a chord of
+fixed length subtends less angle the further it sits from the middle of an edge,
+so points bunch towards the corners -- and the corners are exactly where the
+twelve pentagons are. Measured: a pentagon's neighbours 7.90 degrees away, a
+hexagon's 9.95.
+
+* ~~Lloyd relaxation: move every cell to the centroid of its own corners,
+  repeat~~ -- **made it worse.** Area spread 2.264 to 2.509, pentagons 0.513 of
+  the mean down to 0.438, over sixty passes. Lloyd's converges to a centroidal
+  Voronoi tessellation only if the Voronoi diagram is recomputed each pass; here
+  the corners are the dual of a FIXED triangulation, so once the points move the
+  corners stop being the cell's own boundary and the iteration optimises a shape
+  that is no longer there. It converges confidently to the wrong answer, which
+  is worse than not converging.
+
+* ~~Equal-arc subdivision, slerping rows between the wrong pair of edges~~ --
+  collapsed points on top of each other. 478 cells instead of 492 and a minimum
+  neighbour spacing of zero. The cell count is the check worth keeping: a
+  class-I geodesic has exactly 10f^2 + 2 points and any other number means the
+  lattice is wrong, so this failed loudly instead of silently.
+
+What worked was equal-arc subdivision with the rows laid out correctly -- row i
+running from a point on AB to the matching point on AC, holding i + 1 points.
+Points then sit at equal ANGLES along each edge, 9.06 degrees here, and the
+corner compression goes with them.
+
+    measure                     band     geodesic
+    neighbour spacing spread    3.90      1.207
+    hexagon area spread         1.000     1.134
+    pentagon, share of mean      --       0.679
+    worst cell aspect           5.60:1    near 1
+    storm cap radius            12.42     12.02 degrees
+
+The pentagons stay smaller than the hexagons and always will: they are where the
+sphere's curvature is concentrated, and that is the bill Euler sends. 0.679 is
+what the geometry costs rather than an artefact left in by accident.
+
+Worth keeping from this: **a construction that changes a count is easier to
+debug than one that changes a shape.** Both failures above produced plausible
+pictures; only one of them changed 492 to 478, and that was the one found in a
+minute rather than an hour.

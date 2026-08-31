@@ -165,35 +165,65 @@ suite('specialisation', () => {
   // Searched rather than hard-coded, so this still finds a site if generation
   // ever shifts underneath it.
   const scout = new World({ seed: SEED });
-  const farm = bestFarmSite(scout);
-  const farmYield = yieldAt(scout, farm);
-  const dir = scout.tile(farm).dir;
-
-  // Searched over a real area rather than one sub-map.
+  // SEVERAL ANCHORS, not one.
   //
-  // A sub-map is 91 tiles now, and a tile with workable ore on it turns up on
-  // a couple of per cent of ground -- so a single map very often contains
-  // none at all, and looking only there reported that the planet had no ore
-  // anywhere. Within four kilometres of good farmland there are hundreds.
-  const near = scout.cellsWithin(dir[0], dir[1], dir[2], 4000, GROUND_DEPTH);
+  // This used to take the single most productive site on the planet and look
+  // within four kilometres of it. That is a bet that the best farmland in the
+  // world happens to have barren ground beside it, and the bet came off until
+  // the tiling changed: on the geodesic the ground around the best site is
+  // uniformly fertile for seven and a half kilometres in every direction, so
+  // the search found ore in 4,734 tiles and poor ground in none of them, and a
+  // suite about specialisation failed for want of anywhere to put a mine.
+  //
+  // Widening the radius is the expensive answer -- reaching 7.6 km means
+  // generating twelve thousand sub-maps, sixteen seconds of it. Trying the next
+  // good region instead costs one more four-kilometre search, and the third
+  // anchor here finds a site at 100 kg/ha next to farmland at 667, which is a
+  // far sharper contrast than the original ever had.
+  const ranked: number[] = [];
+  for (let c = 0; c < CELL_COUNT; c++) if (scout.planet.elevationM[c] > 0) ranked.push(c);
+  ranked.sort((a, b) => scout.planet.nppGm2[b] - scout.planet.nppGm2[a]);
 
+  let farm: number[] | null = null;
+  let farmYield = 0;
   let mine: number[] | null = null;
   let mineYield = Infinity;
   let mineOre = 0;
-  for (const mapAddr of near) {
-    const map = scout.subMap(mapAddr);
-    const ys = yieldsFor(map);
-    for (let c = 0; c < SUBCELL_COUNT; c++) {
-      if (map.elevationM[c] < 0) continue;
-      if (ys[c] > farmYield * 0.45) continue;
-      const ore = scout.tile([...mapAddr, c]).deposits.find((d) => d.kind === Mineral.Iron);
-      if (ore === undefined || ore.richness < 0.2) continue;
-      if (ys[c] < mineYield) { mineYield = ys[c]; mineOre = ore.richness; mine = [...mapAddr, c]; }
+
+  for (let i = 0; i < 8 && mine === null; i++) {
+    const site = groundSiteIn(scout, ranked[i]);
+    const y = yieldAt(scout, site);
+    // Only somewhere that is actually good farmland: the claim is about a poor
+    // site NEXT TO a good one, so a mediocre anchor proves nothing.
+    if (y < 300) continue;
+    const dir = scout.tile(site).dir;
+    const near = scout.cellsWithin(dir[0], dir[1], dir[2], 4000, GROUND_DEPTH);
+
+    let bestYield = Infinity;
+    let bestOre = 0;
+    let best: number[] | null = null;
+    for (const mapAddr of near) {
+      const map = scout.subMap(mapAddr);
+      const ys = yieldsFor(map);
+      for (let c = 0; c < SUBCELL_COUNT; c++) {
+        if (map.elevationM[c] < 0) continue;
+        if (ys[c] > y * 0.45) continue;
+        const ore = scout.tile([...mapAddr, c]).deposits.find((d) => d.kind === Mineral.Iron);
+        if (ore === undefined || ore.richness < 0.2) continue;
+        if (ys[c] < bestYield) { bestYield = ys[c]; bestOre = ore.richness; best = [...mapAddr, c]; }
+      }
+    }
+    if (best !== null) {
+      farm = site; farmYield = y;
+      mine = best; mineYield = bestYield; mineOre = bestOre;
     }
   }
 
+  measure('good regions tried before a mine site turned up',
+    mine === null ? 0 : ranked.indexOf(farm![0]) + 1);
+
   assert('there is barren ground with ore in it near good farmland', mine !== null);
-  if (mine === null) return;
+  if (mine === null || farm === null) return;
   measure('farm site yield', farmYield);
   measure('mine site yield', mineYield);
   measure('mine site ore richness', mineOre);

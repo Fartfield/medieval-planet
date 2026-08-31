@@ -13,7 +13,7 @@
 
 import { World } from '../sim/world.ts';
 import { MAX_DEPTH } from '../sim/geo/address.ts';
-import { CELL_COUNT, centres, outline, neighbourCount } from '../sim/geo/sphere.ts';
+import { CELL_COUNT, isPentagon, centres, outline, neighbourCount } from '../sim/geo/sphere.ts';
 import {
   RADIUS, SUBCELL_COUNT, toPixel, indexOf, subNeighbours,
 } from '../sim/geo/hexgrid.ts';
@@ -512,6 +512,10 @@ suite('tiles on the globe tessellate', () => {
   // by construction rather than by tolerance.
   const world = new World({ seed: 20260826 });
   const cam = newCamera();
+  let equatorial = 0;
+  for (let c = 0; c < CELL_COUNT; c++) {
+    if (Math.abs(centres[c * 3 + 1]) < Math.abs(centres[equatorial * 3 + 1])) equatorial = c;
+  }
   // A LARGER GLOBE THAN THE OTHER SUITES USE, on purpose. This one measures
   // the shape of a tile, and a region is 0.91M km2 now rather than 2.41M, so
   // at the shared 1200x800 view its tiles fall to a fraction of a pixel and
@@ -519,8 +523,8 @@ suite('tiles on the globe tessellate', () => {
   // Scaled by the square root of the cell-count change, so tiles are the size
   // they were when the check was written.
   const view = globeView(Math.round(W * 1.69), Math.round(H * 1.69));
-  const kids = world.subMap([4]);
-  const polys = tilePolygons(kids, cam, view, 4);
+  const kids = world.subMap([equatorial]);
+  const polys = tilePolygons(kids, cam, view, equatorial);
 
   let drawn = 0;
   for (const poly of polys) if (poly !== null) drawn++;
@@ -573,7 +577,12 @@ suite('tiles on the globe tessellate', () => {
   assert('no tile is degenerate', smallest > 1);
 
   // Round the back is null rather than folded onto the front.
-  const behind = tilePolygons(world.subMap([4]),
+  //
+  // Asked of an EQUATORIAL cell, which is the only place the question means
+  // anything: spinning the globe about its poles never hides a polar cell, so
+  // putting this to cell 4 -- which the re-tiling moved to 67 degrees -- was
+  // asking whether yaw hides something yaw cannot hide.
+  const behind = tilePolygons(world.subMap([equatorial]),
     { ...cam, yaw: cam.yaw + Math.PI }, view, 4);
   let front = 0;
   for (const poly of behind) if (poly !== null) front++;
@@ -594,13 +603,26 @@ suite('every cell is served the same, there being only one kind now', () => {
   const cam = newCamera();
   const view = globeView(W, H);
 
+  // There ARE pentagons again, and the renderer has to serve them the same as
+  // anything else: this suite's name used to mean "no special case survives",
+  // and it still does -- what changed is that the special case is real. A
+  // pentagon gets five tiles' worth of fringe rather than six, and must still
+  // be covered by its own children and not eaten by the clip.
   let fives = 0;
-  for (let c = 0; c < CELL_COUNT; c++) if (neighbourCount(c) === 5) fives++;
-  check('no cell has five neighbours', fives, 0, 0);
+  for (let c = 0; c < CELL_COUNT; c++) if (isPentagon(c)) fives++;
+  check('the ten pentagons are drawn like everything else', fives, 10, 0);
 
-  // One cell from each row, so the equator and the cap rows are both covered.
+  // A spread of cells by latitude, plus a pentagon, so nothing is covered by
+  // luck. Fixed indices used to do this when the grid had rows to index.
+  const sample: number[] = [];
+  const byLat: number[] = [];
+  for (let c = 0; c < CELL_COUNT; c++) byLat.push(c);
+  byLat.sort((a, b) => Math.abs(centres[a * 3 + 1]) - Math.abs(centres[b * 3 + 1]));
+  for (let i = 0; i < 6; i++) sample.push(byLat[Math.floor((i / 5) * (byLat.length - 1))]);
+  for (let c = 0; c < CELL_COUNT; c++) if (isPentagon(c)) { sample.push(c); break; }
+
   const ratios: number[] = [];
-  for (const cell of [2, 20, 39, 57, 75, 93]) {
+  for (const cell of sample) {
     const kids = world.subMap([cell]);
     const facing = {
       ...cam,

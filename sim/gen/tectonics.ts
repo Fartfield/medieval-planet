@@ -49,29 +49,32 @@
 
 import * as A from '../anchors.ts';
 import { buildBand, bandCellAt, type Band } from '../geo/band.ts';
-import { ROWS, COLS } from '../geo/sphere.ts';
+import { CAP_SIN_LIMIT, CELL_R } from '../geo/sphere.ts';
 import { fbm3, hash3, unit } from './noise.ts';
 import { clamp, dpow } from './mathx.ts';
 import { routeWater } from './hydrology.ts';
 
 /**
- * The physics mesh: the world grid, refined.
+ * The physics mesh: still a wrapped band, and deliberately not the world grid.
  *
- * Derived from ROWS and COLS rather than written down again, and that is
- * load-bearing rather than tidy. `BAND_SIN_LIMIT` is 2.72070 x ROWS/COLS, so
- * two grids reach the same latitude if and only if they share that ratio --
- * and the mesh has to reach at least as far as the world map, or the cells in
- * the world's outermost row would be summarising a planet that stops short of
- * them. Refining both counts by the same integer makes the two limits
- * identical by construction, so the ratio cannot be broken by editing one of
- * them.
+ * The world map is a geodesic now, but the mesh has no reason to follow it. The
+ * mesh is only ever sampled by DIRECTION -- `meshCellAt(lon, sinLat)` -- and a
+ * band inverts its projection in closed form where a geodesic needs a lookup
+ * and a hill climb. At 122,850 cells sampled once per world cell per field,
+ * that difference is the whole cost of the summary step.
  *
- * 15 gives 585 x 210 = 122,850 cells at 68.4 km, which is the resolution the
- * tectonic model was calibrated at.
+ * The one thing it must do is reach past the world grid, or the cells nearest
+ * the storms would be summarising a planet that stops short of them. The band's
+ * reach is 2.72070 x ROWS/COLS = 0.97666, and the geodesic's outermost corners
+ * reach 0.98804 -- so the mesh is SHORT by a hair at the very rim, which is
+ * inside the storm margin that gets drowned anyway. verify_geometry checks the
+ * relationship rather than trusting this comment.
+ *
+ * 585 x 210 = 122,850 cells at 68.4 km, which is the resolution the tectonic
+ * model was calibrated at.
  */
-const MESH_REFINE = 15;
-export const MESH_COLS = COLS * MESH_REFINE;
-export const MESH_ROWS = ROWS * MESH_REFINE;
+export const MESH_COLS = 585;
+export const MESH_ROWS = 210;
 
 export interface Tectonics {
   band: Band;
@@ -484,36 +487,36 @@ function erode(band: Band, elevationM: Float32Array, radiusM: number, seed: numb
 /**
  * No land touches the storms.
  *
- * The two caps are permanent storms rather than ice, and nothing makes
- * landfall against them: the last thing before the wall of weather is open
- * water. So the outermost row of world cells -- the ones whose missing
- * neighbours ARE the cap -- is drowned outright.
+ * The two caps are permanent storms rather than ice, and nothing makes landfall
+ * against them: the last thing before the wall of weather is open water. So
+ * every cell that BORDERS a cap is drowned outright.
  *
- * The width is taken from the grid rather than chosen. "No land touches it"
- * means no cell that borders a cap may be land, a cell that borders a cap is
- * exactly one that sits in the outermost row, and a world row is
- * `1.5 x CELL_R` of sine-latitude tall. That is the whole derivation. The
- * taper over the half-row inside it is the one free part, and it is there so
- * the coast recedes rather than ending on a drawn circle of latitude.
+ * The threshold comes from the grid rather than being chosen. `CAP_SIN_LIMIT`
+ * is measured in geo/sphere.ts as the lowest corner of any cell touching a cap,
+ * so drowning everything above it drowns those cells entirely -- not merely
+ * their centres, which is the distinction that matters when a world cell takes
+ * the MEDIAN of six hundred mesh cells and a half-submerged one still reads as
+ * land.
  *
- * WORTH KNOWING WHAT THIS COSTS. Sine-latitude compresses towards the pole, so
- * one row up there is a great deal of latitude: the outermost row spans 56.8
- * to 77.6 degrees, and drowning it means this world has no land above about 57
- * degrees at all. There is no Scandinavia and no Siberia. That is inherent in
- * "no land touches the caps" rather than a knob -- a whole cell is land or it
- * is not -- and it suits a world whose poles are a permanent storm nobody
- * sails into.
+ * It replaces a version keyed to the band's row height, which was the right
+ * derivation for a grid that had rows. This one asks the same question of a
+ * grid that does not.
+ *
+ * WHAT IT COSTS, which is much less than it did. The geodesic's cap-bordering
+ * cells sit near 68 degrees, so this world has no land above about 68 -- where
+ * the band, whose outermost row was 21 degrees of latitude tall, had none above
+ * 57. Uniform cells buy back a whole climate band of habitable ground.
  *
  * Run before the final `solveSeaLevel`, which is what keeps the planet honest:
- * the sea level is re-solved to Earth's land fraction afterwards, so the land
- * drowned here comes back at lower latitudes instead of being lost.
+ * sea level is re-solved to Earth's land fraction afterwards, so land drowned
+ * here comes back at lower latitudes rather than being lost.
  */
 function drownStormMargin(band: Band, elev: Float32Array): void {
-  // The WORLD row height, not the mesh's. The mesh is the world grid refined
-  // by an integer, so one world row is that many mesh rows.
-  const rowH = 1.5 * band.cellR * MESH_REFINE;
-  const outer = band.sinLimit - rowH;
-  const inner = band.sinLimit - 1.5 * rowH;
+  const outer = CAP_SIN_LIMIT;
+  // Tapered over roughly one cell, so the coast recedes into the storm instead
+  // of ending on a drawn circle of latitude. A cell's angular radius is CELL_R;
+  // in sine-latitude at this latitude that is CELL_R x cos(lat).
+  const inner = outer - CELL_R * Math.sqrt(Math.max(0, 1 - outer * outer));
 
   // Deep water of this planet's own making rather than a depth typed in here.
   const deep = quantile(elev, 0.10);

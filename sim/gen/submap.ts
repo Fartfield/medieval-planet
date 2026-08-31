@@ -27,7 +27,7 @@ import {
   toPixel, pixelOfAxial, fromPixel, nearestCell, ringOf,
 } from '../geo/hexgrid.ts';
 import {
-  CELL_COUNT, CELL_R, centres, neighbours, neighbourCount, cellAt,
+  CELL_COUNT, CELL_R, cellRadiusScale, centres, neighbours, neighbourCount, cellAt,
 } from '../geo/sphere.ts';
 import { addressSeed, SALT, type Address } from '../geo/address.ts';
 import { fbm3, ridged3 } from './noise.ts';
@@ -231,35 +231,80 @@ export function basisAt(ox: number, oy: number, oz: number): Basis {
   };
 }
 
-/** Local tangent-plane offset, in radians, back to a direction on the sphere. */
+/**
+ * A local offset back to a direction on the sphere.
+ *
+ * LAMBERT AZIMUTHAL EQUAL-AREA, tangent at the map's own centre. Isotropic --
+ * the two axes are scaled alike -- and exactly area-preserving: a cap of
+ * angular radius t maps to a disc of radius 2.sin(t/2), whose area pi.rho^2 is
+ * 2.pi.(1 - cos t), which is the cap's solid angle exactly. So `CELL_R`, solved
+ * from a cell's area, is its circumradius here with no conversion at all.
+ *
+ * IT USED TO BE THE WORLD MAP'S OWN CYLINDRICAL PROJECTION, offsetting
+ * longitude and sine-of-latitude directly, and that was right while the world
+ * map was a band: a band's cells ARE regular hexagons in that projection, so
+ * laying a child map out the same way made it exactly fill its parent. A
+ * geodesic's cells are near-regular on the SPHERE instead, and a cylindrical
+ * layout would miss them by more the further from the equator it got -- the
+ * same complaint, in reverse, that moved this to the projection in the first
+ * place. Measured before that move: at 53 degrees only 61 of a map's 91
+ * children landed inside their own parent.
+ *
+ * An isotropic tangent frame is what matches a near-regular cell, so this
+ * returns to one. What was wrong before was not the tangent plane, it was that
+ * the cells it was asked to cover were not isotropic.
+ */
 export function toDirection(b: Basis, x: number, y: number, out: Float64Array, at: number): void {
-  // Offsets are in the world map's own projection: x is longitude, y is the
-  // sine of latitude. Converted here rather than approximated, so a cell lands
-  // where the layer above draws it however far from the equator it is.
-  const lon = b.lon + x;
-  const s = Math.max(-1, Math.min(1, b.sinLat + y));
-  const cosLat = Math.sqrt(1 - s * s);
-  out[at] = cosLat * dcos(lon);
-  out[at + 1] = s;
-  out[at + 2] = cosLat * dsin(lon);
+  const rho = Math.sqrt(x * x + y * y);
+  if (rho < 1e-12) {
+    out[at] = b.ox; out[at + 1] = b.oy; out[at + 2] = b.oz;
+    return;
+  }
+  const theta = 2 * Math.asin(Math.min(1, rho / 2));
+  const c = dcos(theta);
+  const sn = dsin(theta);
+  const ux = x / rho, uy = y / rho;
+  const tx = ux * b.ex + uy * b.nx;
+  const ty = ux * b.ey + uy * b.ny;
+  const tz = ux * b.ez + uy * b.nz;
+  out[at] = c * b.ox + sn * tx;
+  out[at + 1] = c * b.oy + sn * ty;
+  out[at + 2] = c * b.oz + sn * tz;
 }
 
-/** Longitude difference taken the short way round, so a map straddling the
- * wrap does not read its own cells as half a world away. */
-function shortWay(d: number): number {
-  if (d > PI) return d - 2 * PI;
-  if (d < -PI) return d + 2 * PI;
-  return d;
+/**
+ * A direction back to a local offset: the exact inverse of `toDirection`.
+ *
+ * ONE FUNCTION, called by everything that needs it. There used to be two
+ * inverses written out separately -- one in `cellContaining` and one inlined in
+ * `sampleSubMapRaw` -- and when the forward map was changed only one of them
+ * followed. Every map was then laid out by one transform and read back by
+ * another, exactly at the map centre and by a mean of 247 m everywhere else,
+ * and land drained off the world one layer at a time. A forward transform and
+ * its inverse are one fact; this is that fact written once.
+ */
+function toLocal(b: Basis, x: number, y: number, z: number): { x: number; y: number } {
+  const dot = clamp(x * b.ox + y * b.oy + z * b.oz, -1, 1);
+  const theta = Math.acos(dot);
+  const rho = 2 * dsin(theta / 2);
+
+  let tx = x - dot * b.ox;
+  let ty = y - dot * b.oy;
+  let tz = z - dot * b.oz;
+  const len = Math.sqrt(tx * tx + ty * ty + tz * tz);
+  if (len < 1e-12) return { x: 0, y: 0 };
+  tx /= len; ty /= len; tz /= len;
+
+  return {
+    x: rho * (tx * b.ex + ty * b.ey + tz * b.ez),
+    y: rho * (tx * b.nx + ty * b.ny + tz * b.nz),
+  };
 }
 
 /** A direction on the sphere back to the sub-map cell containing it, or -1. */
 export function cellContaining(b: Basis, radiusRad: number, x: number, y: number, z: number): number {
-  // Back through the same projection. Longitude is taken the short way round,
-  // so a map straddling the wrap does not read its own cells as half a world
-  // away.
-  const lx = shortWay(datan2(z, x) - b.lon);
-  const ly = y - b.sinLat;
-  return fromPixel(lx, ly, radiusRad);
+  const p = toLocal(b, x, y, z);
+  return fromPixel(p.x, p.y, radiusRad);
 }
 
 /**
@@ -304,7 +349,7 @@ export function samplePlanet(planet: Planet, x: number, y: number, z: number): P
   let dlon = datan2(z, x) - g.lon[mesh];
   if (dlon > PI) dlon -= 2 * PI;
   if (dlon < -PI) dlon += 2 * PI;
-  const dsin = y - g.sinLat[mesh];
+  const dsinLat = y - g.sinLat[mesh];
 
   let we = t.elevationM[mesh];
   let wu = t.upliftM[mesh];
@@ -320,8 +365,8 @@ export function samplePlanet(planet: Planet, x: number, y: number, z: number): P
 
     const det = (ay - by) * (0 - bx) + (bx - ax) * (0 - by);
     if (det === 0) continue;
-    const w0 = ((ay - by) * (dlon - bx) + (bx - ax) * (dsin - by)) / det;
-    const w1 = ((by - 0) * (dlon - bx) + (0 - bx) * (dsin - by)) / det;
+    const w0 = ((ay - by) * (dlon - bx) + (bx - ax) * (dsinLat - by)) / det;
+    const w1 = ((by - 0) * (dlon - bx) + (0 - bx) * (dsinLat - by)) / det;
     const w2 = 1 - w0 - w1;
     if (w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9) continue;
 
@@ -478,41 +523,13 @@ function sampleSubMapRaw(
 ): ParentSample {
   const b = map.basis;
 
-  // THROUGH THE SAME PROJECTION THE MAP WAS BUILT WITH.
-  //
-  // This used to be a pair of dot products against the tangent-plane axes,
-  // which is the linearisation the basis stopped using when it started
-  // carrying `lon`/`sinLat`. `toDirection` was converted and `cellContaining`
-  // was written correct; this one inverse was left behind, so every map was
-  // laid out by one projection and read back by another.
-  //
-  // It agrees at the map's centre, where both are the identity, and diverges
-  // with distance from it -- which is why it hid. Measured on a region map:
-  // sampling a cell's own centre returned its own value only at cell 45, the
-  // centre, and was wrong by a mean of 247 m and a worst of 822 m everywhere
-  // else. Barycentric interpolation at a node is exact by construction, so any
-  // error at a node is the point having been looked up in the wrong place.
-  //
-  // Downstream that read as terrain: each descent resampled its parent through
-  // the mismatch, so land drifted downhill layer by layer -- 86 of 91 cells
-  // above water at the region, 73, then 7, then none -- and the reference
-  // settlement was placed on open sea 30 m down.
-  const lx = shortWay(datan2(z, x) - b.lon);
-  const ly = y - b.sinLat;
-  // NEAREST CELL, not -1. A child centred on a rim cell overhangs its parent
-  // by a fraction of a cell, so a few of its points land just outside; the
-  // rim cell they overhang is the one that should answer, and the triangle
-  // logic below then handles them exactly as it handles any other rim point.
-  //
-  // This used to return the parent map's CENTRE value, which is the single
-  // worst cell to pick: it is the one furthest from the point being asked
-  // about. Measured on a mountain descent, 3 of a rim child's 91 samples took
-  // that path and the centre sat 325 m away in elevation, so those three cells
-  // alone set the child's whole range. Because the distance to the centre does
-  // not shrink when the cells do, it recurred identically at every layer, and
-  // relief stopped falling: 604 m, then 325, 326, 324 across maps of 18 km,
-  // 1.9 km, 200 m and 21 m. That is a 78-degree cliff on a 200 m map, and it
-  // was one badly-chosen fallback rather than anything about the terrain.
+  // Through `toLocal`, which is the same inverse `cellContaining` uses and the
+  // exact inverse of the map's own layout. This used to be a second copy of the
+  // arithmetic and it drifted; see the note on toLocal.
+  const local = toLocal(b, x, y, z);
+  const lx = local.x;
+  const ly = local.y;
+
   const c = nearestCell(lx, ly, map.cellRadiusRad);
 
   const p0 = toPixel(c, map.cellRadiusRad);
@@ -766,7 +783,10 @@ export function generateSubMap(
   radiusM = A.EARTH_RADIUS_M,
   inflow: readonly Boundary[] = [],
 ): SubMap {
-  const cellRad = cellRadiusRad(depth);
+  // Scaled by how big THIS cell actually is. Cells are near-uniform but the ten
+  // pentagons are 0.679 of the mean, and a map sized for the average covers
+  // ground its parent does not own. See cellRadiusScale.
+  const cellRad = cellRadiusRad(depth) * cellRadiusScale(parentAddress[0]);
   const spacingM = Math.sqrt(3) * cellRad * radiusM;
   // ONE NOISE FIELD PER LAYER, shared by every map on it.
   //

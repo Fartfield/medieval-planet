@@ -29,6 +29,19 @@ there. Both follow from the adjacency gap above.
 correct — that is a lake, and the Caspian is not a bug — but nothing yet marks
 it as one or lets it overflow.
 
+**The model makes about three times as much tundra as Earth would.** Measured
+against Earth's land below 65 degrees, which is where this world's land is:
+0.085 of the land is tundra or ice here against a derived 0.025. The other
+three covers are close -- forest 0.429 against 0.430, grass 0.286 against
+0.331, desert 0.183 against 0.214 -- so this is one cover class rather than a
+model that is generally cold.
+
+The likely cause is the 57-to-65 degree band. On Earth that is overwhelmingly
+taiga, which counts as forest; here more of it classifies as tundra. Refitting
+the climate to close the gap would mean fitting to the least certain figure in
+the comparison -- the taiga/tundra split at the margin is the softest number in
+the whole derivation -- so it is recorded instead.
+
 **No seasons.** Everything is an annual mean, with the seasonal swing inferred
 where a classification boundary needs it. A game with two-minute weeks will
 eventually want real seasons, and that is a layer-1 concern.
@@ -53,7 +66,19 @@ rather than to pick a multiplier.
 
 ## Geometry
 
-**Cells are stretched toward the poles, by up to 2.7 to 1.** The world map is a
+**The storms are five-pointed stars rather than discs.** Removing a pentagon
+and its ring of five leaves a five-fold symmetric hole, and at this resolution
+a 12-degree cap is barely more than one cell across -- so it cannot be round.
+The tiling around it is clean and there are no gaps; the shape is simply what
+the grid gives.
+
+Rounding it means removing a different set, and at frequency 7 there is no
+middle ground: the next cells out sit at 15 to 18 degrees, so taking them makes
+a cap of 17 degrees instead of 12. A rounder cap of the right size needs a finer
+grid -- frequency 9 would put cells at 7 and 12 degrees and allow it -- at 812
+cells against 480, with the economy shifting again for it.
+
+**Cells were stretched toward the poles on the wrapped band, by up to 2.7 to 1.** The world map is a
 wrapped hex band in the Lambert cylindrical equal-area projection, so every cell
 has the same *area* but not the same shape: a cell at 52 degrees is nearly three
 times as wide as it is tall.
@@ -65,11 +90,19 @@ zero, so a band that wraps needs none at all, and the map is now hexagons only.
 The cost moved from topology to shape, which is the better place for it: a
 stretched hexagon still tiles, still has six neighbours, and still subdivides.
 
-The band reaches to 77.58 degrees and the caps beyond it are ungridded. They
-are permanent storms rather than ice now, and their size is chosen rather than
-inherited -- see docs/world-lore.md. Nothing lands against them: the outermost
-row of cells is drowned, which costs this world all land above about 57
-degrees.
+That was the wrapped band, and it is gone: the grid is a geodesic now and its
+cells are near-regular everywhere -- neighbour spacing spread 1.207 against the
+band's 3.90. The price is Euler's twelve pentagons, ten of them visible at
+26.57 degrees north and south and two hidden inside the storms.
+
+The pentagons are 0.679 of the mean cell area and always will be smaller: they
+are where the sphere's curvature is concentrated. Sub-maps are sized per cell so
+that a pentagon's children cover the pentagon rather than 63% more ground, but
+the cell itself is genuinely smaller than its neighbours.
+
+Nothing lands against the storms: the cells bordering them are drowned, which
+costs this world the land above about 65 degrees -- a whole climate band better
+than the 57 the band's tall outer row cost.
 
 **A 2,900 km cell cannot resolve a mountain range.** Uplift smearing is scaled
 to a real distance and at this resolution correctly does nothing, so relief at

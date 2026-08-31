@@ -9,7 +9,7 @@
 // realm and ground with nothing but a scale change.
 
 import {
-  CELL_COUNT, centres, outline, BAND_SIN_LIMIT, CELL_R, COLS, ROWS,
+  CELL_COUNT, centres, outline, BAND_SIN_LIMIT, CELL_R,
 } from '../../sim/geo/sphere.ts';
 import {
   RADIUS, SUBCELL_COUNT, coords, DIRECTIONS, toPixel, fromPixel,
@@ -17,6 +17,7 @@ import {
 import { BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import type { Planet } from '../../sim/gen/planet.ts';
 import type { SubMap } from '../../sim/gen/submap.ts';
+import { toDirection } from '../../sim/gen/submap.ts';
 
 /**
  * Corner offsets of a pointy-top hexagon.
@@ -497,27 +498,24 @@ function mixHex(a: string, b: string, t: number): string {
 
 function drawStormCaps(ctx: CanvasRenderingContext2D, cam: Camera, view: GlobeView): void {
   const { cx, cy, radius } = view;
-  const rowCentre = BAND_SIN_LIMIT - 0.75 * CELL_R;
-  const columns = COLS * 3;
+  // How many wedges the fan is cut into around the pole. Was COLS * 3 when the
+  // grid had columns; now simply enough to keep the rim smooth at any zoom.
+  const columns = 120;
 
   for (const pole of [1, -1]) {
     const palette = pole > 0 ? STORM_NORTH : STORM_SOUTH;
 
-    // The cap is drawn down to the NOTCH -- the lower of the two heights the
-    // band's upper edge takes, where two hexagons meet shoulder to shoulder --
-    // and the cells are drawn afterwards over the top of it.
+    // Drawn to the INNER extent of the grid's ragged edge, with the cells
+    // painted over it afterwards.
     //
-    // The band's edge is a zigzag rather than a circle, because a pointy-top
-    // hexagon reaches its full radius at its top vertex and only half of it at
-    // the two upper corners. Fanning to that zigzag is exactly right and looks
-    // wrong: near the pole the projection stretches half a cell radius into
-    // degrees of latitude, so the cap runs down into every notch and the pole
-    // wears a spiked crown.
-    //
-    // Taking the notch line instead, the cap is a clean disc and the hexagons
-    // poke their top vertices into it. Same boundary, opposite colour on the
-    // in-between bit, and no gap either way.
-    const notch = rowCentre + 0.5 * CELL_R;
+    // The edge is a ring of hexagon sides, so its corners reach further from
+    // the pole than its edge midpoints -- 81.1 degrees against 68.3 on this
+    // grid. Fanning the storm to that outline exactly is correct and looks
+    // wrong; taking the inner line instead gives a clean disc that the
+    // hexagons poke into, which is the same boundary with the in-between bit
+    // the opposite colour, and no gap either way. The band's version of this
+    // was the same trick applied to a zigzag row.
+    const notch = BAND_SIN_LIMIT;
 
     // Rings in sine-latitude, from the notch up to the pole. Spaced by the
     // square of the normalised radius so the pieces stay a similar size on
@@ -666,30 +664,16 @@ function globeCellPath(
 }
 
 /**
- * The band's top edge, flattened to a circle for drawing.
+ * Nothing to flatten any more.
  *
- * A pointy-top hexagon reaches its full radius at its top vertex and half of
- * it at the two upper corners, so the outermost row ends in a zigzag. Near the
- * pole the equal-area projection stretches that half-radius into ten degrees
- * of latitude, and the ice cap meeting it comes out as a crown of white spikes
- * between dark tips -- correct, and unreadable.
- *
- * Trimming the outermost corners back to the notch line gives the band a flat
- * edge for the ice to meet. It is a drawing decision and lives here rather
- * than in `outline`, because the simulation's cells really are that shape:
- * they are equal-area, the geometry suite measures them, and a renderer's
- * convenience has no business changing what a cell IS.
+ * The band ended in a zigzag row whose corners the equal-area projection
+ * stretched into ten degrees of latitude, and this trimmed them back so the ice
+ * had a straight edge to meet. A geodesic's edge is a ring of ordinary hexagon
+ * sides and needs no such help, so a cell is now drawn exactly as the
+ * simulation says it is -- which is what the old comment here wished for.
  */
 function flattenToBand(x: number, y: number, z: number): [number, number, number] {
-  const cap = BAND_SIN_LIMIT - 0.25 * CELL_R;
-  if (Math.abs(y) <= cap) return [x, y, z];
-  const clamped = y > 0 ? cap : -cap;
-  // Back onto the sphere: keep the longitude, take the latitude down to the
-  // cap, and rescale what is left in the equatorial plane.
-  const was = Math.sqrt(Math.max(1e-12, 1 - y * y));
-  const now = Math.sqrt(Math.max(0, 1 - clamped * clamped));
-  const k = now / was;
-  return [x * k, clamped, z * k];
+  return [x, y, z];
 }
 
 /**
@@ -752,6 +736,7 @@ export function tilePolygons(
   // so the outermost tiles have corners to be built from. The halo points are
   // positions only -- no data, and none needed: a corner is a position.
   const SPAN = 2 * (RADIUS + 1) + 1;
+  const dir = new Float64Array(3);
   const px = new Float64Array(SPAN * SPAN);
   const py = new Float64Array(SPAN * SPAN);
   const ok = new Uint8Array(SPAN * SPAN);
@@ -761,17 +746,20 @@ export function tilePolygons(
     for (let rr = -(RADIUS + 1); rr <= RADIUS + 1; rr++) {
       const ss = -q - rr;
       if (ss < -(RADIUS + 1) || ss > RADIUS + 1) continue;
-      // Lattice position, then onto the sphere, then onto the screen: the same
-      // three steps the generator used to place the cell, so a corner lands
-      // exactly where the cell that owns it thinks it is.
-      // Through the projection, the same way the generator placed the cell,
-      // so a drawn corner lands exactly where the cell that owns it thinks it
-      // is. Approximating this with a linear frame is what put one cell's
-      // tiles at 76% of its own outline.
-      const lon = b.lon + COVER * r * Math.sqrt(3) * (q + rr / 2);
-      const sinLat = Math.max(-1, Math.min(1, b.sinLat + COVER * r * 1.5 * rr));
-      const cosLat = Math.sqrt(1 - sinLat * sinLat);
-      const [rx, ry] = rotate(cam, cosLat * Math.cos(lon), sinLat, cosLat * Math.sin(lon));
+      // Lattice position, then onto the sphere, then onto the screen -- and
+      // onto the sphere THROUGH `toDirection`, the very function the generator
+      // used to place the cell. Not a copy of it: the function.
+      //
+      // This was a copy, and it was left behind when the ladder moved off the
+      // cylindrical projection onto an isotropic tangent one. Near a pole the
+      // stale version clamped its sine-of-latitude at 1 and folded neighbouring
+      // lattice points onto each other, so a rim tile came out with duplicate
+      // corners -- five pairs of tiles on a map at 67 degrees sharing ten
+      // corners with each other instead of two. It left no gap, which is why
+      // nothing looked wrong, and it was the third copy of this arithmetic to
+      // drift from the original. Now there is no third copy.
+      toDirection(b, COVER * r * Math.sqrt(3) * (q + rr / 2), COVER * r * 1.5 * rr, dir, 0);
+      const [rx, ry] = rotate(cam, dir[0], dir[1], dir[2]);
       const i = at(q, rr);
       px[i] = cx + rx * radius;
       py[i] = cy - ry * radius;

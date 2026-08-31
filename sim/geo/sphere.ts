@@ -1,190 +1,174 @@
-// The world map: a hex grid wrapped around the sphere, with no pentagons in it.
+// The world map: a geodesic grid, with the storms standing on two of its defects.
 //
-// WHY THIS IS NOT A GOLDBERG POLYHEDRON ANY MORE
+// WHY THIS IS NOT A WRAPPED BAND ANY MORE
 //
-// It was, and a Goldberg polyhedron carries exactly twelve pentagons. That is
-// not a choice anyone made, it is Euler: with three faces meeting at every
-// vertex, F hexagons give E = 3F edges and V = 2F vertices, so V - E + F = 0
-// where a closed surface of genus zero requires 2. Admit pentagons and the
-// same arithmetic returns P = 12 exactly, whatever H is. Twelve however fine
-// the grid gets, which is why a football has twelve however many hexagons are
-// sewn around them.
+// It was, and a band has no pentagons at all -- a cylinder has Euler
+// characteristic zero, so nothing forces them. That was the whole reason for
+// it. What a band cannot do is keep the cells the same SHAPE: the projection
+// is Lambert cylindrical, which buys exact equal area by stretching everything
+// towards the poles, and the stretch is 1/cos^2(latitude). Measured on the
+// 39x14 band that stood here: 1.01:1 at the equator, 1.63:1 at 39 degrees,
+// 2.56:1 at 50, and 5.60:1 in the outermost row. Every cell had identical area
+// and no two of them looked alike.
 //
-// At 92 cells the twelve were 13% of the world map -- one region in eight --
-// and the highest-variance thing on screen. So the tiling changed instead: a
-// hex grid that wraps east to west has no pentagons at all, because a cylinder
-// has Euler characteristic zero rather than two.
+// You cannot have all three of uniform shape, uniform area, and no pentagons.
+// That is not an implementation limit, it is two theorems:
 //
-// THE PROJECTION IS THE WHOLE TRICK
+//   * GAUSS (Theorema Egregium). A sphere has curvature and a flat hexagonal
+//     lattice does not, so no arrangement of congruent hexagons lies on a
+//     sphere without distorting something. Distortion is compulsory; the only
+//     choice is where to spend it.
+//   * EULER. Tile a closed surface with hexagons and pentagons, three meeting
+//     at each corner, and V - E + F = 2 forces exactly twelve pentagons --
+//     whatever the resolution, however they are arranged.
 //
-// The grid is laid out in (longitude, sine of latitude) -- the Lambert
-// cylindrical projection -- and Lambert is EQUAL-AREA. The area element on a
-// sphere is cos(lat)·dlat·dlon, and d(sin lat) = cos(lat)·dlat, so equal area
-// in the projection is exactly equal area on the sphere. Not approximately.
+// The band spent its distortion on shape and paid nothing to Euler. This grid
+// does the opposite: cells are near-regular everywhere and there are twelve
+// pentagons.
 //
-// That is what makes this a change of tiling rather than a rewrite. Cells are
-// still points on the unit sphere, still equal-area, still measured with
-// great-circle distances -- so tangent frames, sub-maps, catchments, supply
-// ranges and every calibrated number below this layer are untouched. Only
-// which points are cell centres has changed.
+// AND TWO OF THE TWELVE ARE FREE. The icosahedron is oriented with a vertex at
+// each pole, so two of the pentagons sit exactly where the storm caps are --
+// ungridded, undrawn, part of no map. Ten remain, on the rings at 26.57 degrees
+// north and south, which is 2.1% of the cells here against the 13% they were
+// when this project last had them.
 //
-// WHAT IT COSTS
-//
-// A sphere still will not be tiled by hexagons and this does not tile one: the
-// grid covers the band between the polar circles, and the two caps beyond it
-// are not gridded at all. Twelve pentagons have become two ice caps, which is
-// a better trade than it sounds -- the defects moved from twelve places
-// scattered through the temperate world to the two places nobody farms.
-//
-// Cells also stretch towards the poles. Equal-area guarantees the area and
-// says nothing about the shape, so a cell at 60 degrees is taller and narrower
-// than one at the equator. That is the distortion every cylindrical map has,
-// and it lands on the rows least likely to be looked at.
+// THE CAPS ARE UNCHANGED, which is the constraint this was built to. Discarding
+// each pole cell and the ring of five around it leaves the grid stopping near
+// 77.6 degrees -- the same edge the band had, reached a different way. See
+// docs/world-lore.md.
 
 import { dsin, dcos, datan2, PI } from '../gen/mathx.ts';
 
+/**
+ * Subdivision frequency: each icosahedron edge is cut into this many.
+ *
+ * Solved from the caps rather than picked. A class-I geodesic has 10f^2 + 2
+ * cells, and discarding a pole plus its five neighbours takes six per pole --
+ * the smallest removal that keeps the five-fold symmetry without reaching the
+ * next ring out. Six of 492 is 1.22% of the sphere per cap, which is a cap of
+ * about 12.7 degrees against the 12.42 the band left. Frequency 8 would give
+ * 642 cells and, removing the same six, a cap of 11.1 -- eleven per cent
+ * narrow.
+ *
+ * 480 cells after the caps, against the band's 546. Regions come out 13.7%
+ * larger in consequence, and so does every tile below them.
+ */
+export const FREQUENCY = 7;
+
+/** Cells in the closed tiling, before the caps are taken out of it. */
+const FULL_COUNT = 10 * FREQUENCY * FREQUENCY + 2;
+
 const SQRT3 = Math.sqrt(3);
+/** Area of a regular hexagon of circumradius 1. */
+const HEX_AREA = (3 * SQRT3) / 2;
+
+interface Grid {
+  count: number;
+  centres: Float64Array;
+  neighbours: Int32Array;
+  pentagon: Uint8Array;
+  stormEdge: Uint8Array;
+  radiusScale: Float64Array;
+  /** Every cell of the closed tiling, caps included. Outlines need them. */
+  fullCentres: Float64Array;
+  fullNeighbours: Int32Array;
+  /** The full-tiling index of each kept cell. */
+  toFull: Int32Array;
+  gridSinLimit: number;
+  capSinLimit: number;
+}
+
+const grid = build();
+
+export const CELL_COUNT = grid.count;
+export const centres = grid.centres;
 
 /**
- * Rows of cells between the storm caps, and columns around the world.
+ * Neighbour ids, six per cell, in cyclic order around it.
  *
- * THE RATIO IS THE CAP. Everything about how much of the sphere is left
- * ungridded is decided here and nowhere else, because BAND_SIN_LIMIT below
- * works out to 2.72070 x ROWS/COLS and depends on nothing else at all. A
- * finer grid with the same ratio has the same caps; a different ratio moves
- * them whatever the resolution.
- *
- * 39 by 14 was solved backwards from a wanted cap, which is the honest way
- * round now that the caps are a place in the world rather than an artefact.
- * Halving the caps' angular radius -- 24.95 degrees to 12.47 -- needs the band
- * to reach sin(lat) 0.97656, so ROWS/COLS must be 0.358936. 14/39 is 0.358974
- * and lands the band edge at 77.58 degrees, a cap radius of 12.42: 50.2%
- * narrower than the 24.95 it replaces.
- *
- * COLS IS ODD, and that is allowed. The wrap is `(col + shift) % COLS` and
- * nothing else -- see build() -- so it does not care about parity: only
- * columns wrap, and a row's half-cell shift is uniform along it. A hex band on
- * a cylinder tiles seamlessly for any COLS at all.
- *
- * 546 cells against the 192 this replaced, and against the Goldberg globe's
- * 92. Resolution is not the point of the change but it is a real gain: the
- * old eight rows were chosen because six put a whole latitude band squarely on
- * the subtropical desert belt and the world came out 33.3% desert -- exactly
- * two rows in six, which was the giveaway. Fourteen rows resolve the belt
- * properly instead of straddling it.
+ * A -1 means either a pentagon's missing sixth, or a neighbour that is inside a
+ * storm and so is not a cell. The order is the load-bearing part: `outline`
+ * walks consecutive pairs to build corners, and a shuffled list would give a
+ * self-crossing star rather than a hexagon.
  */
-export const ROWS = 14;
-export const COLS = 39;
-export const CELL_COUNT = COLS * ROWS;
+export const neighbours = grid.neighbours;
 
-/** None. That is the point of this module. */
-export const PENTAGON_COUNT = 0;
+/** Ten. Two of Euler's twelve are inside the storms and are not cells here. */
+export const PENTAGON_COUNT = 10;
 
 /**
- * A cell's circumradius in projection units, solved from the wrap.
+ * How big this cell is, as a multiplier on `CELL_R`.
  *
- * The band has to close on itself exactly going east, so COLS cells of
- * horizontal spacing sqrt(3)·r must come to 2π. Nothing here is free.
+ * `CELL_R` is the AVERAGE cell's circumradius, and the cells are near-uniform
+ * -- but the ten pentagons are 0.679 of the mean area, so a sub-map sized for
+ * the average overflows a pentagon by 28% in each direction. Measured before
+ * this existed: a pentagon's children reached 1.278 times its own outline,
+ * covering 63% more ground than the cell they were subdividing.
+ *
+ * The renderer clipped that away and it looked fine, which is exactly why it
+ * needed measuring rather than looking at: the tiles were being generated for
+ * ground the cell does not own, so a pentagon's economy was being run on the
+ * wrong acreage.
+ *
+ * Square root, because it scales a radius against an area.
  */
-export const CELL_R = (2 * Math.PI) / (COLS * SQRT3);
+export function cellRadiusScale(cell: number): number {
+  return grid.radiusScale[cell];
+}
 
 /**
- * How far the grid reaches from the equator, as a sine of latitude.
+ * Whether a cell actually touches a storm.
  *
- * ROWS rows of vertical spacing 1.5·r, half above the equator and half below.
- * Substituting CELL_R, the whole thing collapses to
- *
- *     BAND_SIN_LIMIT = (pi·sqrt(3)/2) · ROWS/COLS = 2.72070 · ROWS/COLS
- *
- * so the band's reach is a pure function of the ASPECT of the grid and is
- * completely independent of how fine it is. That is the fact worth carrying:
- * you cannot shrink the caps by adding detail, only by changing the ratio.
- *
- * At 14/39 this is 0.97666, which is latitude 77.58 degrees, and the caps
- * beyond it have an angular radius of 12.42 degrees.
- *
- * The previous grid stopped at 65.05 degrees, and the note here used to make
- * something of its landing within a degree and a half of the 66.56-degree
- * polar circle. That was luck rather than design -- the comment said so -- and
- * the luck is spent: the caps are now storms rather than ice, they are a place
- * in the world with lore attached, and where they begin is chosen. See
- * docs/world-lore.md.
+ * NOT the same question as "has a -1 among its neighbours", which is the trap:
+ * a pentagon has a -1 in its unused sixth slot and touches nothing. Asking the
+ * wrong one counts all ten pentagons -- which sit at 26.57 degrees, about as
+ * far from a storm as a cell gets -- as being on the rim, and a check that no
+ * cell bordering a storm is land then fails on tropical farmland.
  */
-export const BAND_SIN_LIMIT = (ROWS * 1.5 * CELL_R) / 2;
-
-/** Cell centres as unit vectors, packed xyz. Index i is at [3i, 3i+1, 3i+2]. */
-export const centres = new Float64Array(CELL_COUNT * 3);
+export function bordersStorm(cell: number): boolean {
+  return grid.stormEdge[cell] === 1;
+}
 
 /**
- * Neighbour ids, six per cell, packed in the order E, NE, NW, W, SW, SE.
+ * A layer-0 cell's circumradius, in the projection's units.
  *
- * A -1 means a storm cap, and only the top and bottom rows have any: two each.
- * Every other cell has six, which is the entire point of the exercise.
+ * The ladder below is still laid out in (longitude, sine of latitude). That did
+ * not change with the tiling, and it is what lets a sub-map be a flat hexagon
+ * of hexagons wherever on the globe it sits. What changed is that a world cell
+ * is no longer itself a hexagon in that projection, so this can no longer be
+ * read off the wrap arithmetic.
+ *
+ * Solved from the AREA instead: the circumradius of the projection-space
+ * hexagon with the same area as an average cell. Equal-area is what makes that
+ * legitimate -- the projection preserves area exactly, so matching area in
+ * projection units matches it on the sphere, and every calibrated figure below
+ * this layer goes on meaning what it meant.
+ *
+ * Fed the band's own numbers this formula returns the band's own constant to
+ * five figures, which is the check that it is the same quantity measured a
+ * different way rather than a new one.
  */
-export const neighbours = new Int32Array(CELL_COUNT * 6).fill(-1);
+export const CELL_R = Math.sqrt((4 * PI) / FULL_COUNT / HEX_AREA);
 
-build();
+/**
+ * Where the grid stops, and where a storm may be drawn up to.
+ *
+ * Two numbers, because the edge is ragged now. A band ended in a row and had a
+ * single edge; a geodesic ends in a ring of hexagon sides, whose corners reach
+ * further than its edge midpoints. The storm disc is drawn to the INNER extent
+ * and the cells paint over it -- the same trick the band's notch line used, for
+ * the same reason: matching a ragged edge with a circle leaves a row of gaps.
+ */
+export const GRID_SIN_LIMIT = grid.gridSinLimit;
+export const CAP_SIN_LIMIT = grid.capSinLimit;
+
+/** What the renderer always actually wanted: where do the storms begin. */
+export const BAND_SIN_LIMIT = grid.capSinLimit;
 
 // ---------------------------------------------------------------------------
 
-/** Where a cell sits in the projection: longitude, and sine of latitude. */
-function projected(cell: number): { lon: number; sinLat: number } {
-  const row = Math.floor(cell / COLS);
-  const col = cell % COLS;
-  // Odd rows sit half a cell east, which is what makes a hex grid a hex grid.
-  const lon = (col + (row & 1) * 0.5) * SQRT3 * CELL_R;
-  const sinLat = -BAND_SIN_LIMIT + (row + 0.5) * 1.5 * CELL_R;
-  return { lon, sinLat };
-}
-
-/** A projection point to a unit vector. Latitude is the arcsine of y. */
-function toVector(lon: number, sinLat: number, out: Float64Array, at: number): void {
-  const s = Math.max(-1, Math.min(1, sinLat));
-  const cosLat = Math.sqrt(1 - s * s);
-  // Deterministic trig, because these are cell CENTRES: the whole world is a
-  // pure function of them, and Math.cos is only approximated by the spec.
-  out[at] = cosLat * dcos(lon);
-  out[at + 1] = s;
-  out[at + 2] = cosLat * dsin(lon);
-}
-
-function build(): void {
-  for (let cell = 0; cell < CELL_COUNT; cell++) {
-    const p = projected(cell);
-    toVector(p.lon, p.sinLat, centres, cell * 3);
-  }
-
-  // Offset-grid adjacency. The half-cell shift on odd rows moves the two
-  // diagonals above and the two below with the row's parity, which is the one
-  // place an offset layout is fiddlier than an axial one. It earns that here,
-  // because the wrap is then a modulo on the column and nothing else.
-  for (let row = 0; row < ROWS; row++) {
-    const shift = row & 1;
-    for (let col = 0; col < COLS; col++) {
-      const cell = row * COLS + col;
-      const east = (col + 1) % COLS;
-      const west = (col + COLS - 1) % COLS;
-      const near = (col + shift) % COLS;
-      const far = (col + shift + COLS - 1) % COLS;
-
-      const up = row + 1 < ROWS ? row + 1 : -1;
-      const down = row - 1 >= 0 ? row - 1 : -1;
-
-      neighbours[cell * 6 + 0] = row * COLS + east;
-      neighbours[cell * 6 + 1] = up < 0 ? -1 : up * COLS + near;
-      neighbours[cell * 6 + 2] = up < 0 ? -1 : up * COLS + far;
-      neighbours[cell * 6 + 3] = row * COLS + west;
-      neighbours[cell * 6 + 4] = down < 0 ? -1 : down * COLS + far;
-      neighbours[cell * 6 + 5] = down < 0 ? -1 : down * COLS + near;
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-
-/** There are none. Kept so the layers above need not know that. */
-export function isPentagon(_cell: number): boolean {
-  return false;
+export function isPentagon(cell: number): boolean {
+  return grid.pentagon[cell] === 1;
 }
 
 export function neighbourCount(cell: number): number {
@@ -200,48 +184,6 @@ export function centre(cell: number, out: Float64Array): Float64Array {
   return out;
 }
 
-/**
- * Which cell holds a direction.
- *
- * Inverted directly rather than searched. The projection says which row and
- * column a point lands in; the only care needed is that a hex grid's rows
- * interleave, so the nearest centre may be in the row above or below the one
- * the arithmetic gives. Three rows and two columns each is six candidates and
- * settles it exactly.
- *
- * A point over a cap belongs to no cell. The nearest edge cell is returned
- * rather than a failure, because everything upstream wants an answer and the
- * caps are ice: the honest reply at the pole is "the northernmost cell", not
- * "nowhere".
- */
-export function cellAt(x: number, y: number, z: number): number {
-  const len = Math.sqrt(x * x + y * y + z * z);
-  if (len === 0) return 0;
-  const nx = x / len, ny = y / len, nz = z / len;
-
-  let lon = datan2(nz, nx);
-  if (lon < 0) lon += 2 * PI;
-  const rowF = (ny + BAND_SIN_LIMIT) / (1.5 * CELL_R) - 0.5;
-
-  let best = 0;
-  let bestDot = -2;
-  for (let dr = -1; dr <= 1; dr++) {
-    const row = Math.max(0, Math.min(ROWS - 1, Math.round(rowF) + dr));
-    const shift = (row & 1) * 0.5;
-    const colF = lon / (SQRT3 * CELL_R) - shift;
-    for (let dc = 0; dc <= 1; dc++) {
-      const col = (((Math.round(colF) + dc) % COLS) + COLS) % COLS;
-      const cell = row * COLS + col;
-      const d = centres[cell * 3] * nx
-        + centres[cell * 3 + 1] * ny
-        + centres[cell * 3 + 2] * nz;
-      if (d > bestDot) { bestDot = d; best = cell; }
-    }
-  }
-  return best;
-}
-
-/** Great-circle distance between two cell centres. */
 export function distance(a: number, b: number, radiusM: number): number {
   const d = centres[a * 3] * centres[b * 3]
     + centres[a * 3 + 1] * centres[b * 3 + 1]
@@ -256,34 +198,436 @@ export function latLon(cell: number): { lat: number; lon: number } {
   return { lat: Math.asin(y), lon: Math.atan2(z, x) };
 }
 
+/**
+ * Which cell holds a direction.
+ *
+ * A band could invert its projection and answer in closed form. A geodesic
+ * cannot: its cells are the spherical Voronoi diagram of the geodesic vertices,
+ * and there is no formula for which one a point falls in.
+ *
+ * So a coarse lookup gets near and a hill climb finishes exactly. The climb is
+ * what makes this exact rather than approximate: Voronoi cells on a sphere are
+ * convex, so "step to whichever neighbour is nearer, until none is" cannot halt
+ * anywhere but the true nearest. The table only decides how few steps that
+ * takes, which means a coarse table costs speed and never correctness.
+ */
+const LUT_LON = 256;
+const LUT_LAT = 128;
+const lut = buildLut();
+
+export function cellAt(x: number, y: number, z: number): number {
+  const lon = datan2(z, x);
+  const u = Math.min(LUT_LON - 1, Math.max(0,
+    Math.floor(((lon + PI) / (2 * PI)) * LUT_LON)));
+  const v = Math.min(LUT_LAT - 1, Math.max(0,
+    Math.floor(((Math.max(-1, Math.min(1, y)) + 1) / 2) * LUT_LAT)));
+  return climb(lut[v * LUT_LON + u], x, y, z);
+}
+
+function climb(from: number, x: number, y: number, z: number): number {
+  let best = from;
+  let bestDot = centres[best * 3] * x + centres[best * 3 + 1] * y + centres[best * 3 + 2] * z;
+  for (;;) {
+    let moved = -1;
+    for (let i = 0; i < 6; i++) {
+      const n = neighbours[best * 6 + i];
+      if (n < 0) continue;
+      const d = centres[n * 3] * x + centres[n * 3 + 1] * y + centres[n * 3 + 2] * z;
+      if (d > bestDot) { bestDot = d; moved = n; }
+    }
+    if (moved < 0) return best;
+    best = moved;
+  }
+}
+
+function buildLut(): Int32Array {
+  const table = new Int32Array(LUT_LON * LUT_LAT);
+  let guess = 0;
+  for (let v = 0; v < LUT_LAT; v++) {
+    const sinLat = ((v + 0.5) / LUT_LAT) * 2 - 1;
+    const cosLat = Math.sqrt(Math.max(0, 1 - sinLat * sinLat));
+    for (let u = 0; u < LUT_LON; u++) {
+      const lon = ((u + 0.5) / LUT_LON) * 2 * PI - PI;
+      // Seeded from the previous entry, which is next door, so each climb is a
+      // step or two rather than a search.
+      guess = climb(guess, cosLat * dcos(lon), sinLat, cosLat * dsin(lon));
+      table[v * LUT_LON + u] = guess;
+    }
+  }
+  return table;
+}
+
 /** Cell outlines, built lazily -- only the client ever needs them. */
 let outlines: (Float64Array | null)[] | null = null;
 
 /**
- * A cell's outline, as six points on the sphere.
+ * A cell's outline: the corners it shares with its neighbours.
  *
- * The hexagon is regular in the projection, and that is what makes neighbours
- * share their corners exactly: two cells that touch compute the same corner
- * from the same arithmetic, so the tiling closes by construction rather than
- * by tolerance.
+ * Each corner is equidistant from three touching cells and is taken as the
+ * normalised sum of their three centres. Two neighbours therefore compute the
+ * same corner from the same three cells, so the tiling closes by construction
+ * rather than by tolerance -- the same guarantee the band had, carried through
+ * the change of tiling.
  *
- * On the sphere it comes out stretched towards the poles. That is the
- * equal-area projection being honest that you cannot have both the area and
- * the shape, and it is the price of having no pentagons.
+ * Built from the FULL tiling, caps included. A cell on a storm's edge has
+ * neighbours that are no longer cells, but they still have positions, and using
+ * them gives that cell a complete hexagon reaching properly into the storm
+ * rather than a gap-toothed one stopping short of it.
+ *
+ * Five corners for a pentagon. Callers step the array by threes and do not care.
  */
 export function outline(cell: number): Float64Array {
   if (outlines === null) outlines = new Array(CELL_COUNT).fill(null);
   const known = outlines[cell];
   if (known !== null && known !== undefined) return known;
 
-  const p = projected(cell);
-  const poly = new Float64Array(18);
+  const f = grid.toFull[cell];
+  const around: number[] = [];
   for (let i = 0; i < 6; i++) {
-    // Pointy-top: vertices at 30, 90, 150 degrees and their opposites, so the
-    // flat sides face the cell's east and west neighbours.
-    const a = ((60 * i + 30) * PI) / 180;
-    toVector(p.lon + CELL_R * Math.cos(a), p.sinLat + CELL_R * Math.sin(a), poly, i * 3);
+    const n = grid.fullNeighbours[f * 6 + i];
+    if (n >= 0) around.push(n);
+  }
+
+  const poly = new Float64Array(around.length * 3);
+  for (let i = 0; i < around.length; i++) {
+    const a = around[i];
+    const b = around[(i + 1) % around.length];
+    const cx = grid.fullCentres[f * 3] + grid.fullCentres[a * 3] + grid.fullCentres[b * 3];
+    const cy = grid.fullCentres[f * 3 + 1] + grid.fullCentres[a * 3 + 1] + grid.fullCentres[b * 3 + 1];
+    const cz = grid.fullCentres[f * 3 + 2] + grid.fullCentres[a * 3 + 2] + grid.fullCentres[b * 3 + 2];
+    const len = Math.sqrt(cx * cx + cy * cy + cz * cz) || 1;
+    poly[i * 3] = cx / len;
+    poly[i * 3 + 1] = cy / len;
+    poly[i * 3 + 2] = cz / len;
   }
   outlines[cell] = poly;
   return poly;
+}
+
+// ---------------------------------------------------------------------------
+// Construction.
+
+function build(): Grid {
+  const { verts, faces } = icosahedron();
+
+  // --- subdivide, sharing the points along face boundaries -----------------
+  //
+  // Keyed on rounded coordinates. Two faces meeting along an edge generate the
+  // same points there from the same corner vectors in the same order, so the
+  // arithmetic agrees bit for bit and the rounding is a formality rather than a
+  // tolerance being leaned on.
+  const index = new Map<string, number>();
+  const points: number[][] = [];
+
+  const add = (x: number, y: number, z: number): number => {
+    const len = Math.sqrt(x * x + y * y + z * z);
+    const nx = x / len, ny = y / len, nz = z / len;
+    const k = `${Math.round(nx * 1e9)},${Math.round(ny * 1e9)},${Math.round(nz * 1e9)}`;
+    const hit = index.get(k);
+    if (hit !== undefined) return hit;
+    const id = points.length;
+    points.push([nx, ny, nz]);
+    index.set(k, id);
+    return id;
+  };
+
+  const adjacency: Set<number>[] = [];
+  const touch = (a: number, b: number): void => {
+    while (adjacency.length < points.length) adjacency.push(new Set<number>());
+    adjacency[a].add(b);
+    adjacency[b].add(a);
+  };
+
+  const m = FREQUENCY;
+  for (const face of faces) {
+    const A = verts[face[0]], B = verts[face[1]], C = verts[face[2]];
+    // EQUAL ARC, not equal chord.
+    //
+    // The obvious subdivision walks the flat triangle in even steps and pushes
+    // each point out to the sphere. That bunches points towards the corners,
+    // because a chord of fixed length subtends less angle the further it lies
+    // from the middle of an edge -- and the corners are exactly where the
+    // twelve pentagons are. Measured on the chord version: a pentagon's
+    // neighbours sat 7.90 degrees off against a hexagon's 9.95, and the
+    // pentagon came out half the area of a hexagon.
+    //
+    // Slerping puts the points at equal ANGLES instead, so the first step from
+    // a corner is 63.435/7 = 9.06 degrees and the compression goes with it.
+    //
+    // Rows step away from A: row i runs from a point on AB to the matching
+    // point on AC and holds i + 1 points. Getting that layout wrong -- slerping
+    // between the wrong pair of edges -- collapses points onto each other, and
+    // the giveaway was 478 cells instead of 492 with a neighbour spacing of
+    // zero.
+    const id: number[][] = [];
+    for (let i = 0; i <= m; i++) {
+      const row: number[] = [];
+      if (i === 0) {
+        row.push(add(A[0], A[1], A[2]));
+      } else {
+        const P = slerp(A, B, i / m);
+        const Q = slerp(A, C, i / m);
+        for (let k = 0; k <= i; k++) {
+          const r = slerp(P, Q, k / i);
+          row.push(add(r[0], r[1], r[2]));
+        }
+      }
+      id.push(row);
+    }
+    for (let i = 0; i < m; i++) {
+      for (let k = 0; k <= i; k++) {
+        // The downward triangle every point carries, and the upward one that
+        // fills the gap between consecutive downward ones.
+        touch(id[i][k], id[i + 1][k]);
+        touch(id[i][k], id[i + 1][k + 1]);
+        touch(id[i + 1][k], id[i + 1][k + 1]);
+        if (k < i) touch(id[i][k], id[i][k + 1]);
+      }
+    }
+  }
+  while (adjacency.length < points.length) adjacency.push(new Set<number>());
+
+  const n = points.length;
+  if (n !== FULL_COUNT) {
+    throw new Error(`geodesic came out ${n} cells, expected ${FULL_COUNT}`);
+  }
+
+  const fullCentres = new Float64Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    fullCentres[i * 3] = points[i][0];
+    fullCentres[i * 3 + 1] = points[i][1];
+    fullCentres[i * 3 + 2] = points[i][2];
+  }
+
+  // --- neighbours, put into cyclic order -----------------------------------
+  const fullNeighbours = new Int32Array(n * 6).fill(-1);
+  orderNeighbours(fullCentres, fullNeighbours, n, adjacency);
+
+  // NO RELAXATION HERE, and it was tried. Lloyd's algorithm -- move every cell
+  // to the centroid of its own corners, repeat -- is the standard way to even
+  // out a point set on a sphere, and it made this WORSE: the area spread went
+  // from 2.264 to 2.509 and the pentagons shrank from 0.513 of the mean to
+  // 0.438. The reason is that Lloyd's needs the true Voronoi diagram
+  // recomputed each pass, and these corners are the dual of a FIXED
+  // triangulation. Once the points move, the corners are no longer the cell's
+  // own boundary, so the iteration converges confidently to the wrong shape.
+  // See docs/fix-attempts.md.
+
+  // --- take the storms out --------------------------------------------------
+  const keep = new Uint8Array(n).fill(1);
+  for (const sign of [1, -1]) {
+    let pole = 0;
+    for (let c = 1; c < n; c++) {
+      if (fullCentres[c * 3 + 1] * sign > fullCentres[pole * 3 + 1] * sign) pole = c;
+    }
+    keep[pole] = 0;
+    for (let i = 0; i < 6; i++) {
+      const nb = fullNeighbours[pole * 6 + i];
+      if (nb >= 0) keep[nb] = 0;
+    }
+  }
+
+  const toKept = new Int32Array(n).fill(-1);
+  let count = 0;
+  for (let c = 0; c < n; c++) if (keep[c] === 1) toKept[c] = count++;
+  const toFull = new Int32Array(count);
+  for (let c = 0; c < n; c++) if (keep[c] === 1) toFull[toKept[c]] = c;
+
+  const outCentres = new Float64Array(count * 3);
+  const outNeighbours = new Int32Array(count * 6).fill(-1);
+  const pentagon = new Uint8Array(count);
+  const stormEdge = new Uint8Array(count);
+  for (let k = 0; k < count; k++) {
+    const f = toFull[k];
+    outCentres[k * 3] = fullCentres[f * 3];
+    outCentres[k * 3 + 1] = fullCentres[f * 3 + 1];
+    outCentres[k * 3 + 2] = fullCentres[f * 3 + 2];
+    let slot = 0;
+    let degree = 0;
+    for (let i = 0; i < 6; i++) {
+      const nb = fullNeighbours[f * 6 + i];
+      if (nb < 0) continue;
+      degree++;
+      if (keep[nb] === 1) outNeighbours[k * 6 + slot++] = toKept[nb];
+      else stormEdge[k] = 1;
+    }
+    pentagon[k] = degree === 5 ? 1 : 0;
+  }
+
+  // --- how big each cell actually is ---------------------------------------
+  //
+  // From its own corners, by the shoelace in (longitude, sine of latitude):
+  // that projection is equal-area, so an area measured in its units IS the
+  // solid angle, with no conversion.
+  const radiusScale = new Float64Array(count);
+  const meanSolid = (4 * PI) / FULL_COUNT;
+  for (let k = 0; k < count; k++) {
+    const f = toFull[k];
+    const around: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const nb = fullNeighbours[f * 6 + i];
+      if (nb >= 0) around.push(nb);
+    }
+    let a2 = 0;
+    for (let i = 0; i < around.length; i++) {
+      const a = around[i], b = around[(i + 1) % around.length];
+      const nx = around[(i + 1) % around.length];
+      const cx1 = fullCentres[f * 3] + fullCentres[a * 3] + fullCentres[b * 3];
+      const cy1 = fullCentres[f * 3 + 1] + fullCentres[a * 3 + 1] + fullCentres[b * 3 + 1];
+      const cz1 = fullCentres[f * 3 + 2] + fullCentres[a * 3 + 2] + fullCentres[b * 3 + 2];
+      const l1 = Math.sqrt(cx1 * cx1 + cy1 * cy1 + cz1 * cz1) || 1;
+      const j = (i + 1) % around.length;
+      const a2b = around[j], b2b = around[(j + 1) % around.length];
+      const cx2 = fullCentres[f * 3] + fullCentres[a2b * 3] + fullCentres[b2b * 3];
+      const cy2 = fullCentres[f * 3 + 1] + fullCentres[a2b * 3 + 1] + fullCentres[b2b * 3 + 1];
+      const cz2 = fullCentres[f * 3 + 2] + fullCentres[a2b * 3 + 2] + fullCentres[b2b * 3 + 2];
+      const l2 = Math.sqrt(cx2 * cx2 + cy2 * cy2 + cz2 * cz2) || 1;
+      const ax = datan2(cz1 / l1, cx1 / l1), ay = cy1 / l1;
+      const bx = datan2(cz2 / l2, cx2 / l2), by = cy2 / l2;
+      let dx = bx - ax;
+      if (dx > PI) dx -= 2 * PI;
+      if (dx < -PI) dx += 2 * PI;
+      a2 += dx * (ay + by);
+    }
+    radiusScale[k] = Math.sqrt(Math.abs(a2) / 2 / meanSolid);
+  }
+
+  // --- where the storms begin, measured off the corners ---------------------
+  let gridSinLimit = 0;
+  let capSinLimit = 1;
+  for (let k = 0; k < count; k++) {
+    const f = toFull[k];
+    let onEdge = false;
+    const around: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const nb = fullNeighbours[f * 6 + i];
+      if (nb < 0) continue;
+      around.push(nb);
+      if (keep[nb] === 0) onEdge = true;
+    }
+    if (!onEdge) continue;
+    for (let i = 0; i < around.length; i++) {
+      const a = around[i], b = around[(i + 1) % around.length];
+      const cx = fullCentres[f * 3] + fullCentres[a * 3] + fullCentres[b * 3];
+      const cy = fullCentres[f * 3 + 1] + fullCentres[a * 3 + 1] + fullCentres[b * 3 + 1];
+      const cz = fullCentres[f * 3 + 2] + fullCentres[a * 3 + 2] + fullCentres[b * 3 + 2];
+      const len = Math.sqrt(cx * cx + cy * cy + cz * cz) || 1;
+      const s = Math.abs(cy / len);
+      if (s > gridSinLimit) gridSinLimit = s;
+      if (s < capSinLimit) capSinLimit = s;
+    }
+  }
+
+  return {
+    count,
+    centres: outCentres,
+    neighbours: outNeighbours,
+    pentagon,
+    stormEdge,
+    radiusScale,
+    fullCentres,
+    fullNeighbours,
+    toFull,
+    gridSinLimit,
+    capSinLimit,
+  };
+}
+
+/**
+ * Sort each cell's neighbours into cyclic order around it.
+ *
+ * Order is load-bearing: `outline` walks consecutive pairs to make corners, so
+ * a shuffled list gives a self-crossing star rather than a hexagon -- and the
+ * relaxation below reads those same corners, so it would relax towards a star.
+ */
+function orderNeighbours(
+  centresIn: Float64Array,
+  out: Int32Array,
+  n: number,
+  adjacency: Set<number>[],
+): void {
+  for (let c = 0; c < n; c++) {
+    const px = centresIn[c * 3], py = centresIn[c * 3 + 1], pz = centresIn[c * 3 + 2];
+    // Any tangent frame will do; only the ordering it induces is used.
+    let ex = -pz, ey = 0, ez = px;
+    let len = Math.sqrt(ex * ex + ez * ez);
+    if (len < 1e-9) { ex = 1; ey = 0; ez = 0; len = 1; }
+    ex /= len; ey /= len; ez /= len;
+    const fx = py * ez - pz * ey;
+    const fy = pz * ex - px * ez;
+    const fz = px * ey - py * ex;
+
+    const ring = [...adjacency[c]].map((nb) => {
+      const dx = centresIn[nb * 3] - px;
+      const dy = centresIn[nb * 3 + 1] - py;
+      const dz = centresIn[nb * 3 + 2] - pz;
+      return { nb, a: datan2(dx * fx + dy * fy + dz * fz, dx * ex + dy * ey + dz * ez) };
+    });
+    ring.sort((p, q) => p.a - q.a);
+    for (let i = 0; i < 6; i++) out[c * 6 + i] = i < ring.length ? ring[i].nb : -1;
+  }
+}
+
+/**
+ * Great-circle interpolation between two unit vectors.
+ *
+ * Two faces sharing an edge generate the same points along it, but from their
+ * own ends -- slerp(A,B,t) against slerp(B,A,1-t) -- which is the same value
+ * summed in the other order and so need not agree in the last bit. The
+ * rounding in `add` absorbs that, and here it is doing real work rather than
+ * being the formality it was when both faces walked the chord identically.
+ */
+function slerp(u: number[], v: number[], t: number): number[] {
+  const dot = Math.max(-1, Math.min(1, u[0] * v[0] + u[1] * v[1] + u[2] * v[2]));
+  const omega = Math.acos(dot);
+  if (omega < 1e-9) return [u[0], u[1], u[2]];
+  const s0 = dsin((1 - t) * omega);
+  const s1 = dsin(t * omega);
+  const k = 1 / dsin(omega);
+  return [
+    (s0 * u[0] + s1 * v[0]) * k,
+    (s0 * u[1] + s1 * v[1]) * k,
+    (s0 * u[2] + s1 * v[2]) * k,
+  ];
+}
+
+/**
+ * An icosahedron with a vertex at each pole.
+ *
+ * The orientation is the whole point. The twelve vertices become the twelve
+ * pentagons, and putting two of them on the axis puts two pentagons inside the
+ * storm caps, where nothing is gridded and nothing is drawn. The other ten land
+ * on the rings at latitude +/- 26.565 degrees -- arctan(1/2), which is where an
+ * icosahedron's vertices sit however it is turned.
+ */
+function icosahedron(): { verts: number[][]; faces: number[][] } {
+  const sinRing = 1 / Math.sqrt(5);
+  const cosRing = 2 / Math.sqrt(5);
+
+  const verts: number[][] = [[0, 1, 0]];
+  for (let k = 0; k < 5; k++) {
+    const lon = (k * 2 * PI) / 5;
+    verts.push([cosRing * dcos(lon), sinRing, cosRing * dsin(lon)]);
+  }
+  for (let k = 0; k < 5; k++) {
+    const lon = ((k + 0.5) * 2 * PI) / 5;
+    verts.push([cosRing * dcos(lon), -sinRing, cosRing * dsin(lon)]);
+  }
+  verts.push([0, -1, 0]);
+
+  // Upper ring vertex k sits at longitude 72k; lower ring vertex k at 72k + 36,
+  // so each upper vertex falls between lower k-1 and lower k, and each lower
+  // vertex between upper k and upper k+1. The twenty faces follow from that.
+  const faces: number[][] = [];
+  for (let k = 0; k < 5; k++) {
+    const up = 1 + k;
+    const upNext = 1 + ((k + 1) % 5);
+    const lo = 6 + k;
+    const loPrev = 6 + ((k + 4) % 5);
+    faces.push([0, up, upNext]);
+    faces.push([11, 6 + ((k + 1) % 5), lo]);
+    faces.push([up, loPrev, lo]);
+    faces.push([lo, up, upNext]);
+  }
+  return { verts, faces };
 }
