@@ -61,18 +61,34 @@ about two thirds of the law at every scale -- 0.50 to 0.74 down six layers,
 0.525 at the median over ordinary ground, the same for gentle and rolling
 terrain.
 
-Simply dividing by the measured response was tried and is struck through in
-fix-attempts.md. It fixes the direct Earth comparison exactly -- median slope
-0.77 to 2.17 degrees, steepest 29.2 against Earth's 25-to-35 -- and breaks
-self-affinity, because the `belowMesh` linear taper straddles layer 2: implied
-Hurst 0.649 to 0.537 against an anchored 0.70.
+Two fixes have been tried and both are struck through in fix-attempts.md.
+Dividing by the measured response fixes the direct Earth comparison exactly and
+breaks self-affinity. A derived quadrature taper, replacing the `belowMesh`
+ramp with the base's share of the target -- a constant of the patch geometry,
+91^-0.15 = 0.508 -- lands the slope distribution at both ends (median 1.87
+degrees against Earth's 2, steepest 25.84 against Earth's 25-to-35) and STILL
+takes the implied Hurst from 0.649 to 0.556.
 
-The fix the measurements point at is quadrature rather than a linear taper,
-with the parent's share a constant of the patch geometry (91^-0.15 = 0.508);
-fix-attempts.md carries the derivation and the arithmetic that predicts the
-observed 0.525. It has not been done because it moves every terrain measurement
-in the project and some gameplay ones with it, so it is a decision to take
-deliberately.
+**The blocker is not the taper, and this is the finding.** Measuring the
+exponent between each consecutive pair of layers, everything below the third is
+unchanged to within noise and the entire break is at 2->3, 0.634 to 0.359.
+Layer 2's map spans about 130 km while its parent's cells are 112.7 km, so that
+map reads its parent's cell-to-cell steps rather than its own ground and cannot
+respond to any change in detail, while layer 3 responds in full.
+
+Underneath that: **the ladder's first sub-map has 112.7 km cells and the
+physics mesh has 34.2 km cells, so the first sub-map is coarser than the mesh
+it reads.** The mesh's tectonic detail between 34 and 112 km is discarded at
+depth 1 -- correctly, since depth 1 cannot represent it -- and no layer puts it
+back, because depth 2 adds noise at its own 11.8 km scale. That band is a hole
+in the world's spectrum, and the implied-exponent measurement takes its top
+reading from exactly there. What would close it is either a ladder whose first
+layer is no coarser than the mesh, or a depth-2 sample that reads the mesh
+directly for the band its parent could not carry. Both are larger than a taper.
+
+What survives from both attempts is `FBM_LOCAL_RELIEF_RESPONSE` in noise.ts,
+measured and policed by verify_noise.ts: fbm3 delivers 0.349 of its nominal
+amplitude as local relief, which any future attempt needs.
 
 Three things that do NOT move it, measured, so the next attempt can skip them:
 raising MESH_RELIEF_M (900 to 2700 gives 0.13 to 0.22 at the mesh's own scale,
