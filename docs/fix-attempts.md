@@ -1778,3 +1778,63 @@ This has not been implemented. It replaces `belowMesh` with a derived quantity
 and moves every terrain measurement in the project, including gameplay ones --
 the flat-divide experiment took `daughters founded` from 10 to 5 -- so it is a
 decision rather than a correction.
+
+### ~~Quadrature taper: detail supplies the shortfall the base does not~~
+
+The successor to the flat divide, and it fails on the same layer for a reason
+the flat divide hid. The design: the base's share of the target relief is a
+constant of the patch geometry, `(spacing/baseRes)^(1-H)` = 91^-0.15 = 0.508 at
+every depth, so detail supplies `sqrt(1 - 0.508^2)` = 0.861 of the target in
+quadrature, divided by the measured noise response. `belowMesh` is deleted --
+the taper is derived rather than ramped, and it is continuous across a map
+boundary for free because it depends on the layer and not on position.
+
+Two of the three indicators landed well. Over 40 maps at 132 m cells the median
+slope went 0.77 to 1.87 degrees against Earth's roughly 2, and the steepest
+25.84 against Earth's 25-to-35-degree mountainsides. The suite's own `ground
+map relief, as a share of what Hurst predicts` went 0.563 to 0.774. The
+per-cell ratio against the law went from 0.525 to 1.235 at the median, with the
+steep bucket at 1.081. The whole suite passed, 71 moved, none failing.
+
+**What killed it: the implied Hurst exponent went 0.649 to 0.556**, against an
+anchored 0.70 and a gate of "back near 0.70", and `steepest slope down to the
+plot layer` went 25.9 to 49.8 degrees, which is past any real mountainside.
+
+**But the diagnosis is new, and it is not the taper.** Exponent between each
+pair of consecutive layers, whole-map relief, before and after:
+
+    layers   before    after
+     2->3     0.634    0.359
+     3->4     0.592    0.580
+     4->5     0.721    0.728
+     5->6     0.666    0.652
+     6->7     0.660    0.658
+
+Every layer below the third is unchanged to within noise. The break is entirely
+at 2->3, and layer 2 is the reason: its map spans about 11 cells of 11.8 km,
+roughly 130 km, while its PARENT's cells are 11.8 x sqrt(91) = 112.7 km. A map
+whose whole width is barely wider than one parent cell is measuring its
+parent's cell-to-cell steps, not its own ground, so no amount of added detail
+moves it -- while layer 3 and everything below responds in full. The ratio
+between them is what breaks, and the implied exponent is measured across
+exactly that pair.
+
+**The structural cause, which is worth more than the attempt.** The ladder's
+first layer has 112.7 km cells and the physics mesh has 34.2 km cells, so the
+FIRST SUB-MAP IS COARSER THAN THE MESH IT READS. The mesh's real tectonic
+detail between 34 and 112 km is discarded at depth 1 -- correctly, since depth
+1 cannot represent it -- and no layer ever puts it back, because depth 2 adds
+noise at its own 11.8 km scale rather than at the 34-112 km scale that went
+missing. That band is a hole in the world's spectrum, and it sits exactly where
+the implied-exponent measurement takes its top reading.
+
+Nothing here is fixed by a better taper. What would fix it is either a ladder
+whose first layer is no coarser than the mesh, or a depth-2 sample that reads
+the mesh directly for the band its parent could not carry. Both are larger than
+this attempt.
+
+Kept from the attempt: `FBM_LOCAL_RELIEF_RESPONSE` in noise.ts and
+verify_noise.ts, which measure and police the fact that fbm3 delivers 0.349 of
+its nominal amplitude as local relief and spans -0.52 to 0.53 rather than the
+[-1, 1] its comment claimed. That measurement is what any future attempt needs
+and it is true whether or not the ladder uses it yet.

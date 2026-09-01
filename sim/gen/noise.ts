@@ -97,8 +97,16 @@ export function noise2(x: number, y: number, seed: number): number {
  * amplitude. This is what turns smooth blobs into terrain -- the low octaves
  * are the continents, the high ones are the roughness on a hillside.
  *
- * Normalised so the result stays in about [-1, 1] regardless of octave count,
+ * Normalised so the result stays in a FIXED range regardless of octave count,
  * which matters because the biome thresholds downstream are absolute.
+ *
+ * That range is not [-1, 1], which this comment claimed for a long time.
+ * Measured over 34,848 samples it is -0.521 to 0.528, with an rms of 0.134 --
+ * see verify_noise.ts, which measures it every run. The claim was harmless
+ * while callers only wanted a shape, and stopped being harmless when the
+ * sub-map ladder began handing this function a relief in metres and expecting
+ * a relief in metres back; see FBM_LOCAL_RELIEF_RESPONSE at the foot of this
+ * file.
  */
 export function fbm3(
   x: number,
@@ -170,3 +178,33 @@ export function ridged3(
 export function unit(h: number): number {
   return (h >>> 8) / 0x1000000;
 }
+
+/**
+ * What fraction of its nominal amplitude `fbm3` actually delivers as LOCAL
+ * RELIEF, across a cell and its six neighbours, at the ladder's geometry.
+ *
+ * A measured property of our own noise function, not of the world -- which is
+ * why it lives here beside fbm3 rather than in anchors.ts, where everything is
+ * a measurement of the real one. verify_noise.ts re-measures it every run, so
+ * it cannot drift if fbm3 or its octave count changes.
+ *
+ * WHY IT IS NEEDED. The sub-map ladder decides how rough ground should be from
+ * a measured relief law -- 900 m per 10 km in mountains, 18 on a plain -- and
+ * then hands that figure to fbm3 as an amplitude. Those are not the same
+ * quantity. The comment above says fbm3 stays "in about [-1, 1]"; measured over
+ * 34,848 samples it spans -0.521 to 0.528 and has an rms of 0.134, and the
+ * range between a cell and its neighbours -- which is what local relief means
+ * -- comes to about a third of the nominal amplitude:
+ *
+ *     10th 0.219   median 0.349   mean 0.356   90th 0.503
+ *
+ * The median is used because local relief is reported as a typical figure for
+ * a landscape, not as a mean over one.
+ *
+ * It depends only on the RATIO of cell spacing to noise wavelength, and the
+ * ladder fixes that ratio by construction: cells sit sqrt(3)*cellRad apart and
+ * the noise runs at 0.45/cellRad, at every depth. So one number covers every
+ * layer. Change either constant in submap.ts and this one has to be measured
+ * again -- which is what the suite is for.
+ */
+export const FBM_LOCAL_RELIEF_RESPONSE = 0.349;
