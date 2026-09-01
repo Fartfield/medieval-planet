@@ -326,7 +326,7 @@ export function toDirection(b: Basis, x: number, y: number, out: Float64Array, a
  * and land drained off the world one layer at a time. A forward transform and
  * its inverse are one fact; this is that fact written once.
  */
-function toLocal(b: Basis, x: number, y: number, z: number): { x: number; y: number } {
+export function toLocal(b: Basis, x: number, y: number, z: number): { x: number; y: number } {
   const dot = clamp(x * b.ox + y * b.oy + z * b.oz, -1, 1);
   const theta = Math.acos(dot);
   const rho = 2 * dsin(theta / 2);

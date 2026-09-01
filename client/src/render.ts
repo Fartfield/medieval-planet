@@ -12,12 +12,12 @@ import {
   CELL_COUNT, centres, outline, BAND_SIN_LIMIT, CELL_R, CAP_RADIUS_RAD,
 } from '../../sim/geo/sphere.ts';
 import {
-  RADIUS, SUBCELL_COUNT, coords, DIRECTIONS, toPixel, fromPixel,
+  RADIUS, SUBCELL_COUNT, coords, DIRECTIONS, fromPixel,
 } from '../../sim/geo/hexgrid.ts';
 import { BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import type { Planet } from '../../sim/gen/planet.ts';
 import type { SubMap, Basis } from '../../sim/gen/submap.ts';
-import { toDirection } from '../../sim/gen/submap.ts';
+import { toDirection, toLocal } from '../../sim/gen/submap.ts';
 import type { Patch } from '../../sim/geo/patch.ts';
 import {
   PENT_HALO_COUNT, pentCornerNeighbours,
@@ -204,8 +204,6 @@ export function tileEdgeWidth(tilePx: number): number {
 const CHILD_SCALE = 1 / (Math.sqrt(3) * RADIUS);
 const CHILD_TURN_DEG = 30;
 const SQRT3 = Math.sqrt(3);
-const COS30 = Math.sqrt(3) / 2;
-const SIN30 = 0.5;
 
 /**
  * How far a region's tiles are drawn beyond their own size, so that they cover
@@ -963,6 +961,95 @@ export function flatView(w: number, h: number, cam: Camera): FlatView {
 }
 
 /**
+ * The map a picture is drawn in the terms of.
+ *
+ * A view used to be one map, centred, so every position in drawSubMap could be
+ * a bare `patch.centre` in that map's own layout. Showing a tile's NEIGHBOURS
+ * around it means several maps in one picture, and neighbouring maps do not
+ * share a layout. Three things differ and all three are visible:
+ *
+ *   * each map's basis faces its own first neighbour, so a neighbour's lattice
+ *     is TURNED relative to the middle one, by an angle particular to the pair;
+ *   * cells are not all the same size -- a pentagon's are 0.824 of the mean
+ *     radius, and its children divide by sqrt(76) where a hexagon's divide by
+ *     sqrt(91) -- so a neighbour drawn at the middle map's cell size is drawn
+ *     at the wrong scale;
+ *   * the projection is a plane laid on a sphere, and over the ground a REGION
+ *     map covers, roughly ten degrees of arc, it is not affine.
+ *
+ * So every cell is placed by running its own direction back through the
+ * frame's inverse projection, which is exact and costs one `toLocal` per cell.
+ * The turn and the on-screen size at that cell are read off the same
+ * projection, by placing a second point one cell-radius along and measuring
+ * what came out, rather than assumed to be the map's average.
+ *
+ * A rotation-and-shift per map was tried first and measured: worst error 11.0
+ * pixels at the region layer against a 60-pixel cell, and a floor of 2.04
+ * pixels at every depth below it that did not shrink as the maps got smaller,
+ * which is the cell-size difference rather than curvature. Exact placement
+ * costs about 1,300 extra projections a frame across seven maps, which is
+ * nothing beside the polygons they fill.
+ */
+export interface Frame {
+  basis: SubMap['basis'];
+  cellRadiusRad: number;
+}
+
+/** Where one cell of some map lands in the frame's picture. */
+export interface Placed {
+  x: number;
+  y: number;
+  /** Circumradius on screen, which differs between maps and across a map. */
+  r: number;
+  /** The cell's own turn in the frame, as a unit vector. */
+  cos: number;
+  sin: number;
+}
+
+/** Unit hexagon corners, pointy-top, to be turned and scaled per cell. */
+const UNIT_POINTY = corners(1, -30);
+/** The same at the children's own thirty-degree turn. */
+const UNIT_FLAT = corners(1, 0);
+
+export function placeCells(map: SubMap, frame: Frame, size: number): Placed[] {
+  const perUnit = size / frame.cellRadiusRad;
+  const probe = new Float64Array(3);
+  const out: Placed[] = [];
+  for (let c = 0; c < map.patch.count; c++) {
+    const o = toLocal(frame.basis, map.dirs[c * 3], map.dirs[c * 3 + 1], map.dirs[c * 3 + 2]);
+    // One cell-radius along this map's own x-axis from this cell, projected
+    // the same way. The step's image gives the turn and the scale together.
+    const q = map.patch.centre(c, map.cellRadiusRad);
+    toDirection(map.basis, q.x + map.cellRadiusRad, q.y, probe, 0);
+    const t = toLocal(frame.basis, probe[0], probe[1], probe[2]);
+    const dx = (t.x - o.x) * perUnit;
+    const dy = (t.y - o.y) * perUnit;
+    const r = Math.hypot(dx, dy);
+    out.push(r > 1e-9
+      ? { x: o.x * perUnit, y: o.y * perUnit, r, cos: dx / r, sin: dy / r }
+      : { x: o.x * perUnit, y: o.y * perUnit, r: size, cos: 1, sin: 0 });
+  }
+  return out;
+}
+
+/** Trace a hexagon of unit corners, turned and scaled onto one cell. */
+function tracePolygon(
+  ctx: CanvasRenderingContext2D,
+  unit: readonly { x: number; y: number }[],
+  cx: number, cy: number, r: number, cos: number, sin: number,
+): void {
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const ux = unit[i].x * r;
+    const uy = unit[i].y * r;
+    const x = cx + ux * cos - uy * sin;
+    const y = cy + ux * sin + uy * cos;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+/**
  * Draw a sub-map: realm or ground, the same routine for both.
  *
  * Rivers are drawn as a second pass over the fills rather than as a tint on
@@ -980,22 +1067,34 @@ export function drawSubMap(
   worked: Map<number, number> | null = null,
   tint: CellTint | null = null,
   children: ChildLookup | null = null,
+  frame: Frame | null = null,
 ): void {
   const { cx, cy, size } = view;
-  const shape = corners(size);
+  // Its own frame unless told otherwise, so a lone map draws exactly as it did.
+  const f = frame ?? { basis: map.basis, cellRadiusRad: map.cellRadiusRad };
+  const place = placeCells(map, f, size);
+  const at = (cell: number): Placed => place[cell];
   // The same question the globe asks, in the same unit: is a TILE big enough
   // to be worth drawing?
   const childSize = size * CHILD_SCALE;
   const wantMosaic = children !== null && childSize * 2 >= MOSAIC_MIN_PX;
   const wantTint = !wantMosaic && tint !== null && size * 2 >= TINT_MIN_PX;
+  // The children's thirty degrees, kept as a rotation to compose with each
+  // cell's own rather than as a pair of constants.
+  const turnCos = Math.cos((CHILD_TURN_DEG * Math.PI) / 180);
+  const turnSin = Math.sin((CHILD_TURN_DEG * Math.PI) / 180);
   // Children lay out as their own hex grid inside this cell, turned thirty
   // degrees so their grain runs with the parent's edges rather than across
-  // them. Flat coordinates, so this is exact -- no projection, no lookup.
-  const childShape = corners(childSize, -30 + CHILD_TURN_DEG);
+  // them. Within ONE cell that layout is flat and exact; the cell's own turn
+  // in the frame is composed onto it below.
   // Tile edges, on the same terms as the globe's. Without them a run of tiles
   // sharing a biome merges into one flat area and the grid disappears exactly
   // where the ground is uniform -- which is most of a map.
   const childEdges = tileEdgeWidth(childSize * 2);
+  const offScreen = (x: number, y: number): boolean => (
+    x < -size * 2 || y < -size * 2
+    || x > ctx.canvas.width + size * 2 || y > ctx.canvas.height + size * 2
+  );
 
   let lo = Infinity;
   let hi = -Infinity;
@@ -1006,18 +1105,13 @@ export function drawSubMap(
   const span = Math.max(1, hi - lo);
 
   for (let c = 0; c < map.patch.count; c++) {
-    const p = map.patch.centre(c, size);
-    const x = cx + p.x;
-    const y = cy + p.y;
+    const g = at(c);
+    const x = cx + g.x;
+    const y = cy + g.y;
     // Cull off-screen. At full zoom on a ground map this skips most of them.
-    if (x < -size * 2 || y < -size * 2 || x > ctx.canvas.width + size * 2 || y > ctx.canvas.height + size * 2) {
-      continue;
-    }
+    if (offScreen(x, y)) continue;
 
-    ctx.beginPath();
-    ctx.moveTo(x + shape[0].x, y + shape[0].y);
-    for (let i = 1; i < 6; i++) ctx.lineTo(x + shape[i].x, y + shape[i].y);
-    ctx.closePath();
+    tracePolygon(ctx, UNIT_POINTY, x, y, g.r, g.cos, g.sin);
 
     const relief = 0.72 + 0.5 * ((map.elevationM[c] - lo) / span);
     const base = (wantTint ? tint!(c) : null) ?? BIOME_COLOURS[map.biome[c]];
@@ -1035,32 +1129,27 @@ export function drawSubMap(
           ctx.strokeStyle = 'rgba(10,16,24,0.30)';
           ctx.lineWidth = childEdges;
         }
+        // This cell's turn with the children's thirty degrees composed onto
+        // it, and this cell's own on-screen size rather than the map's mean.
+        const kidCos = g.cos * turnCos - g.sin * turnSin;
+        const kidSin = g.sin * turnCos + g.cos * turnSin;
+        const kidR = g.r * CHILD_SCALE;
         for (let k = 0; k < kids.patch.count; k++) {
-          const q = kids.patch.centre(k, childSize);
-          // The thirty-degree turn, applied to the layout as well as to the
-          // shape. Turning one and not the other puts them out of register.
-          const qx = q.x * COS30 - q.y * SIN30;
-          const qy = q.x * SIN30 + q.y * COS30;
-          const kx = x + qx;
-          const ky = y + qy;
+          const q = kids.patch.centre(k, kidR);
+          const kx = x + q.x * kidCos - q.y * kidSin;
+          const ky = y + q.x * kidSin + q.y * kidCos;
           const alt = 0.72 + 0.5 * ((kids.elevationM[k] - lo) / span);
           ctx.fillStyle = kids.elevationM[k] < 0
             ? OCEAN
             : shade(BIOME_COLOURS[kids.biome[k]], alt);
-          ctx.beginPath();
-          ctx.moveTo(kx + childShape[0].x, ky + childShape[0].y);
-          for (let i = 1; i < 6; i++) ctx.lineTo(kx + childShape[i].x, ky + childShape[i].y);
-          ctx.closePath();
+          tracePolygon(ctx, UNIT_FLAT, kx, ky, kidR, g.cos, g.sin);
           ctx.fill();
           if (childEdges > 0) ctx.stroke();
         }
         ctx.restore();
 
         // The cell's own edge, back on top of its texture.
-        ctx.beginPath();
-        ctx.moveTo(x + shape[0].x, y + shape[0].y);
-        for (let i = 1; i < 6; i++) ctx.lineTo(x + shape[i].x, y + shape[i].y);
-        ctx.closePath();
+        tracePolygon(ctx, UNIT_POINTY, x, y, g.r, g.cos, g.sin);
         ctx.strokeStyle = 'rgba(12,20,30,0.5)';
         ctx.lineWidth = 1;
         ctx.stroke();
@@ -1071,16 +1160,14 @@ export function drawSubMap(
   // Water second, so channels sit on top of the ground they cut through.
   for (let c = 0; c < map.patch.count; c++) {
     if (map.drainage[c] < 0.55 || map.elevationM[c] < 0) continue;
-    const p = map.patch.centre(c, size);
-    const x = cx + p.x;
-    const y = cy + p.y;
-    if (x < -size * 2 || y < -size * 2 || x > ctx.canvas.width + size * 2 || y > ctx.canvas.height + size * 2) {
-      continue;
-    }
+    const g = at(c);
+    const x = cx + g.x;
+    const y = cy + g.y;
+    if (offScreen(x, y)) continue;
     const strength = (map.drainage[c] - 0.55) / 0.45;
     ctx.fillStyle = `rgba(70,130,180,${0.30 + 0.6 * strength})`;
     ctx.beginPath();
-    ctx.arc(x, y, size * (0.30 + 0.55 * strength), 0, Math.PI * 2);
+    ctx.arc(x, y, g.r * (0.30 + 0.55 * strength), 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -1088,50 +1175,44 @@ export function drawSubMap(
   // Drawn before claims so a border still reads on top of its own fields.
   if (worked !== null) {
     for (const [cell, share] of worked) {
-      const p = toPixel(cell, size);
-      const x = cx + p.x;
-      const y = cy + p.y;
-      if (x < -size * 2 || y < -size * 2 || x > ctx.canvas.width + size * 2 || y > ctx.canvas.height + size * 2) {
-        continue;
-      }
+      if (cell < 0 || cell >= map.patch.count) continue;
+      const g = at(cell);
+      const x = cx + g.x;
+      const y = cy + g.y;
+      if (offScreen(x, y)) continue;
       ctx.fillStyle = `rgba(201,162,39,${0.20 + 0.45 * share})`;
-      ctx.beginPath();
-      ctx.moveTo(x + shape[0].x, y + shape[0].y);
-      for (let i = 1; i < 6; i++) ctx.lineTo(x + shape[i].x, y + shape[i].y);
-      ctx.closePath();
+      tracePolygon(ctx, UNIT_POINTY, x, y, g.r, g.cos, g.sin);
       ctx.fill();
     }
   }
 
   // Claims and settlements.
   for (const [cell, owner] of owned) {
-    const p = toPixel(cell, size);
+    if (cell < 0 || cell >= map.patch.count) continue;
+    const g = at(cell);
     ctx.strokeStyle = houseColour(owner);
-    ctx.lineWidth = Math.max(1, size * 0.12);
-    ctx.beginPath();
-    ctx.moveTo(cx + p.x + shape[0].x, cy + p.y + shape[0].y);
-    for (let i = 1; i < 6; i++) ctx.lineTo(cx + p.x + shape[i].x, cy + p.y + shape[i].y);
-    ctx.closePath();
+    ctx.lineWidth = Math.max(1, g.r * 0.12);
+    tracePolygon(ctx, UNIT_POINTY, cx + g.x, cy + g.y, g.r, g.cos, g.sin);
     ctx.stroke();
   }
   for (const [cell, people] of populated) {
-    const p = toPixel(cell, size);
+    if (cell < 0 || cell >= map.patch.count) continue;
+    const g = at(cell);
     // Area with population, so a hamlet and a city differ by more than a dot.
-    const r = Math.max(2, Math.min(size * 0.8, size * 0.22 * Math.sqrt(Math.max(1, people))));
+    const r = Math.max(2, Math.min(g.r * 0.8, g.r * 0.22 * Math.sqrt(Math.max(1, people))));
     ctx.fillStyle = '#e8e4da';
     ctx.beginPath();
-    ctx.arc(cx + p.x, cy + p.y, r, 0, Math.PI * 2);
+    ctx.arc(cx + g.x, cy + g.y, r, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  if (highlight >= 0) {
-    const p = toPixel(highlight, size);
+  // Bounded, because a map in this picture may hold fewer cells than the one
+  // the selection was made in: a pentagon's map has 76 and a hexagon's 91.
+  if (highlight >= 0 && highlight < map.patch.count) {
+    const g = at(highlight);
     ctx.strokeStyle = '#c9a227';
     ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx + p.x + shape[0].x, cy + p.y + shape[0].y);
-    for (let i = 1; i < 6; i++) ctx.lineTo(cx + p.x + shape[i].x, cy + p.y + shape[i].y);
-    ctx.closePath();
+    tracePolygon(ctx, UNIT_POINTY, cx + g.x, cy + g.y, g.r, g.cos, g.sin);
     ctx.stroke();
   }
 }
