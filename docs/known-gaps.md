@@ -61,32 +61,30 @@ about two thirds of the law at every scale -- 0.50 to 0.74 down six layers,
 0.525 at the median over ordinary ground, the same for gentle and rolling
 terrain.
 
-Two fixes have been tried and both are struck through in fix-attempts.md.
-Dividing by the measured response fixes the direct Earth comparison exactly and
-breaks self-affinity. A derived quadrature taper, replacing the `belowMesh`
-ramp with the base's share of the target -- a constant of the patch geometry,
-91^-0.15 = 0.508 -- lands the slope distribution at both ends (median 1.87
-degrees against Earth's 2, steepest 25.84 against Earth's 25-to-35) and STILL
-takes the implied Hurst from 0.649 to 0.556.
+Three fixes have been tried and all are struck through in fix-attempts.md.
+Dividing by the measured response lands the direct Earth comparison exactly and
+breaks self-affinity. A derived quadrature taper does the same. Closing the
+spectral hole underneath it -- the first sub-map was coarser than the physics
+mesh, so the 34-112 km band was discarded -- was worth doing and IS done, but
+it moved the implied Hurst by seventeen millionths under the taper, so it was
+not the cause either.
 
-**The blocker is not the taper, and this is the finding.** Measuring the
-exponent between each consecutive pair of layers, everything below the third is
-unchanged to within noise and the entire break is at 2->3, 0.634 to 0.359.
-Layer 2's map spans about 130 km while its parent's cells are 112.7 km, so that
-map reads its parent's cell-to-cell steps rather than its own ground and cannot
-respond to any change in detail, while layer 3 responds in full.
+**What the measurements now say the blocker is.** The taper's overshoot grows
+with depth -- 0.844, 1.279, 1.729, 1.591, 1.757 down the ladder -- and that
+growth is the loss of self-affinity itself. The detail calculation is
+OPEN-LOOP: it computes what the base ought to be carrying, from the mesh's
+relief scaled by the Hurst exponent, and never looks at what the base actually
+has, so a layer that comes out above target is built on by a layer that still
+adds its full nominal share. The error accumulates instead of correcting.
 
-Underneath that: **the ladder's first sub-map has 112.7 km cells and the
-physics mesh has 34.2 km cells, so the first sub-map is coarser than the mesh
-it reads.** The mesh's tectonic detail between 34 and 112 km is discarded at
-depth 1 -- correctly, since depth 1 cannot represent it -- and no layer puts it
-back, because depth 2 adds noise at its own 11.8 km scale. That band is a hole
-in the world's spectrum, and the implied-exponent measurement takes its top
-reading from exactly there. What would close it is either a ladder whose first
-layer is no coarser than the mesh, or a depth-2 sample that reads the mesh
-directly for the band its parent could not carry. Both are larger than a taper.
+Closing that loop means measuring the base's real relief, which is exactly the
+per-map measurement submap.ts rejects because two neighbouring maps measure
+different numbers and disagree along the edge they share. The trade is real:
+continuity buys an open loop. A third attempt has to break the trade -- a
+base-relief measurement that is a continuous FIELD, sampled the way reliefM is
+-- rather than tune inside it.
 
-What survives from both attempts is `FBM_LOCAL_RELIEF_RESPONSE` in noise.ts,
+What survives from the attempts is `FBM_LOCAL_RELIEF_RESPONSE` in noise.ts,
 measured and policed by verify_noise.ts: fbm3 delivers 0.349 of its nominal
 amplitude as local relief, which any future attempt needs.
 

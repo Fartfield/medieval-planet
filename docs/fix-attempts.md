@@ -1838,3 +1838,82 @@ verify_noise.ts, which measure and police the fact that fbm3 delivers 0.349 of
 its nominal amplitude as local relief and spans -0.52 to 0.53 rather than the
 [-1, 1] its comment claimed. That measurement is what any future attempt needs
 and it is true whether or not the ladder uses it yet.
+
+### The seam was real, and it was not the cause -- both measured
+
+The previous entry blamed the 2->3 exponent collapse on the ladder's first
+sub-map being coarser than the physics mesh, and proposed closing that hole.
+The hole is real and is now closed. It was **not** the cause, and the
+measurement says so flatly: with the seam closed and the same quadrature taper
+applied, the implied Hurst read **0.555983** against **0.555966** without it.
+Seventeen millionths. Closing it changed that measurement by nothing at all.
+
+Worth stating plainly because the earlier entry sounded confident.
+
+**~~Quadrature taper, second attempt, with the seam closed~~.** Implied Hurst
+0.649 -> 0.556, `steepest slope down to the plot layer` 25.9 -> 50.5 degrees,
+and three assertions failed rather than none: an idle-settlement check, a root
+cohesion check and a specialisation check. Worse than the first attempt, and
+killed for the same reason.
+
+**Why it compounds, which is the finding worth keeping.** The overshoot against
+the law grows with depth -- 0.844, 1.279, 1.729, 1.591, 1.757 down the ladder --
+and that growth IS the loss of self-affinity. The taper is OPEN-LOOP: it
+computes what the base *ought* to be carrying, from the mesh's relief scaled by
+the Hurst exponent, and never looks at what the base actually has. When a layer
+comes out above target, the layer below still adds its full nominal share on
+top, and the error accumulates instead of correcting.
+
+A self-correcting version would measure the base's real relief. That is exactly
+the per-map measurement submap.ts rejects, for a good reason recorded above it:
+two neighbouring maps measure different numbers, add different amounts of
+detail, and disagree along the edge they share. So the tension is real and it
+is a design choice, not an oversight -- continuity buys an open loop. Any third
+attempt has to break that trade rather than tune inside it: a base-relief
+measurement that is a continuous FIELD, sampled the way `reliefM` is, would do
+it, and nothing else obvious would.
+
+## The first sub-map was coarser than the mesh it read
+
+Kept, separately from the taper it was meant to enable, because it is right on
+its own.
+
+`World.subMap` based every layer below the first on the map above it. At depth 2
+that is wrong: the first sub-map has 112.7 km cells and the physics mesh has
+34.2 km ones, so depth 1 is a downsample and everything the mesh knows between
+those two scales -- real mountain belts, rifts, dissected margins, simulated --
+was discarded there and never came back, because depth 2 added noise at its own
+11.8 km instead. A hole in the world's spectrum.
+
+The rule now is that a layer reads whichever of the parent map and the mesh
+out-resolves it, which is the mesh at depths 1 and 2 and the parent below.
+Nothing is lost by skipping the parent at depth 2, because a layer coarser than
+the mesh adds no detail of its own -- its field IS the downsample. Continuity
+improves rather than suffers: two neighbouring depth-2 maps now read one
+continuous mesh instead of two different parents.
+
+Measured over 40 maps at 132 m cells, the mesh's structure arriving as it
+should -- the middle unchanged, the tail much fatter:
+
+                median   99th    max
+    before        0.76    2.62    3.74 degrees
+    after         0.76    8.08   11.15
+
+and the implied Hurst exponent went 0.649 to 0.665, toward the anchored 0.70.
+72 measurements moved, none failing.
+
+One measurement fell a long way and is redistribution rather than loss: the
+sampled ground site's relief went 5.26 m to 1.60 m, because the seam fix
+changes which mesh ground each site descends onto and that site now sits on
+genuinely smoother mesh. Its assertion, which is bounded an order of magnitude
+either side, still passes, and the mountain descent got rougher at every layer
+from 2 to 5 over the same change.
+
+**A stale assertion went with it, and it was the test.** `idleness is only a
+diagnostic` seated 200 people and asserted the settlement does not spread. It
+spread. Not because idleness became a trigger -- because the reference site's
+carrying capacity fell from 378 to 233, so 200 people were filling 86% of the
+land and the settlement threw off a daughter from LAND PRESSURE, correctly. The
+assertion was right and its premise had expired. A flat 200 is the same
+grid-dependence this file has recorded three times before, so the test now asks
+the ground how many people half fill it and seats that.

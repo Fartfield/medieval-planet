@@ -271,12 +271,38 @@ suite('idleness is only a diagnostic', () => {
   // is modelled, so a healthy settlement reads 30-60% "idle" when in truth
   // those hands are building, weaving and carting. Kept as a number a player
   // can look at; it decides nothing.
+  // SEATED AT HALF OF WHAT THE LAND HOLDS, asked rather than typed.
+  //
+  // This was a flat 200 and it broke the moment the terrain changed: the
+  // reference site's carrying capacity fell from 378 to 233, so 200 people
+  // were suddenly filling 86% of the land and the settlement threw off a
+  // daughter -- correctly, from LAND PRESSURE, which is the one thing this
+  // suite is trying to hold constant while it looks at idleness. The
+  // assertion was right and its premise had stopped being true.
+  //
+  // A population is only "comfortable" relative to the ground under it, so it
+  // is measured from the ground. Half of capacity leaves hands to spare
+  // without crowding, and no re-grid can quietly turn this test into a test of
+  // something else.
+  const probeWorld = new World({ seed: SEED });
+  const probeSeat = cradle(probeWorld);
+  const probeCrown = probeWorld.foundPolity(toKey(probeSeat), 0);
+  probeWorld.setDelta(probeSeat, {
+    owner: probeCrown.id, population: 20, populationHealth: 1,
+    grainStock: 20 * 330, farmShare: 1,
+  });
+  const probe = resolveTurn(probeWorld, [], 1).reports.get(toKey(probeSeat));
+  assert('the reference site reports a capacity', probe !== undefined);
+  if (probe === undefined) return;
+  const comfortable = Math.max(2, Math.round(probe.harvest.potentialPopulation / 2));
+  measure('population that half fills the reference site', comfortable);
+
   const w = new World({ seed: SEED });
   const seat = cradle(w);
   const crown = w.foundPolity(toKey(seat), 0);
   w.setDelta(seat, {
-    owner: crown.id, population: 200, populationHealth: 1,
-    grainStock: 200 * 330, farmShare: 1,
+    owner: crown.id, population: comfortable, populationHealth: 1,
+    grainStock: comfortable * 330, farmShare: 1,
   });
   const res = resolveTurn(w, [], 1);
   const report = res.reports.get(toKey(seat));

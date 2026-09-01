@@ -19,6 +19,7 @@ import {
   layerName, parent as parentOf, equals,
 } from './geo/address.ts';
 import { generatePlanet, type Planet } from './gen/planet.ts';
+import { MESH_COLS } from './gen/tectonics.ts';
 import type { Boundary } from './gen/hydrology.ts';
 import {
   generateSubMap, basisAt, samplePlanet, sampleSubMap, soilAt, aridityAt,
@@ -161,7 +162,33 @@ export class World {
           above.dirs[cell * 3], above.dirs[cell * 3 + 1], above.dirs[cell * 3 + 2],
           above.dirs[nb * 3], above.dirs[nb * 3 + 1], above.dirs[nb * 3 + 2])
         : basisAt(above.dirs[cell * 3], above.dirs[cell * 3 + 1], above.dirs[cell * 3 + 2]);
-      sample = (x, y, z) => sampleSubMap(above, x, y, z, this.neighbouring(depth - 1));
+      // READ WHICHEVER OF THE TWO OUT-RESOLVES THIS LAYER.
+      //
+      // The obvious base is the map above, and for most depths it is the right
+      // one. It is wrong at depth 2, and that was a hole in the world's
+      // spectrum rather than a detail: the first sub-map has 112.7 km cells
+      // and the physics mesh underneath it has 34.2 km ones, so depth 1 is a
+      // DOWNSAMPLE of the mesh and everything the mesh knows between those two
+      // scales is thrown away there. Depth 2 then rebuilt from the downsample
+      // and added noise at its own 11.8 km, so the 34-112 km band -- real
+      // mountain belts, rifts and dissected margins, simulated -- existed
+      // nowhere in the ladder.
+      //
+      // Measured, that hole is what broke the self-affinity check: the implied
+      // Hurst exponent between layers 2 and 3 read 0.359 against an anchored
+      // 0.70, while every layer below the third sat between 0.59 and 0.73.
+      // A map whose whole width is barely wider than one parent cell is
+      // measuring its parent's cell-to-cell steps and not its own ground.
+      //
+      // Nothing is lost by skipping the parent here, because a layer coarser
+      // than the mesh adds no detail of its own -- see the base share in
+      // generateSubMap -- so its field IS the downsample and nothing else.
+      // Continuity is improved rather than risked: two neighbouring depth-2
+      // maps now read one continuous mesh instead of two different parents.
+      const meshSpacingM = (2 * Math.PI * this.radiusM) / MESH_COLS;
+      sample = above.spacingM > meshSpacingM
+        ? (x, y, z) => samplePlanet(this.planet, x, y, z)
+        : (x, y, z) => sampleSubMap(above, x, y, z, this.neighbouring(depth - 1));
       inflow = inflowFromSubMap(above, cell);
     }
 
