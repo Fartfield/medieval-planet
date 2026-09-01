@@ -1675,3 +1675,106 @@ physically absurd to satisfy a number is telling you the number is wrong.
 What survives is smaller and is measured: the median land slope is 1.1 degrees
 against Earth's 2 to 3, while the tail is right at 22.4 degrees for the 99th
 percentile and 30.7 at the steepest. Gentle middling ground, not a flat world.
+
+## The world is smooth in the middle, and it is not the mesh's fault
+
+The standing explanation, recorded in known-gaps.md, was that the ladder
+inherits the mesh's resolution: detail amplitude is anchored to `reliefM`,
+which is the mesh's own elevation spread, so a smooth mesh makes a smooth
+world at every scale below it. The prescribed fix was to anchor the amplitude
+to a MEASURED local relief instead.
+
+**The premise is wrong, measured.** `LOCAL_RELIEF_MOUNTAIN_M` (900 m per 10 km)
+and `LOCAL_RELIEF_PLAIN_M` (18) are the measured law, and the mesh already
+matches it at both ends. Converting the mesh's `reliefM` to a ten-kilometre
+baseline -- remembering that `reliefM` spans a cell AND its neighbours, so two
+cells, 68.4 km -- over 143,489 land cells:
+
+    percentile   mesh relief   as 10 km relief   measured
+    5th               86 m            22 m       18 (plain)
+    median           208 m            54 m
+    95th            1525 m           397 m
+    99th            3522 m           917 m       900 (mountain)
+
+Twenty-two against eighteen at the flat end, 917 against 900 at the steep end.
+The mesh is not smooth and there is nothing to re-anchor: the anchors and the
+mesh already agree. Note also that `LOCAL_RELIEF_MOUNTAIN_M` and
+`LOCAL_RELIEF_PLAIN_M` had never been read by any code -- `reliefScale` in
+submap.ts computed something from the baseline and threw it away.
+
+### Where the relief actually goes
+
+The ladder delivers about two thirds of the law at every scale, not a
+resolution-dependent shortfall. Descending a mountain, comparing the relief
+produced across a cell and its neighbours against the law for that span:
+
+    depth   spacing     span    produced   law says   ratio
+      1     112.7km   225.3km     1321 m     1906 m    0.693
+      2      11.8km    23.6km      382 m      770 m    0.497
+      3       1.2km     2.5km       97 m      161 m    0.599
+      4        130m      260m     24.9 m     33.5 m    0.743
+      5         14m       27m     4.60 m     6.92 m    0.666
+      6       1.43m     2.85m     1.01 m     1.43 m    0.709
+
+Over 40 maps of ordinary land at 129 m cells the median ratio is 0.525, and it
+is the same for gentle and rolling ground (0.521 and 0.580), so it is a
+constant and not a shape effect.
+
+**The cause: `detailAmp` is a noise amplitude and is used as though it were a
+relief.** Note first that the amplitude formula is already right -- it divides
+by one mesh spacing where `reliefM` spans two, and the target span is two
+sub-cells, so the factor of two cancels and `detailAmp` equals the law's
+predicted relief exactly. The loss is in what the noise then does with it.
+Measured over 34,848 samples of `fbm3` at the ladder's own geometry (cells at
+sqrt(3)·cellRad, noise at 0.45/cellRad, five octaves):
+
+    unit-amplitude value range    -0.521 .. 0.528     (not -1 .. 1)
+    rms                            0.134
+    local relief realised across a cell and its six neighbours,
+    per unit of nominal amplitude:
+      10th 0.219   median 0.349   mean 0.356   90th 0.503
+
+So an amplitude of L metres realises 0.349·L of local relief. The parent's own
+gradient supplies the rest of the measured 0.525.
+
+### ~~Divide detailAmp by the measured 0.349 response~~
+
+The obvious correction, and it is wrong. It lands the direct Earth comparison
+beautifully -- over 40 maps at 132 m cells the median slope goes 0.77 to 2.17
+degrees against Earth's roughly 2, and the steepest goes to 29.2 against
+Earth's 25-to-35-degree mountainsides -- and the whole suite passes with 73
+measurements moved and none failing.
+
+**What killed it: the implied Hurst exponent went 0.649 to 0.537**, away from
+the anchored 0.70, and the world became LESS self-affine rather than more.
+The reason is `belowMesh`, the linear ramp that tapers detail off as a layer's
+cells approach the mesh's. Layer 2 straddles it and gained only 27% where
+layer 3 gained 146%, so the exponent between those two layers collapsed from
+0.635 to 0.339. Multiplying by 2.865 after the ramp does not scale the ramp's
+distortion, it magnifies it. `steepest slope down to the plot layer` also went
+25.9 to 53.8 degrees, which is the same discontinuity seen as a gradient.
+
+### What the measurements point at instead
+
+The taper is the thing that is wrong, not the amplitude. Independent random
+fields add in quadrature, so the parent's contribution should be removed that
+way rather than by a linear ramp:
+
+    R_detail = sqrt(max(0, R_target^2 - R_parent^2))
+
+and the parent's contribution at a span below its own resolution is its
+gradient times that span, which for a patch of `count` children is a constant
+of the geometry:
+
+    R_parent(S) / R_target(S) = count^(-(1-H)/2) = 91^(-0.15) = 0.508
+
+Quadrature with the measured noise response then predicts the ratio the world
+actually shows: sqrt(0.508^2 + 0.349^2) = 0.617 against a measured 0.525,
+which is the right size. Setting the detail to supply the remainder,
+0.861·R_target, would put the total on the law by construction at every layer
+INCLUDING the mesh transition, which is exactly where the flat divide broke.
+
+This has not been implemented. It replaces `belowMesh` with a derived quantity
+and moves every terrain measurement in the project, including gameplay ones --
+the flat-divide experiment took `daughters founded` from 10 to 5 -- so it is a
+decision rather than a correction.

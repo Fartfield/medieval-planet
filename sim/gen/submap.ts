@@ -924,7 +924,6 @@ export function generateSubMap(
   // ground map inherits the same three hills its region already had. Tie it to
   // the cell size so every layer adds roughness at its own scale.
   const detailFreq = 0.45 / cellRad;
-  const reliefScale = dpow(spacingM / A.LOCAL_RELIEF_BASELINE_M, A.TOPOGRAPHY_HURST);
 
   // Do not invent detail the simulation already has.
   //

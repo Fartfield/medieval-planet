@@ -44,25 +44,35 @@ would be choosing the answer.
 where a classification boundary needs it. A game with two-minute weeks will
 eventually want real seasons, and that is a layer-1 concern.
 
-**The world is still smoother than Earth in the middle of the distribution.**
-Doubling the physics mesh to 34 km cells fixed the aliasing that caused most of
-it -- the finest relief octave used to sit at exactly one cell and contributed
-almost nothing -- and bought a third more slope everywhere. Measured over 5,460
-samples following the highest ground:
+**The world is smooth in the middle, and the cause is now measured.** At 132 m
+cells over 40 maps the median land slope is 0.77 degrees against Earth's
+roughly 2. The old entry here blamed the ladder for inheriting the mesh's
+resolution and prescribed re-anchoring the detail amplitude to a measured local
+relief. That premise is wrong: converted to a ten-kilometre baseline the mesh's
+own relief already matches the anchors at both ends -- 22 m against a measured
+plain of 18, and 917 m against a measured mountain of 900, over 143,489 land
+cells. There was nothing to re-anchor.
 
-                median   99th    max
-    68 km mesh  0.64     12.76   19.89 degrees
-    34 km mesh  0.86     19.87   30.18
+What is actually happening is that `detailAmp` is a noise amplitude used as
+though it were a relief. Measured over 34,848 samples, `fbm3` at the ladder's
+own geometry realises 0.349 of its nominal amplitude as local relief, and its
+value range is -0.52 to 0.53 rather than -1 to 1. The ladder therefore delivers
+about two thirds of the law at every scale -- 0.50 to 0.74 down six layers,
+0.525 at the median over ordinary ground, the same for gentle and rolling
+terrain.
 
-The steep ground is now right: 30 degrees at the steepest against Earth's 25-to-
-35-degree mountainsides. The middle is still gentle -- about 0.9 degrees at a
-129 m cell against Earth's roughly 2 at 90 m.
+Simply dividing by the measured response was tried and is struck through in
+fix-attempts.md. It fixes the direct Earth comparison exactly -- median slope
+0.77 to 2.17 degrees, steepest 29.2 against Earth's 25-to-35 -- and breaks
+self-affinity, because the `belowMesh` linear taper straddles layer 2: implied
+Hurst 0.649 to 0.537 against an anchored 0.70.
 
-Doubling again would cost another factor of four in build time, currently 10.5
-seconds a world, for a diminishing return. The other lever is anchoring the
-ladder's detail amplitude to a MEASURED local relief instead of to the mesh's
-own spread, so the fine scales stop inheriting the mesh's resolution at all.
-That is a redesign rather than a constant, and it has not been done.
+The fix the measurements point at is quadrature rather than a linear taper,
+with the parent's share a constant of the patch geometry (91^-0.15 = 0.508);
+fix-attempts.md carries the derivation and the arithmetic that predicts the
+observed 0.525. It has not been done because it moves every terrain measurement
+in the project and some gameplay ones with it, so it is a decision to take
+deliberately.
 
 Three things that do NOT move it, measured, so the next attempt can skip them:
 raising MESH_RELIEF_M (900 to 2700 gives 0.13 to 0.22 at the mesh's own scale,
