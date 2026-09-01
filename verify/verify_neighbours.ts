@@ -18,7 +18,8 @@
 import { World } from '../sim/world.ts';
 import { CELL_COUNT, neighbours as globeNeighbours } from '../sim/geo/sphere.ts';
 import { toDirection, toLocal } from '../sim/gen/submap.ts';
-import { placeCells } from '../client/src/render.ts';
+import { equals } from '../sim/geo/address.ts';
+import { placeCells, pickAmong } from '../client/src/render.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 const SEED = 20260826;
@@ -110,6 +111,80 @@ suite('a tile is drawn with its neighbours round it', () => {
   measure('worst placement against the frame projection, px', worstOwn);
   check('a pixel resolves to the cell that was drawn there', worstTrip, 0, 0.01);
   check('neighbours are placed by the projection, not near it', worstOwn, 0, 0.01);
+
+  // PICKING, END TO END AND AT EVERY ZOOM.
+  //
+  // This check used to live in verify_render and invert one map's flat hex
+  // lattice, which is exactly what the view can no longer do: with neighbours
+  // on screen, a lattice inverse can only ever name a cell of the middle map.
+  //
+  // It is checked against `pickAmong`, the rule the app uses, and NOT against
+  // World.addressAt -- which was tried and is the interesting part. addressAt
+  // names the tile whose territory holds a point, descending from the globe;
+  // the view builds addresses by walking down from the map the player opened.
+  // The two disagree, because a hexagon of 91 hexagons covers about 91% of the
+  // hexagon holding it, so a map's outer rings lie outside their own parent.
+  // Measured: 67 of 104 sampled cells resolved to a DIFFERENT map, at every
+  // ring including the middle one -- the centre cell of the map at [6,40] sits
+  // in region 11. Both answers are true; they answer different questions, and
+  // the one the picture is drawn from is the one a click must agree with.
+  for (const zoom of [0.5, 1, 4, 12]) {
+    const size = SIZE * zoom;
+    let wrongMap = 0;
+    let wrongCell = 0;
+    let tried = 0;
+    for (const fr of frames) {
+      const frame = w.subMap(fr.addr);
+      const perUnit = size / frame.cellRadiusRad;
+      const dir = new Float64Array(3);
+      const maps = [frame, ...fr.nbs.map((a) => w.subMap(a))];
+      // Every cell of the map in the middle: clicking one of these has to name
+      // that cell, in that map, always. It is the tile drawn on top.
+      const placed = placeCells(frame, frame, size);
+      for (let c = 0; c < frame.patch.count; c++) {
+        toDirection(frame.basis, placed[c].x / perUnit, placed[c].y / perUnit, dir, 0);
+        const hit = pickAmong(maps, dir[0], dir[1], dir[2]);
+        tried++;
+        if (hit === null || hit.map !== 0) wrongMap++;
+        else if (hit.cell !== c) wrongCell++;
+      }
+    }
+    measure(`cells picked at zoom ${zoom}`, tried);
+    check(`the middle map keeps its own cells at zoom ${zoom}`, wrongMap, 0, 0);
+    check(`and names the one that was clicked at zoom ${zoom}`, wrongCell, 0, 0);
+  }
+
+  // A NEIGHBOUR'S OWN GROUND IS REACHABLE, which is the other half: if the
+  // middle map claimed everything, drawing neighbours would be decoration and
+  // scrolling onto one would never hand it the middle.
+  {
+    const frame = w.subMap([region]);
+    const nbAddrs = regionNbs;
+    const maps = [frame, ...nbAddrs.map((a) => w.subMap(a))];
+    const perUnit = SIZE / frame.cellRadiusRad;
+    const dir = new Float64Array(3);
+    let reached = 0;
+    let far = 0;
+    for (let m = 1; m < maps.length; m++) {
+      const placed = placeCells(maps[m], frame, SIZE);
+      for (let c = 0; c < maps[m].patch.count; c++) {
+        toDirection(frame.basis, placed[c].x / perUnit, placed[c].y / perUnit, dir, 0);
+        const hit = pickAmong(maps, dir[0], dir[1], dir[2]);
+        if (hit === null) { far++; continue; }
+        if (hit.map === m && hit.cell === c) reached++;
+        // Whatever it named, it must be somewhere near what was clicked.
+        const got = maps[hit.map];
+        const dot = dir[0] * got.dirs[hit.cell * 3]
+          + dir[1] * got.dirs[hit.cell * 3 + 1]
+          + dir[2] * got.dirs[hit.cell * 3 + 2];
+        if (Math.acos(Math.min(1, dot)) > got.cellRadiusRad * 1.5) far++;
+      }
+    }
+    measure('neighbour cells that pick as themselves', reached);
+    measure('picks landing more than a cell away', far);
+    assert('a neighbour map owns ground of its own', reached > 100);
+    check('and no pick lands far from where it was made', far, 0, 0);
+  }
 
   // The neighbours actually surround the middle rather than piling on it,
   // which is what a missed rotation or a wrong scale would look like.

@@ -20,7 +20,7 @@ import {
 import { Biome } from '../sim/model/biome.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
-  pickGlobe, pickSubMap, corners, rotate, unrotate, houseColour,
+  pickGlobe, corners, rotate, unrotate, houseColour,
   blendColours, tilePolygons, TINT_MIN_PX, MOSAIC_MIN_PX, GRID_MIN_PX,
   type CellTint, type ChildLookup,
 } from '../client/src/render.ts';
@@ -155,18 +155,11 @@ suite('sub-map rendering', () => {
   assert('rivers were drawn', raw.arcs > 0);
   measure('river and settlement marks', raw.arcs);
 
-  // Picking must be the exact inverse of the layout, at every zoom.
-  for (const zoom of [0.5, 1, 4, 12]) {
-    const v = flatView(W, H, { ...cam, zoom });
-    let wrong = 0;
-    for (let c = 0; c < SUBCELL_COUNT; c += 7) {
-      // Where the renderer puts this cell, then back again.
-      const px = v.cx + (v.size * Math.sqrt(3)) * (cellQ(c) + cellR(c) / 2);
-      const py = v.cy + v.size * 1.5 * cellR(c);
-      if (pickSubMap(v, px, py) !== c) wrong++;
-    }
-    check(`picking is exact at zoom ${zoom}`, wrong, 0, 0);
-  }
+  // Picking used to be checked here, against a flat inverse of one map's hex
+  // lattice. That inverse is gone: the view draws several maps at once now, so
+  // picking asks the WORLD which tile a direction lands in rather than
+  // inverting a lattice that can only answer for one map. The check moved with
+  // it, to verify_neighbours, where it exercises the path the app takes.
 
   // At full zoom most cells are off screen and must be skipped, or a ground
   // map costs ten thousand fills to show forty hexagons.
@@ -395,7 +388,7 @@ suite('the globe turns on its poles', () => {
   // world has no up, so nobody can say where they are.
   const view = { cx: 600, cy: 400, radius: 300 };
   const at = (yaw: number, pitch: number, x: number, y: number, z: number): number[] => {
-    const [px, py, pz] = rotate({ yaw, pitch, panX: 0, panY: 0, zoom: 1 }, x, y, z);
+    const [px, py, pz] = rotate({ yaw, pitch, panX: 0, panY: 0, zoom: 1, rot: 0 }, x, y, z);
     return [view.cx + px * view.radius, view.cy - py * view.radius, pz];
   };
 
@@ -432,7 +425,7 @@ suite('the globe turns on its poles', () => {
   let worstNorm = 0;
   for (let i = 0; i < 24; i++) {
     const t = (i / 24) * Math.PI * 2;
-    const [x, y, z] = rotate({ yaw: 0.7, pitch: -0.4, panX: 0, panY: 0, zoom: 1 },
+    const [x, y, z] = rotate({ yaw: 0.7, pitch: -0.4, panX: 0, panY: 0, zoom: 1, rot: 0 },
       Math.cos(t), 0.3, Math.sin(t));
     worstNorm = Math.max(worstNorm, Math.abs(Math.hypot(x, y, z) - Math.hypot(Math.cos(t), 0.3, Math.sin(t))));
   }

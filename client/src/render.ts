@@ -17,7 +17,7 @@ import {
 import { BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import type { Planet } from '../../sim/gen/planet.ts';
 import type { SubMap, Basis } from '../../sim/gen/submap.ts';
-import { toDirection, toLocal } from '../../sim/gen/submap.ts';
+import { toDirection, toLocal, cellContaining } from '../../sim/gen/submap.ts';
 import type { Patch } from '../../sim/geo/patch.ts';
 import {
   PENT_HALO_COUNT, pentCornerNeighbours,
@@ -48,10 +48,25 @@ export interface Camera {
   panX: number;
   panY: number;
   zoom: number;
+  /**
+   * Flat-view turn, degrees, and it is not a control the player has.
+   *
+   * Walking off the edge of one tile onto the next swaps which map the picture
+   * is drawn in the terms of, and neighbouring maps are turned relative to
+   * each other -- each one's basis faces its OWN first neighbour, and that is
+   * a different direction for each. Swapping frames without compensating spins
+   * the whole world under the cursor, by as much as sixty degrees, at the
+   * moment the player crosses a boundary they cannot see.
+   *
+   * So the turn between the old frame and the new one is added here, and the
+   * picture does not move. It accumulates as you walk, which is correct: it is
+   * the accumulated bearing change of walking across a sphere.
+   */
+  rot: number;
 }
 
 export function newCamera(): Camera {
-  return { yaw: 0.6, pitch: 0.35, panX: 0, panY: 0, zoom: 1 };
+  return { yaw: 0.6, pitch: 0.35, panX: 0, panY: 0, zoom: 1, rot: 0 };
 }
 
 /** Rotate a direction into view space. Yaw about the pole, then pitch. */
@@ -993,6 +1008,8 @@ export function flatView(w: number, h: number, cam: Camera): FlatView {
 export interface Frame {
   basis: SubMap['basis'];
   cellRadiusRad: number;
+  /** The view's own turn, degrees. See Camera.rot. */
+  rotDeg?: number;
 }
 
 /** Where one cell of some map lands in the frame's picture. */
@@ -1013,6 +1030,12 @@ const UNIT_FLAT = corners(1, 0);
 
 export function placeCells(map: SubMap, frame: Frame, size: number): Placed[] {
   const perUnit = size / frame.cellRadiusRad;
+  // The view's turn, folded into the projection rather than applied as a
+  // canvas transform: the cull test and the child layout both need positions
+  // in screen terms, and a canvas rotation would leave them in the old ones.
+  const vr = ((frame.rotDeg ?? 0) * Math.PI) / 180;
+  const vc = Math.cos(vr);
+  const vs = Math.sin(vr);
   const probe = new Float64Array(3);
   const out: Placed[] = [];
   for (let c = 0; c < map.patch.count; c++) {
@@ -1024,10 +1047,16 @@ export function placeCells(map: SubMap, frame: Frame, size: number): Placed[] {
     const t = toLocal(frame.basis, probe[0], probe[1], probe[2]);
     const dx = (t.x - o.x) * perUnit;
     const dy = (t.y - o.y) * perUnit;
+    const x = (o.x * vc - o.y * vs) * perUnit;
+    const y = (o.x * vs + o.y * vc) * perUnit;
     const r = Math.hypot(dx, dy);
-    out.push(r > 1e-9
-      ? { x: o.x * perUnit, y: o.y * perUnit, r, cos: dx / r, sin: dy / r }
-      : { x: o.x * perUnit, y: o.y * perUnit, r: size, cos: 1, sin: 0 });
+    if (r > 1e-9) {
+      const cos = dx / r;
+      const sin = dy / r;
+      out.push({ x, y, r, cos: cos * vc - sin * vs, sin: sin * vc + cos * vs });
+    } else {
+      out.push({ x, y, r: size, cos: vc, sin: vs });
+    }
   }
   return out;
 }
@@ -1217,8 +1246,49 @@ export function drawSubMap(
   }
 }
 
-export function pickSubMap(view: FlatView, sx: number, sy: number): number {
-  return fromPixel(sx - view.cx, sy - view.cy, view.size);
+/**
+ * Which of the maps on screen holds a direction, and which cell of it.
+ *
+ * NOT `World.addressAt`, and the reason is worth writing down because the
+ * obvious choice is wrong. addressAt descends from the globe and names the
+ * tile whose territory contains a point. The view builds addresses the other
+ * way, by walking down the map the player opened. The two DISAGREE, and not
+ * rarely: a hexagon of 91 hexagons covers about 91% of the hexagon holding it,
+ * so a map's outer rings lie outside their own parent tile. Measured, the
+ * centre cell of the map at address [6,40] sits in region 11, and asking
+ * addressAt about it returns [11,49,...] -- a true answer to a different
+ * question, and one that would have made a click jump to a map the player was
+ * not looking at.
+ *
+ * So picking asks the maps that are actually drawn. The middle one is offered
+ * first, which is both what the player expects -- the tile under the cursor is
+ * the one drawn on top -- and the hysteresis that stops the view flickering
+ * between two maps along a seam they share.
+ *
+ * Falls back to the nearest cell centre when no map claims the point: a cell's
+ * territory is a Voronoi region and the hexagon drawn for it is only roughly
+ * that, so a click can miss every one of them by a hair.
+ */
+export function pickAmong(
+  maps: readonly SubMap[], x: number, y: number, z: number,
+): { map: number; cell: number } | null {
+  for (let m = 0; m < maps.length; m++) {
+    const map = maps[m];
+    const cell = cellContaining(map.basis, map.cellRadiusRad, x, y, z, map.patch);
+    if (cell >= 0) return { map: m, cell };
+  }
+
+  let best: { map: number; cell: number } | null = null;
+  let bestD = Infinity;
+  for (let m = 0; m < maps.length; m++) {
+    const map = maps[m];
+    for (let c = 0; c < map.patch.count; c++) {
+      const dot = x * map.dirs[c * 3] + y * map.dirs[c * 3 + 1] + z * map.dirs[c * 3 + 2];
+      const d = 1 - dot;
+      if (d < bestD) { bestD = d; best = { map: m, cell: c }; }
+    }
+  }
+  return best;
 }
 
 /** A stable colour per house, spread around the wheel by a golden step. */

@@ -13,9 +13,10 @@
 import { World } from '../../sim/world.ts';
 import { regionFingerprint } from '../../sim/turn.ts';
 import {
-  toKey, fromKey, GROUND_DEPTH, MAX_DEPTH, LAYER_NAMES,
+  toKey, fromKey, GROUND_DEPTH, MAX_DEPTH, LAYER_NAMES, equals,
 } from '../../sim/geo/address.ts';
-import { CELL_COUNT } from '../../sim/geo/sphere.ts';
+import { CELL_COUNT, neighbours as globeNeighbours } from '../../sim/geo/sphere.ts';
+import { toDirection, toLocal, type SubMap } from '../../sim/gen/submap.ts';
 import { SUBCELL_COUNT } from '../../sim/geo/hexgrid.ts';
 import { BIOME_NAMES, BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import { LANDFORM_NAMES } from '../../sim/model/tile.ts';
@@ -33,7 +34,8 @@ import type { Polity } from '../../sim/model/polity.ts';
 import { AUTHORITY_REACH_KM } from '../../sim/model/polity.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
-  pickGlobe, pickSubMap, houseColour, blendColours, TINT_MIN_PX, MOSAIC_MIN_PX,
+  pickGlobe, pickAmong, houseColour, blendColours, TINT_MIN_PX, MOSAIC_MIN_PX,
+  type Frame,
   type ChildLookup,
   type Camera, type CellTint,
 } from './render.ts';
@@ -193,6 +195,138 @@ function setLive(live: boolean): void {
 // --- what is on screen ------------------------------------------------------
 
 /**
+ * The maps drawn around the one in the middle.
+ *
+ * A tile used to be shown alone, which made every map an island: you could not
+ * see what your land bordered without leaving it, and the edge of the picture
+ * was the edge of the world rather than the edge of a tile.
+ *
+ * Two sources, because adjacency is two different things. On the globe a
+ * region's neighbours are the geodesic grid's own -- six of them, five at a
+ * pentagon -- and that is a fixed table. Below the globe, adjacency is decided
+ * by DISTANCE (see World.neighboursOf), so a tile on a map seam can have more
+ * than six neighbours and that is the truth of the ground rather than a fault.
+ * Either way it is the world that answers, not the renderer.
+ */
+function neighbourMapsOf(w: World, at: readonly number[]): number[][] {
+  if (at.length === 0) return [];
+  if (at.length === 1) {
+    const out: number[][] = [];
+    for (let i = 0; i < 6; i++) {
+      const nb = globeNeighbours[at[0] * 6 + i];
+      if (nb >= 0) out.push([nb]);
+    }
+    return out;
+  }
+  return w.neighboursOf(at as number[]) as number[][];
+}
+
+/**
+ * Put a different map in the middle without the picture moving.
+ *
+ * Walking off one tile onto the next has to be seamless or it is not walking,
+ * it is teleporting. Two things would jump if they were not corrected here.
+ *
+ * The SHIFT: the picture is drawn in the middle map's terms, so its centre
+ * sits at the pan origin. Give the middle to a neighbour and that neighbour's
+ * centre becomes the origin, which slides everything by the distance between
+ * the two. Pan by exactly that distance and nothing moves.
+ *
+ * The TURN: each map's basis faces its own first neighbour, and that is a
+ * different direction for each map, so the new frame is rotated relative to
+ * the old one -- by up to sixty degrees. The view's own turn absorbs it. See
+ * Camera.rot.
+ *
+ * Both are read off the projection rather than assumed, the same way the cells
+ * are placed.
+ */
+function focusOn(w: World, next: readonly number[]): void {
+  if (world === null || path.length === 0 || equals(next as number[], path)) return;
+  const view = flatView(window.innerWidth, window.innerHeight, cam);
+  const here = w.subMap(path);
+  const there = w.subMap(next as number[]);
+  const perUnit = view.size / here.cellRadiusRad;
+
+  const o = toLocal(here.basis, there.basis.ox, there.basis.oy, there.basis.oz);
+  const vr = (cam.rot * Math.PI) / 180;
+  const vc = Math.cos(vr);
+  const vs = Math.sin(vr);
+  cam.panX += (o.x * vc - o.y * vs) * perUnit;
+  cam.panY += (o.x * vs + o.y * vc) * perUnit;
+
+  // The angle the new map's own x-axis makes in the old map's terms, which is
+  // exactly what the view has to take on to leave the picture where it is.
+  const probe = new Float64Array(3);
+  toDirection(there.basis, there.cellRadiusRad * 0.1, 0, probe, 0);
+  const px = toLocal(here.basis, probe[0], probe[1], probe[2]);
+  cam.rot += (Math.atan2(px.y - o.y, px.x - o.x) * 180) / Math.PI;
+
+  path = next as number[];
+  // The selection was an index into the map that just stopped being the middle
+  // one, and index 40 of a different map is a different acre. The click path
+  // sets it again straight after; scrolling simply drops it.
+  selected = -1;
+  refresh();
+}
+
+/** The frame every map in the flat view is drawn in the terms of. */
+function frameFor(w: World): Frame {
+  const middle = w.subMap(path);
+  return { basis: middle.basis, cellRadiusRad: middle.cellRadiusRad, rotDeg: cam.rot };
+}
+
+/**
+ * The point of the sphere under a pixel, in the flat view.
+ *
+ * The inverse of what the renderer does, and it has to be, or a click lands on
+ * a tile other than the one under the cursor. Undo the pan, undo the view's
+ * turn, scale back into the frame's own units, and project.
+ */
+function directionAt(w: World, sx: number, sy: number): Float64Array {
+  const view = flatView(window.innerWidth, window.innerHeight, cam);
+  const middle = w.subMap(path);
+  const perUnit = view.size / middle.cellRadiusRad;
+  const dx = sx - view.cx;
+  const dy = sy - view.cy;
+  const vr = (-cam.rot * Math.PI) / 180;
+  const vc = Math.cos(vr);
+  const vs = Math.sin(vr);
+  const out = new Float64Array(3);
+  toDirection(middle.basis,
+    (dx * vc - dy * vs) / perUnit, (dx * vs + dy * vc) / perUnit, out, 0);
+  return out;
+}
+
+/**
+ * Hand the middle to whichever tile the window is actually looking at.
+ *
+ * Called after every pan. The tile under the middle of the window is the one
+ * being looked at, so it is the one the picture should be drawn in the terms
+ * of -- and because the swap is seamless, the player never sees it happen.
+ * They just keep scrolling, and the ground keeps going.
+ *
+ * At every layer, by construction: `addressAt` descends from the globe to
+ * whatever depth it is asked for, so this is the same three lines for a region
+ * and for a yard.
+ */
+function followTheView(w: World): void {
+  if (path.length === 0) return;
+  const d = directionAt(w, window.innerWidth / 2, window.innerHeight / 2);
+  const here = onScreen(w);
+  const hit = pickAmong(here.maps, d[0], d[1], d[2]);
+  // Index 0 is the map already in the middle, and pickAmong offers it first,
+  // so this only fires once the view has genuinely left it.
+  if (hit !== null && hit.map > 0) focusOn(w, here.addrs[hit.map]);
+}
+
+/** The maps in the picture, the middle one first. */
+function onScreen(w: World): { addrs: number[][]; maps: SubMap[] } {
+  const addrs = [path as number[], ...neighbourMapsOf(w, path)];
+  return { addrs, maps: addrs.map((a) => w.subMap(a)) };
+}
+
+
+/**
  * The deltas that fall inside the view, grouped by the cell they sit in.
  *
  * On the globe a delta three layers down still has to show, so its address is
@@ -200,16 +334,18 @@ function setLive(live: boolean): void {
  * settlement visible from orbit as a coloured border rather than only when you
  * have zoomed all the way in on it.
  */
-function visibleOverlays(w: World): { owned: Map<number, number>; populated: Map<number, number> } {
+function visibleOverlays(
+  w: World, at: readonly number[] = path,
+): { owned: Map<number, number>; populated: Map<number, number> } {
   const owned = new Map<number, number>();
   const populated = new Map<number, number>();
-  const depth = path.length;
+  const depth = at.length;
 
   for (const d of w.allDeltas()) {
     const address = fromKey(d.key);
     if (address.length <= depth) continue;
     let matches = true;
-    for (let i = 0; i < depth; i++) if (address[i] !== path[i]) { matches = false; break; }
+    for (let i = 0; i < depth; i++) if (address[i] !== at[i]) { matches = false; break; }
     if (!matches) continue;
 
     const cell = address[depth];
@@ -255,8 +391,11 @@ function tintFor(w: World, at: number[]): CellTint | null {
       return null;
     }
 
+    // The map's own cell count, not 91. A pentagon's map holds 76, and reading
+    // past the end blended fifteen undefined biomes into every pentagon's
+    // colour.
     const colours: string[] = [];
-    for (let c = 0; c < SUBCELL_COUNT; c++) {
+    for (let c = 0; c < map.patch.count; c++) {
       colours.push(map.elevationM[c] < 0 ? OCEAN_COLOUR : BIOME_COLOURS[map.biome[c]]);
     }
     const blended = blendColours(colours);
@@ -342,8 +481,20 @@ function frame(): void {
     drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned,
       tintFor(world, []), childrenFor(world, []));
   } else {
-    drawSubMap(ctx, world.subMap(path), flatView(w, h, cam), selected, owned, populated,
-      workedOverlay(world), tintFor(world, path), childrenFor(world, path));
+    const view = flatView(w, h, cam);
+    const frame = frameFor(world);
+
+    // Neighbours first and the middle last, so where two maps overlap -- and
+    // they do, a hexagon of 91 hexagons covering about 91% of its parent -- the
+    // tile you are actually looking at is the one drawn on top.
+    for (const nb of neighbourMapsOf(world, path)) {
+      const side = visibleOverlays(world, nb);
+      drawSubMap(ctx, world.subMap(nb), view, -1, side.owned, side.populated,
+        null, tintFor(world, nb), childrenFor(world, nb), frame);
+    }
+
+    drawSubMap(ctx, world.subMap(path), view, selected, owned, populated,
+      workedOverlay(world), tintFor(world, path), childrenFor(world, path), frame);
   }
 
   const remaining = Math.max(0, Math.round((nextTurnAt - performance.now()) / 1000));
@@ -377,6 +528,8 @@ window.addEventListener('mousemove', (e) => {
   } else {
     cam.panX += dx;
     cam.panY += dy;
+    // Scroll far enough and the tile you are looking at is a different one.
+    if (world !== null) followTheView(world);
   }
 });
 
@@ -397,7 +550,24 @@ canvas.addEventListener('click', (e) => {
     if (dir === null) { selected = -1; refresh(); return; }
     selected = world.regionAt(dir[0], dir[1], dir[2]);
   } else {
-    selected = pickSubMap(flatView(w, h, cam), e.clientX, e.clientY);
+    // Asked of the WORLD rather than of the middle map's lattice. Picking used
+    // to invert one map's flat hex grid, which can only ever name a cell of
+    // THAT map -- so with neighbours on screen, clicking one would name
+    // whichever cell of the middle map lay in the same direction, or nothing
+    // at all. Descending from the globe names the tile that is actually there,
+    // in whichever map holds it, and the view then moves to that map.
+    const d = directionAt(world, e.clientX, e.clientY);
+    const here = onScreen(world);
+    const hit = pickAmong(here.maps, d[0], d[1], d[2]);
+    if (hit === null) {
+      selected = -1;
+    } else {
+      // Clicking a neighbour hands it the middle, which is the same move
+      // scrolling into it makes -- one way to change what you are looking at,
+      // reached two ways.
+      focusOn(world, here.addrs[hit.map]);
+      selected = hit.cell;
+    }
   }
   refresh();
 });
@@ -423,7 +593,7 @@ function descend(): void {
     return;
   }
   path = [...path, selected];
-  cam.panX = 0; cam.panY = 0; cam.zoom = 1;
+  cam.panX = 0; cam.panY = 0; cam.zoom = 1; cam.rot = 0;
   selected = -1;
 
   // Opening a region is the moment to check that we and the server built the
@@ -440,7 +610,7 @@ function ascend(): void {
   if (path.length === 0) return;
   selected = path[path.length - 1];
   path = path.slice(0, -1);
-  cam.panX = 0; cam.panY = 0; cam.zoom = 1;
+  cam.panX = 0; cam.panY = 0; cam.zoom = 1; cam.rot = 0;
   refresh();
 }
 
@@ -491,7 +661,7 @@ function drawCrumbs(): void {
     b.textContent = label;
     b.onclick = () => {
       path = path.slice(0, depth);
-      cam.panX = 0; cam.panY = 0; cam.zoom = 1;
+      cam.panX = 0; cam.panY = 0; cam.zoom = 1; cam.rot = 0;
       selected = -1;
       refresh();
     };
