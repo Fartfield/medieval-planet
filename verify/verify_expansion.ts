@@ -22,7 +22,7 @@ import {
 } from '../sim/model/polity.ts';
 import { spacingFor, FOUNDING_PARTY, idleShare } from '../sim/expansion.ts';
 import { INFANTRY_MARCH_MS } from '../sim/derive.ts';
-import { bestFarmSite } from './sites.ts';
+import { bestFarmSite, siblingIn } from './sites.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 const SEED = 20260826;
@@ -170,6 +170,70 @@ suite('a kingdom spreading', () => {
     }
   }
   check('no two settlements are on top of each other', tooClose, 0, 0);
+});
+
+suite('who spreads first is earned, not alphabetical', () => {
+  // Settlements are considered in order and the occupied list grows as they go,
+  // so when two want the same valley in the same week the order decides it. It
+  // used to be `a.key.localeCompare(b.key)` -- an address, which is not a fact
+  // about a town. A player whose settlement sorted late lost every tie it was
+  // ever in and could do nothing about it. It is land pressure now.
+  //
+  // WITHIN THE TURN is where this has to be measured. A first attempt compared
+  // the TURN each town founded on and passed without testing anything: both
+  // found on the same turn, so every `<=` was trivially true and the old
+  // alphabetical rule would have passed it too. What discriminates is the
+  // position in that turn's founding list, which is the order itself.
+  function order(crowded: 'seat' | 'sibling'): { seat: number; sibling: number } {
+    const w = new World({ seed: SEED });
+    const seat = cradle(w);
+    const crown = w.foundPolity(toKey(seat), 0);
+    // The best OTHER ground on the same map. Scoring by yield alone returns
+    // the seat itself -- it is the best ground, that is why it is the seat --
+    // and the two "towns" were then one tile, which is how a first version of
+    // this test found both of them sitting at index 0.
+    const seatCell = seat[seat.length - 1];
+    const sibling = siblingIn(w, seat, (y, cell) => (cell === seatCell ? -Infinity : y));
+    if (sibling === null) return { seat: -1, sibling: -1 };
+
+    const heavy = 260;
+    const light = 130;
+    const seatPop = crowded === 'seat' ? heavy : light;
+    const sibPop = crowded === 'sibling' ? heavy : light;
+    w.setDelta(seat, {
+      owner: crown.id, populationHealth: 1, farmShare: 1,
+      population: seatPop, grainStock: seatPop * 330,
+    });
+    w.setDelta(sibling, {
+      owner: crown.id, populationHealth: 1, farmShare: 1,
+      population: sibPop, grainStock: sibPop * 330,
+    });
+
+    // The first turn in which BOTH send a party, and where each sat in it.
+    for (let t = 0; t < 900; t++) {
+      const res = resolveTurn(w, [], 1);
+      const si = res.foundings.findIndex((f) => f.parent === toKey(seat));
+      const bi = res.foundings.findIndex((f) => f.parent === toKey(sibling));
+      if (si >= 0 && bi >= 0) return { seat: si, sibling: bi };
+    }
+    return { seat: -1, sibling: -1 };
+  }
+
+  const seatCrowded = order('seat');
+  const sibCrowded = order('sibling');
+
+  measure('seat’s place in the turn when the seat is crowded', seatCrowded.seat);
+  measure('sibling’s place in the same turn', seatCrowded.sibling);
+  measure('seat’s place when the SIBLING is crowded', sibCrowded.seat);
+  measure('sibling’s place in that turn', sibCrowded.sibling);
+
+  assert('there are two towns, not one twice',
+    seatCrowded.seat >= 0 && sibCrowded.seat >= 0);
+
+  // THE CLAIM: whichever town is crowded is considered first, whichever way the
+  // keys sort. Under the old rule the same key led both times.
+  assert('the crowded town is considered first',
+    seatCrowded.seat < seatCrowded.sibling && sibCrowded.sibling < sibCrowded.seat);
 });
 
 suite('spreading is deterministic', () => {

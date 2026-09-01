@@ -209,13 +209,41 @@ export function findSite(
 }
 
 /**
+ * How hard a settlement is pressing on its land: mouths over what it will feed.
+ *
+ * Above one means the ground cannot support the people on it, which is exactly
+ * the condition that makes a town throw off a daughter. A town at 1.4 has been
+ * over its land's capacity longer than one at 1.05 and its party would have set
+ * out sooner.
+ */
+function landPressure(r: Report): number {
+  const capacity = Math.max(1, r.harvest.potentialPopulation);
+  return r.population / capacity;
+}
+
+/**
  * Work out who spreads where, this turn.
  *
- * Settlements are considered in key order and the occupied list grows as they
- * go, so two towns cannot both send a party to the same valley in the same
- * week. That ordering is the reason this is deterministic, and it is also the
- * reason it is slightly unfair -- whoever sorts first gets the better site.
- * A real race would need both parties to set out and one to arrive second.
+ * Settlements are considered in order and the occupied list grows as they go,
+ * so two towns cannot both send a party to the same valley in the same week.
+ * Something has to decide which of them gets it.
+ *
+ * IT USED TO BE THE ALPHABET. The order was `a.key.localeCompare(b.key)`, which
+ * is deterministic and means nothing: an address is not a fact about a town, so
+ * a player whose settlement happened to sort late lost every tie it was ever in
+ * and there was nothing it could do about that.
+ *
+ * It is land pressure now -- population over what the ground will feed. The
+ * most crowded town sends its party first, which is the closest this can get to
+ * the race that ought to happen without simulating two parties walking: the
+ * town with the most mouths it cannot feed is the one whose people leave
+ * soonest. It is also the same quantity that decides whether a town wants to
+ * spread at all, so the trigger and the tie-break now agree with each other
+ * instead of one being physics and the other being spelling.
+ *
+ * Key order survives as the final fallback, because two towns with identical
+ * pressure to the last bit still have to be separated somehow and determinism
+ * is not negotiable. In practice it never gets that far.
  */
 export function planExpansion(
   world: World,
@@ -234,7 +262,12 @@ export function planExpansion(
     occupied.push({ x: dir[0], y: dir[1], z: dir[2] });
   }
 
-  const ordered = [...reports.values()].sort((a, b) => a.key.localeCompare(b.key));
+  const ordered = [...reports.values()].sort((a, b) => {
+    const pa = landPressure(a);
+    const pb = landPressure(b);
+    if (pa !== pb) return pb - pa;
+    return a.key.localeCompare(b.key);
+  });
 
   for (const report of ordered) {
     // Land pressure is the trigger, not idle hands.

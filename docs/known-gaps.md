@@ -153,10 +153,6 @@ from where a player plants. Kingdoms that already exist need settlements
 generated at their equilibrium for a realm nobody has visited -- the same
 generate-don't-store trick one layer up. See [kingdoms.md](kingdoms.md).
 
-**Expansion is unfair by construction.** Settlements are considered in key
-order, so two wanting the same valley in the same week are resolved by whoever
-sorts first. A real race would have both parties set out and one arrive second.
-
 **Nothing ever has a bad year.** The insurance a village plants against one is
 therefore never spent, so granaries fill to the spoilage ceiling and sit there.
 Same root as the missing seasons.
