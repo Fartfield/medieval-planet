@@ -209,7 +209,8 @@ upgrade, new hardware and a rewritten renderer. See `docs/determinism.md`.
 ```
 sim/          the world. no DOM, no clock, no randomness that is not seeded.
   anchors.ts    measured reality. nothing here is a design choice.
-  derive.ts     every game number, solved from anchors.
+  derive.ts     every number the running game reads, solved from anchors.
+  derive_battle.ts  the combat model, derived and wired to nothing yet.
   fixed.ts      exact integer arithmetic for the economy.
   angle.ts      integer angles, from a baked table.
   rng.ts        seeded streams. there is deliberately no global one.

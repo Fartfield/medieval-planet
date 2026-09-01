@@ -23,6 +23,8 @@ export interface Measurement {
   expected: number | null;
   tolerance: number | null;
   ok: boolean;
+  /** Wall-clock, so it is reported and never diffed. See `timing`. */
+  wallClock?: boolean;
 }
 
 const measurements: Measurement[] = [];
@@ -59,6 +61,30 @@ export function check(name: string, actual: number, expected: number, tolerance:
 /** Record a number without judging it. The baseline diff does the judging. */
 export function measure(name: string, value: number): void {
   measurements.push({ suite: currentSuite, name, value, expected: null, tolerance: null, ok: true });
+}
+
+/**
+ * Record how LONG something took, reported but kept out of the baseline.
+ *
+ * The baseline answers one question -- did the world change -- and it answers
+ * it by demanding that every number reproduce exactly. A wall-clock number
+ * cannot do that. `turns per second` sat in the baseline for a long time and
+ * moved 11% on a busy afternoon while every behavioural measurement beside it
+ * (towns, people, daughters founded, first founding turn) was identical to the
+ * digit. That diff is a false positive, and false positives in this file are
+ * expensive in a specific way: they teach the reader that `--anchor` is what
+ * you type to make the output go away.
+ *
+ * So timings are printed for a human to look at and are not compared. If a
+ * performance floor ever needs enforcing, that is an `assert` with a floor and
+ * a reason -- a different check, asking a different question, which is why it
+ * should not be smuggled in as a baseline entry.
+ */
+export function timing(name: string, value: number): void {
+  measurements.push({
+    suite: currentSuite, name, value, expected: null, tolerance: null, ok: true,
+    wallClock: true,
+  });
 }
 
 /** Assert a condition. Recorded as 1 or 0 so it still lands in the baseline. */

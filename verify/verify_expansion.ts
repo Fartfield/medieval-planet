@@ -23,7 +23,7 @@ import {
 import { spacingFor, FOUNDING_PARTY, idleShare } from '../sim/expansion.ts';
 import { INFANTRY_MARCH_MS } from '../sim/derive.ts';
 import { bestFarmSite, siblingIn } from './sites.ts';
-import { check, measure, assert, suite } from './harness.ts';
+import { check, measure, assert, suite, timing } from './harness.ts';
 
 const SEED = 20260826;
 
@@ -126,7 +126,7 @@ suite('a kingdom spreading', () => {
   measure('people after forty years', people);
   measure('daughters founded', founded);
   measure('first founding on turn', firstFoundingTurn);
-  measure('turns per second', TURNS / (elapsed / 1000));
+  timing('turns per second', TURNS / (elapsed / 1000));
 
   // THE ASSERTION THIS FILE EXISTS FOR: one settlement becomes many, without
   // anybody deciding where any of them go.

@@ -50,8 +50,22 @@ if (failed.length > 0) {
 
 // --- baseline diff ----------------------------------------------------------
 
+// Wall-clock measurements are excluded: they are reported, never diffed. A
+// timing that moves says the machine was busy, not that the world changed, and
+// the baseline exists to answer the second question only.
 const current: Record<string, number> = {};
-for (const m of measurements) current[`${m.suite}/${m.name}`] = round(m.value);
+for (const m of measurements) {
+  if (m.wallClock) continue;
+  current[`${m.suite}/${m.name}`] = round(m.value);
+}
+
+const timings = measurements.filter((m) => m.wallClock);
+if (timings.length > 0) {
+  console.log('');
+  console.log('TIMINGS  (reported, not diffed)');
+  console.log('');
+  for (const m of timings) console.log(`  ${m.suite} / ${m.name} = ${fmt(m.value)}`);
+}
 
 if (anchor) {
   writeFileSync(baselinePath, `${JSON.stringify(current, null, 2)}\n`);

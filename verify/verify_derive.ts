@@ -14,7 +14,7 @@
 // corrected where the checks live elsewhere, and what genuinely did not exist
 // is here.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { WARBOW_IMPLIED_EFFICIENCY } from '../sim/derive.ts';
@@ -45,19 +45,53 @@ suite('the derivations check themselves', () => {
   // behind it -- and the number below is the header's, so the two cannot drift
   // apart again without one of them failing.
   //
+  // COUNTED OVER BOTH FILES, not per file. The derivation layer was split in
+  // two -- derive.ts for what the game reads, derive_battle.ts for the combat
+  // model that is derived and not yet wired -- and a per-file count would have
+  // turned that split into a way of halving this number without arguing for it.
+  // Five free parameters is a property of the layer, wherever the layer lives.
+  //
   // Growing it is not forbidden. It is a decision, and this makes it one
   // somebody has to take deliberately rather than by adding a constant.
-  const source = readFileSync(join(root, 'sim', 'derive.ts'), 'utf8');
-  const declared = source.match(/FREE PARAMETER \d+:/g) ?? [];
-  measure('free parameters in derive.ts', declared.length);
-  check('as many free parameters as the file says it has', declared.length, 5, 0);
+  const sources = ['derive.ts', 'derive_battle.ts']
+    .map((f) => readFileSync(join(root, 'sim', f), 'utf8'));
+  const declared = sources.flatMap((src) => src.match(/FREE PARAMETER \d+:/g) ?? []);
+  measure('free parameters in the derivation layer', declared.length);
+  check('as many free parameters as the files say they have', declared.length, 5, 0);
 
   // Numbered without gaps, so "FREE PARAMETER 7" cannot appear beside four
-  // others and pass a count.
+  // others and pass a count. Across both files for the same reason as above:
+  // two files each numbering from 1 would collide and neither would notice.
   const numbers = declared
     .map((m) => Number(m.replace(/\D+/g, '')))
     .sort((a, b) => a - b);
   let contiguous = true;
   for (let i = 0; i < numbers.length; i++) if (numbers[i] !== i + 1) contiguous = false;
   assert('and numbered one to five with no gaps', contiguous);
+
+  // NOTHING IMPORTS THE BATTLE MODEL, which is the whole claim the split makes.
+  //
+  // derive_battle.ts opens by saying nothing reads it. That sentence is the
+  // same kind of unbacked promise the free-parameter count used to be, and it
+  // decays the same way: the first module that imports one cavalry gait makes
+  // the header false and no test notices. So the header is checked.
+  //
+  // If this fails, the question is which way to resolve it. A module that
+  // genuinely needs a combat number means the combat model is landing, and the
+  // honest fix is to move what it needs back into derive.ts and shrink this
+  // check -- NOT to add the importer to an exception list here.
+  // Matched as a MODULE SPECIFIER, not as a string anywhere in the file. The
+  // first version of this check looked for the text 'derive_battle' and failed
+  // immediately on derive.ts -- whose header names the file it split away from,
+  // in prose, which is exactly the pointer a reader needs. A check that forbids
+  // mentioning a module is not the check that was wanted.
+  const importOfBattle = /(?:from|import)\s*\(?\s*['"][^'"]*derive_battle[^'"]*['"]/;
+  const importers = readdirSync(join(root, 'sim'), { recursive: true })
+    .filter((f): f is string => typeof f === 'string' && f.endsWith('.ts'))
+    .filter((f) => f !== 'derive_battle.ts')
+    .filter((f) => importOfBattle.test(readFileSync(join(root, 'sim', f), 'utf8')));
+  measure('modules importing the battle model', importers.length);
+  assert('the battle model is still unwired, as its header says',
+    importers.length === 0);
+  for (const f of importers) assert(`unexpected importer: ${f}`, false);
 });
