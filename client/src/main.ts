@@ -455,14 +455,68 @@ function workedOverlay(w: World): Map<number, number> | null {
 // --- drawing ----------------------------------------------------------------
 
 function resize(): void {
+  invalidate();
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = Math.floor(window.innerWidth * dpr);
   canvas.height = Math.floor(window.innerHeight * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
+/**
+ * Whether the picture needs drawing again.
+ *
+ * The loop used to redraw every frame whether or not anything had changed,
+ * which on the world view is 23,500 filled polygons and 30 ms of geometry
+ * sixty times a second, for a picture identical to the one already on screen.
+ * A globe sitting still cost as much as one being dragged.
+ *
+ * Everything that can change what is on screen sets this. Nothing else draws.
+ */
+let dirty = true;
+
+function invalidate(): void {
+  dirty = true;
+}
+
+/**
+ * FREE PARAMETER: how long after the last input the detailed picture returns.
+ *
+ * While the view is moving the mosaic is skipped and cells are drawn in their
+ * blended colour, because a tile a few pixels across is not distinguishable
+ * from that blend while it is sliding past, and drawing 91 of them per cell is
+ * most of the frame. When the hand stops, the detail comes back.
+ *
+ * A tenth of a second is ours. It wants to be longer than the gap between
+ * mouse events -- so a steady drag stays smooth rather than flickering between
+ * the two pictures -- and short enough that letting go feels immediate.
+ * Nothing measures where that line is.
+ */
+const SETTLE_MS = 120;
+
+let movingUntil = 0;
+let wasMoving = false;
+
+/** Called by anything that moves the view: pan, zoom, spin. */
+function moved(): void {
+  movingUntil = performance.now() + SETTLE_MS;
+  invalidate();
+}
+
 function frame(): void {
   requestAnimationFrame(frame);
+
+  // The countdown is DOM and costs nothing, so it keeps ticking whether or not
+  // the canvas is redrawn.
+  const remaining = Math.max(0, Math.round((nextTurnAt - performance.now()) / 1000));
+  (document.getElementById('next') as HTMLElement).textContent = `${remaining}s`;
+
+  // Settling is a change: the detailed picture has to replace the quick one.
+  const moving = performance.now() < movingUntil;
+  if (moving !== wasMoving) { wasMoving = moving; invalidate(); }
+
+  if (!dirty) return;
+  dirty = false;
+
   const w = window.innerWidth;
   const h = window.innerHeight;
   ctx.fillStyle = '#14161a';
@@ -472,14 +526,18 @@ function frame(): void {
     ctx.fillStyle = '#6b665d';
     ctx.font = '13px ui-monospace, monospace';
     ctx.fillText('building the world...', 20, h - 20);
+    invalidate();
     return;
   }
 
   const { owned, populated } = visibleOverlays(world);
 
+  // Tiles only when the view is still. See SETTLE_MS.
+  const detail = <T>(v: T): T | null => (moving ? null : v);
+
   if (path.length === 0) {
     drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned,
-      tintFor(world, []), childrenFor(world, []));
+      tintFor(world, []), detail(childrenFor(world, [])));
   } else {
     const view = flatView(w, h, cam);
     const frame = frameFor(world);
@@ -490,15 +548,13 @@ function frame(): void {
     for (const nb of neighbourMapsOf(world, path)) {
       const side = visibleOverlays(world, nb);
       drawSubMap(ctx, world.subMap(nb), view, -1, side.owned, side.populated,
-        null, tintFor(world, nb), childrenFor(world, nb), frame);
+        null, tintFor(world, nb), detail(childrenFor(world, nb)), frame);
     }
 
     drawSubMap(ctx, world.subMap(path), view, selected, owned, populated,
-      workedOverlay(world), tintFor(world, path), childrenFor(world, path), frame);
+      workedOverlay(world), tintFor(world, path), detail(childrenFor(world, path)), frame);
   }
 
-  const remaining = Math.max(0, Math.round((nextTurnAt - performance.now()) / 1000));
-  (document.getElementById('next') as HTMLElement).textContent = `${remaining}s`;
 }
 
 // --- interaction ------------------------------------------------------------
@@ -531,6 +587,7 @@ window.addEventListener('mousemove', (e) => {
     // Scroll far enough and the tile you are looking at is a different one.
     if (world !== null) followTheView(world);
   }
+  moved();
 });
 
 canvas.addEventListener('wheel', (e) => {
@@ -538,6 +595,7 @@ canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
   cam.zoom = Math.max(0.35, Math.min(24, cam.zoom * factor));
+  moved();
 }, { passive: false });
 
 canvas.addEventListener('click', (e) => {
@@ -619,6 +677,7 @@ function ascend(): void {
 const LAYER_LABEL = ['world', 'region', 'realm', 'ground'];
 
 function refresh(): void {
+  invalidate();
   drawCrumbs();
   drawInspector();
   drawLegend();

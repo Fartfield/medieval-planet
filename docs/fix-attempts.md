@@ -1917,3 +1917,60 @@ land and the settlement threw off a daughter from LAND PRESSURE, correctly. The
 assertion was right and its premise had expired. A flat 200 is the same
 grid-dependence this file has recorded three times before, so the test now asks
 the ground how many people half fill it and seats that.
+
+## The mosaic drew a tile in one place and opening it put the tile elsewhere
+
+Every cell is drawn out of its own children. Those children were laid out as a
+flat hex grid stamped inside the parent's hexagon and turned thirty degrees,
+and the thirty was reasoned rather than measured: ninety-one pointy-top hexes
+arrange into a flat-top hexagon, so a thirty-degree turn puts the grain of the
+small hexes parallel to the big one's edges. That is correct for a hexagon of
+hexagons drawn on a page.
+
+It is not correct here, for two reasons that compound. A child map's basis
+faces its OWN first neighbour, which is thirty degrees from its parent's only
+by accident. And the ground is a sphere, so even the right turn would not make
+a flat stamp land on the projected positions.
+
+**Measured, over 455 children of five parent cells: the flat layout was out by
+15.97 child widths at worst** -- more than the radius of the map it was drawn
+inside. So the layer above showed a tile in one place and opening it put that
+tile somewhere else entirely, at every depth, compounding as you descended.
+
+Children are now placed by the same projection as everything else, through the
+frame's inverse. The same measurement: **0.000031 child widths**.
+
+~~Placing them per frame~~ was the obvious way and is too slow: a map of 91
+cells asks for 91 child maps of 91 cells, so 8,281 placements for one map and
+seven maps on screen -- 116,000 spherical projections a frame. Placement is
+linear in the drawing size and depends only on (map, frame), so it is computed
+once at unit size and multiplied at the point of use. The rebuild then happens
+when the player crosses a tile boundary, not sixty times a second.
+
+## The world view redrew an identical picture sixty times a second
+
+The globe is 23,506 filled polygons and about 30 ms of geometry, and the render
+loop drew it every frame whether or not anything had changed. A globe sitting
+still cost exactly as much as one being dragged.
+
+Two changes, measured on a stub canvas at 1400x900:
+
+    world view, still (tiles drawn)     29.8 ms   23,506 fills
+    world view, moving (tint only)       3.6 ms    2,009 fills
+    depth 2, +10 neighbours, still       9.6 ms   40,204 fills
+    depth 2, +10 neighbours, moving      0.2 ms      437 fills
+
+First, nothing draws unless something changed. A still picture now costs
+nothing at all rather than 30 ms a frame.
+
+Second, while the view is MOVING the mosaic is skipped and cells are drawn in
+their blended colour. A tile a few pixels across is not distinguishable from
+that blend while it is sliding past, and drawing 91 of them per cell is most of
+the frame. The detail returns SETTLE_MS after the last input -- a free
+parameter, and labelled as one: it wants to be longer than the gap between
+mouse events so a steady drag does not flicker between the two pictures, and
+short enough that letting go feels immediate. Nothing measures where that is.
+
+Note what was NOT done: raising MOSAIC_MIN_PX. It would have cut the same work
+by drawing fewer tiles, and it would have taken the constituent tiles off the
+world view altogether at its default zoom -- which is a feature, not a cost.

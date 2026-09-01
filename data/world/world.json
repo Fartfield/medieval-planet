@@ -1,7 +1,7 @@
 {
   "seed": 1237075107,
   "radiusM": 6371000,
-  "turn": 2503,
+  "turn": 2514,
   "players": [
     {
       "id": 0,
@@ -14,6 +14,12 @@
       "name": "launch-check",
       "seat": null,
       "house": 1
+    },
+    {
+      "id": 2,
+      "name": "player-1120",
+      "seat": null,
+      "house": 2
     }
   ],
   "polities": [],

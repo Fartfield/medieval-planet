@@ -17,6 +17,7 @@
 
 import { World } from '../sim/world.ts';
 import { CELL_COUNT, neighbours as globeNeighbours } from '../sim/geo/sphere.ts';
+import { RADIUS } from '../sim/geo/hexgrid.ts';
 import { toDirection, toLocal } from '../sim/gen/submap.ts';
 import { equals } from '../sim/geo/address.ts';
 import { placeCells, pickAmong } from '../client/src/render.ts';
@@ -184,6 +185,72 @@ suite('a tile is drawn with its neighbours round it', () => {
     measure('picks landing more than a cell away', far);
     assert('a neighbour map owns ground of its own', reached > 100);
     check('and no pick lands far from where it was made', far, 0, 0);
+  }
+
+  // THE MOSAIC SHOWS THE GROUND WHERE THE GROUND IS.
+  //
+  // A cell is drawn out of its own children, and those children used to be laid
+  // out as a flat hex grid stamped inside the parent's hexagon and turned
+  // thirty degrees. The thirty was reasoned from the shape -- ninety-one
+  // pointy-top hexes arrange flat-top, so a turn puts the grain in register --
+  // and it is right for a hexagon of hexagons drawn on a page. It is not right
+  // here: a child map's basis faces its OWN first neighbour, which is thirty
+  // degrees from its parent's only by accident, and the ground is a sphere.
+  //
+  // So the layer above drew a tile in one place and opening it put the tile
+  // somewhere else. This measures both: what the old layout was out by, and
+  // that the new one is not out at all.
+  {
+    const CHILD_SCALE = 1 / (Math.sqrt(3) * RADIUS);
+    const frame = w.subMap([region]);
+    const perUnit = SIZE / frame.cellRadiusRad;
+    const parent = placeCells(frame, frame, SIZE);
+    const dir = new Float64Array(3);
+    let worstNow = 0;
+    let worstBefore = 0;
+    let checked = 0;
+
+    // A handful of parent cells spread across the map rather than all 91: the
+    // question is whether the layout is right, not whether it is right 8,281
+    // times.
+    for (const c of [45, 0, 17, 60, 88]) {
+      const kids = w.subMap([region, c]);
+      const kplace = placeCells(kids, frame, SIZE);
+      const g = parent[c];
+
+      // The turn the old code guessed at, rebuilt here so the number it was
+      // wrong by is on the record rather than in a commit message.
+      const cos30 = Math.cos(Math.PI / 6);
+      const sin30 = 0.5;
+      const kidCos = g.cos * cos30 - g.sin * sin30;
+      const kidSin = g.sin * cos30 + g.cos * sin30;
+      const kidR = g.r * CHILD_SCALE;
+
+      for (let k = 0; k < kids.patch.count; k++) {
+        // Where the child truly is, as a pixel, then back to a direction.
+        toDirection(frame.basis, kplace[k].x / perUnit, kplace[k].y / perUnit, dir, 0);
+        const dot = dir[0] * kids.dirs[k * 3]
+          + dir[1] * kids.dirs[k * 3 + 1]
+          + dir[2] * kids.dirs[k * 3 + 2];
+        worstNow = Math.max(worstNow, Math.acos(Math.min(1, dot)) / kids.cellRadiusRad);
+
+        // And where the flat layout would have put it, in child widths.
+        const q = kids.patch.centre(k, kidR);
+        const ox = g.x + q.x * kidCos - q.y * kidSin;
+        const oy = g.y + q.x * kidSin + q.y * kidCos;
+        worstBefore = Math.max(worstBefore,
+          Math.hypot(ox - kplace[k].x, oy - kplace[k].y) / (kidR || 1));
+        checked++;
+      }
+    }
+
+    measure('mosaic children checked', checked);
+    measure('the flat layout was out by, child widths', worstBefore);
+    measure('the projected layout is out by, child widths', worstNow);
+    check('a tile in the mosaic is drawn where the sphere puts it',
+      worstNow, 0, 0.02);
+    assert('and the layout it replaced was not',
+      worstBefore > 0.5);
   }
 
   // The neighbours actually surround the middle rather than piling on it,
