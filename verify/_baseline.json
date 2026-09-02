@@ -429,7 +429,7 @@
   "message parsing/an unknown action is rejected": 1,
   "message parsing/protocol version": 1,
   "message parsing/encode produces json": 1,
-  "erasable syntax/typescript files": 62,
+  "erasable syntax/typescript files": 63,
   "erasable syntax/no construct that type stripping cannot erase": 0,
   "simulation purity/simulation files": 35,
   "simulation purity/the simulation uses no unreproducible arithmetic": 0,
