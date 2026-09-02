@@ -243,6 +243,7 @@ export function cellRadiusRad(depth: number): number {
 export function basisAt(
   ox: number, oy: number, oz: number,
   tx?: number, ty?: number, tz?: number,
+  turnRad = 0,
 ): Basis {
   let ex: number, ey: number, ez: number;
 
@@ -263,9 +264,24 @@ export function basisAt(
   if (len < 1e-9) { ex = 1; ey = 0; ez = 0; len = 1; }
   ex /= len; ey /= len; ez /= len;
 
-  const nx = oy * ez - oz * ey;
-  const ny = oz * ex - ox * ez;
-  const nz = ox * ey - oy * ex;
+  let nx = oy * ez - oz * ey;
+  let ny = oz * ex - ox * ez;
+  let nz = ox * ey - oy * ex;
+
+  // TURNED, if asked. A child map is turned relative to the direction of its
+  // parent's neighbour so that its lattice and the neighbouring child map's
+  // are the same lattice rather than two at an angle. See ROSETTE_TURN_RAD.
+  if (turnRad !== 0) {
+    const c = dcos(turnRad);
+    const s2 = dsin(turnRad);
+    const e2x = ex * c + nx * s2;
+    const e2y = ey * c + ny * s2;
+    const e2z = ez * c + nz * s2;
+    nx = nx * c - ex * s2;
+    ny = ny * c - ey * s2;
+    nz = nz * c - ez * s2;
+    ex = e2x; ey = e2y; ez = e2z;
+  }
 
   return {
     ox, oy, oz, ex, ey, ez, nx, ny, nz,

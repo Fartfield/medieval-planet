@@ -235,13 +235,21 @@ suite('a hex is drawn out of its own tiles', () => {
   // a serrated edge and the ocean would show through every notch.
   assert('parents are still filled underneath', mosaicRaw.fills >= flatRaw.fills);
 
-  // Every clip is restored. An unbalanced one leaks onto the rest of the
-  // frame, which on a canvas looks like everything after it disappearing.
+  // NOTHING IS CLIPPED ANY MORE, and it is worth saying why rather than
+  // quietly dropping the check. The mosaic used to be clipped to the parent
+  // cell so that a cell kept a clean silhouette however ragged the tiling
+  // inside it was. That is right only while a cell's tiles stay inside it, and
+  // they cannot: 91 hexagons span 90.8% of the hexagon holding them, so a
+  // cell's tiles form a rosette that pushes past its edge in six places and
+  // falls short in six others -- and the NEIGHBOUR'S rosette fills those gaps
+  // exactly. The clip cut off precisely the protrusions the neighbour needed.
+  //
+  // So the assertion is inverted: a clip appearing here again means somebody
+  // has re-imposed the cell's outline on a tiling that is not bounded by it.
   measure('clips taken', mosaicRaw.clips);
-  assert('the mosaic clips to each parent', mosaicRaw.clips > 0);
+  check('the mosaic is not clipped to its parent', mosaicRaw.clips, 0, 0);
   check('every save is restored', mosaicRaw.depth, 0, 0);
   assert('and never restored too often', !mosaicRaw.unbalanced);
-  check('clip nesting never goes deeper than one', mosaicRaw.maxDepth, 1, 0);
 
   // Below the threshold nothing is asked for at all, however small it gets.
   const asked2: number[] = [];

@@ -251,24 +251,24 @@ const CHILD_SCALE = 1 / (Math.sqrt(3) * RADIUS);
 const SQRT3 = Math.sqrt(3);
 
 /**
- * How far a region's tiles are drawn beyond their own size, so that they cover
- * the region rather than leaving a fringe of flat colour round its edge.
+ * A REGION'S TILES ARE DRAWN WHERE THEY ARE. There used to be a number here.
  *
- * A CONSTANT now, and that is the news. It used to be measured per cell,
- * because one global number sized for the widest cell drew a pentagon's tiles
- * 27% too far out -- and later, because the equal-area projection makes cells
- * near the ice caps two and a half times taller than they are wide, so no
- * single number could serve both a squat cell and a stretched one.
+ * `COVER` scaled every tile 10.15% further out than its true position, so that
+ * a region's 91 tiles reached its outline instead of leaving a fringe of flat
+ * colour round the edge. The fringe is real -- 91 hexagons span
+ * sqrt(3)*RADIUS/sqrt(91) = 90.8% of the hexagon holding them, because a
+ * hexagon cannot be cut into hexagons -- and inflating them to hide it was the
+ * wrong answer to it, for a reason that only shows when neighbours are drawn:
+ * two adjacent regions' tiles, each inflated by a tenth, overlap each other by
+ * a fifth and cannot line up at any angle.
  *
- * Both of those were the same bug seen twice: the tiles were being laid out in
- * a tangent plane while their parent lived in the projection. Now that a map's
- * basis carries the projection's own scale factors, a child arrangement is the
- * same shape as its parent at every latitude, and the only gap left is the one
- * every hexagon of hexagons has: 91 tiles at a ninety-first the area span
- * sqrt(3)·RADIUS/sqrt(91) = 90.8% of the parent's radius. The reciprocal of
- * that is this number, and it is exactly what the flat maps have always used.
+ * The right answer is that a region's tiles are not supposed to fill its
+ * outline. They form a rosette that pushes past the edge in six places and
+ * falls short in six others, and the neighbouring rosette fits those gaps
+ * exactly. Measured: the nearest tile of the adjoining region sat 0.453 tile
+ * widths away, twelve of them practically on top of each other; it is now
+ * 0.991, which is what a lattice neighbour is. See ROSETTE_TURN_RAD.
  */
-const COVER = Math.sqrt(SUBCELL_COUNT) / (Math.sqrt(3) * RADIUS);
 
 
 /**
@@ -361,6 +361,23 @@ export function drawGlobe(
   const wantMosaic = children !== null && childPx * 2 >= MOSAIC_MIN_PX;
   const childEdges = tileEdgeWidth(childPx * 2);
 
+  // THREE PASSES, NOT ONE, and the reason is the tiling.
+  //
+  // A cell used to be filled and then drawn out of its own tiles before the
+  // next cell was touched. That was safe only while a region's tiles stayed
+  // inside its own outline. They do not: 91 hexagons cannot fill a hexagon, so
+  // a region's tiles form a rosette that pushes past its edge in six places and
+  // falls short in six others -- and the neighbouring region's rosette fits
+  // into exactly those gaps. That is what makes the tiling exact.
+  //
+  // Drawn cell by cell, the next region's FILL painted over the last region's
+  // protrusions, and its own tiles never covered the ground it had just erased,
+  // because that ground belongs to the neighbour. Every seam came out as a band
+  // of flat parent colour between two mosaics. So: all the fills, then all the
+  // tiles, then all the edges. Nothing can erase what an earlier pass drew.
+  const visible: number[] = [];
+  const lambertOf = new Float64Array(CELL_COUNT);
+
   for (let c = 0; c < CELL_COUNT; c++) {
     const [, cyy, cz] = rotate(cam, centres[c * 3], centres[c * 3 + 1], centres[c * 3 + 2]);
     if (cz < 0) continue;
@@ -374,70 +391,48 @@ export function drawGlobe(
     // on the land side of every border and simply absent on the other, and the
     // eye reads that as a continent cut out with a hexagonal cookie cutter.
     if (planet.elevationM[c] < 0 && !wantMosaic) continue;
-
+    visible.push(c);
     // Light from the upper left, plus a lift with altitude so ranges read.
-    const lambert = 0.55 + 0.45 * Math.max(0, cz * 0.75 + cyy * 0.35);
-    const altitude = 1 + Math.min(0.5, Math.max(0, planet.elevationM[c]) / 6000);
+    lambertOf[c] = 0.55 + 0.45 * Math.max(0, cz * 0.75 + cyy * 0.35);
+  }
 
+  // PASS ONE: the ground, flat. Under a mosaic this is the blend of the very
+  // tiles about to be drawn on top, so any sliver the rosette leaves uncovered
+  // reads as part of the ground rather than as a rim of some other colour.
+  for (const c of visible) {
+    const lambert = lambertOf[c];
+    const altitude = 1 + Math.min(0.5, Math.max(0, planet.elevationM[c]) / 6000);
     globeCellPath(ctx, c, cam, view);
-    // Under a mosaic this is the blend of the very tiles about to be drawn on
-    // top, so the sliver between a hexagon-of-hexagons and the Goldberg cell
-    // holding it -- they are not the same shape, and for the twelve pentagons
-    // not even the same number of sides -- reads as part of the ground rather
-    // than as a rim of some other colour.
     const base = (tint !== null && regionPx >= TINT_MIN_PX ? tint(c) : null)
       ?? BIOME_COLOURS[planet.biome[c]];
-    // Filled whether or not a mosaic follows. The union of 91 hexagons has a
-    // serrated edge, and without a solid parent under it the ocean shows
-    // through every notch.
     ctx.fillStyle = shade(base, lambert * altitude);
     ctx.fill();
+  }
 
-    if (wantMosaic) {
+  // PASS TWO: the tiles, unclipped. The clip used to be here to keep a cell's
+  // silhouette clean however ragged the tiling inside it was -- which is the
+  // same mistake in the other direction, since it cut off exactly the
+  // protrusions that fill the neighbour's gaps.
+  if (wantMosaic) {
+    for (const c of visible) {
       const kids = children!(c);
-      if (kids !== null) {
-        ctx.save();
-        // Clipped to the parent, so the cell keeps a clean hexagonal
-        // silhouette however ragged the tiling inside it is.
-        ctx.clip();
-        drawGlobeChildren(ctx, kids, cam, view, lambert, childEdges);
-        ctx.restore();
-      }
+      if (kids !== null) drawGlobeChildren(ctx, kids, cam, view, lambertOf[c], childEdges);
     }
+  }
 
-    // The grid itself. Every cell gets an edge, because the hexagons ARE the
-    // map -- a filled cell with no outline reads as a colour field, and the
-    // player is choosing between cells rather than between colours. A house
-    // border replaces it rather than adding to it, so ownership reads as the
-    // strongest line on the globe.
+  // PASS THREE: the grid. Every cell gets an edge, because the hexagons ARE
+  // the map -- a filled cell with no outline reads as a colour field, and the
+  // player is choosing between cells rather than between colours. A house
+  // border replaces it rather than adding to it, so ownership reads as the
+  // strongest line on the globe.
+  for (const c of visible) {
     const owner = owned.get(c);
     if (owner !== undefined) {
-      // The path was consumed by the mosaic, so lay it down again.
       globeCellPath(ctx, c, cam, view);
       ctx.strokeStyle = houseColour(owner);
       ctx.lineWidth = 1.5;
       ctx.stroke();
     } else if (regionPx >= GRID_MIN_PX) {
-      // THE REGION'S OWN EDGE, DRAWN OVER ITS TILES.
-      //
-      // This used to be suppressed whenever a mosaic was drawn, and the note
-      // here said why: at 92 cells a region was 2,500 km across, its outline
-      // was a line drawn clean across a continent, and every landmass came out
-      // a honeycomb of enormous hexagons with the real coastline reduced to
-      // texture inside the facets.
-      //
-      // That was an argument about WEIGHT, not about whether the edge belongs.
-      // The flat maps have always drawn it -- a sub-map's cells are outlined
-      // over their own children, which is exactly what makes them read as
-      // tiles made of tiles -- and the globe was the odd one out. At 480 cells
-      // a region is about a thousand kilometres, and the line is a fifth of
-      // what it was.
-      //
-      // So it is drawn, at a weight scaled to the region the way a tile's
-      // hairline is scaled to the tile. A line that stays the same fraction of
-      // what it bounds cannot swamp it, which is the same reasoning that let
-      // the tile grid come back, and it means the two levels of the map are
-      // both legible at once instead of one hiding the other.
       globeCellPath(ctx, c, cam, view);
       ctx.strokeStyle = 'rgba(8,14,22,0.5)';
       ctx.lineWidth = Math.min(1.1, Math.max(0.4, regionPx / 90));
@@ -916,7 +911,7 @@ function latticeDirections(kids: ChildFrame): Float64Array {
     for (let rr = -(RADIUS + 1); rr <= RADIUS + 1; rr++) {
       const i = latticeAt(q, rr);
       if (latticeOk[i] === 0) continue;
-      toDirection(b, COVER * r * SQRT3 * (q + rr / 2), COVER * r * 1.5 * rr, dirs, i * 3);
+      toDirection(b, r * SQRT3 * (q + rr / 2), r * 1.5 * rr, dirs, i * 3);
     }
   }
   latticeCache.set(kids, dirs);
@@ -1250,65 +1245,71 @@ export function drawSubMap(
   }
   const span = Math.max(1, hi - lo);
 
+  // THE GROUND FIRST, ALL OF IT, THEN THE TILES ON TOP OF ALL OF IT.
+  //
+  // A cell used to be filled and then drawn out of its own tiles before the
+  // next cell was reached, and the tiles were clipped to the cell that held
+  // them. Both were wrong once the tiles were placed where they really are: 91
+  // hexagons cannot fill a hexagon, so a cell's tiles form a rosette that
+  // pushes past its edge in six places and falls short in six others, and it
+  // is the NEIGHBOUR'S rosette that fills those gaps. Clipping cut off exactly
+  // the protrusions the neighbour needed, and filling cell by cell painted
+  // over the ones that survived.
   for (let c = 0; c < map.patch.count; c++) {
     const g = at(c);
     const x = cx + g.x * size;
     const y = cy + g.y * size;
-    const gr = g.r * size;
-    // Cull off-screen. At full zoom on a ground map this skips most of them.
     if (offScreen(x, y)) continue;
-
-    tracePolygon(ctx, UNIT_POINTY, x, y, gr, g.cos, g.sin);
-
+    tracePolygon(ctx, UNIT_POINTY, x, y, g.r * size, g.cos, g.sin);
     const relief = 0.72 + 0.5 * ((map.elevationM[c] - lo) / span);
     const base = (wantTint ? tint!(c) : null) ?? BIOME_COLOURS[map.biome[c]];
-    // Filled first either way: the union of 91 hexagons has a serrated edge
-    // and the background would show through every notch.
     ctx.fillStyle = shade(base, relief);
     ctx.fill();
+  }
 
-    if (wantMosaic) {
+  if (wantMosaic) {
+    if (childEdges > 0) {
+      ctx.strokeStyle = 'rgba(10,16,24,0.30)';
+      ctx.lineWidth = childEdges;
+    }
+    for (let c = 0; c < map.patch.count; c++) {
+      const g = at(c);
+      const x = cx + g.x * size;
+      const y = cy + g.y * size;
+      if (offScreen(x, y)) continue;
       const kids = children!(c);
-      if (kids !== null) {
-        ctx.save();
-        ctx.clip();
-        if (childEdges > 0) {
-          ctx.strokeStyle = 'rgba(10,16,24,0.30)';
-          ctx.lineWidth = childEdges;
-        }
-        // WHERE THE CHILDREN ACTUALLY ARE, not a flat grid stamped inside the
-        // parent. This used to lay the child patch out in the parent cell's own
-        // coordinates and turn it thirty degrees, which is a GUESS at the turn:
-        // a child map's basis faces its own first neighbour, and that is not
-        // thirty degrees from its parent's except by accident. The layer above
-        // therefore showed a tile in one place and opening it put the tile
-        // somewhere else, at every depth, compounding as you descended.
-        //
-        // Placed through the same projection as everything else, so a child sits
-        // where the sphere says it sits -- edges meeting the edges they meet in
-        // the layer above, and the curvature of the ground the map covers
-        // carried rather than assumed away.
-        const kplace = unitPlacements(kids, f);
-        for (let k = 0; k < kids.patch.count; k++) {
-          const kg = kplace[k];
-          const kx = cx + kg.x * size;
-          const ky = cy + kg.y * size;
-          const alt = 0.72 + 0.5 * ((kids.elevationM[k] - lo) / span);
-          ctx.fillStyle = kids.elevationM[k] < 0
-            ? OCEAN
-            : shade(BIOME_COLOURS[kids.biome[k]], alt);
-          tracePolygon(ctx, UNIT_POINTY, kx, ky, kg.r * size, kg.cos, kg.sin);
-          ctx.fill();
-          if (childEdges > 0) ctx.stroke();
-        }
-        ctx.restore();
+      if (kids === null) continue;
 
-        // The cell's own edge, back on top of its texture.
-        tracePolygon(ctx, UNIT_POINTY, x, y, gr, g.cos, g.sin);
-        ctx.strokeStyle = 'rgba(12,20,30,0.5)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
+      // WHERE THE CHILDREN ACTUALLY ARE, not a flat grid stamped inside the
+      // parent. This used to lay the child patch out in the parent cell's own
+      // coordinates and turn it thirty degrees, which is a GUESS at the turn.
+      // Placed through the same projection as everything else, so a child sits
+      // where the sphere says it sits.
+      const kplace = unitPlacements(kids, f);
+      for (let k = 0; k < kids.patch.count; k++) {
+        const kg = kplace[k];
+        const kx = cx + kg.x * size;
+        const ky = cy + kg.y * size;
+        const alt = 0.72 + 0.5 * ((kids.elevationM[k] - lo) / span);
+        ctx.fillStyle = kids.elevationM[k] < 0
+          ? OCEAN
+          : shade(BIOME_COLOURS[kids.biome[k]], alt);
+        tracePolygon(ctx, UNIT_POINTY, kx, ky, kg.r * size, kg.cos, kg.sin);
+        ctx.fill();
+        if (childEdges > 0) ctx.stroke();
       }
+    }
+
+    // The cells' own edges, over their texture, once every tile is down.
+    ctx.strokeStyle = 'rgba(12,20,30,0.5)';
+    ctx.lineWidth = 1;
+    for (let c = 0; c < map.patch.count; c++) {
+      const g = at(c);
+      const x = cx + g.x * size;
+      const y = cy + g.y * size;
+      if (offScreen(x, y)) continue;
+      tracePolygon(ctx, UNIT_POINTY, x, y, g.r * size, g.cos, g.sin);
+      ctx.stroke();
     }
   }
 

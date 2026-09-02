@@ -20,6 +20,7 @@ import {
 } from './geo/address.ts';
 import { generatePlanet, type Planet } from './gen/planet.ts';
 import { MESH_COLS } from './gen/tectonics.ts';
+import { ROSETTE_TURN_RAD } from './geo/patch.ts';
 import type { Boundary } from './gen/hydrology.ts';
 import {
   generateSubMap, basisAt, samplePlanet, sampleSubMap, soilAt, aridityAt,
@@ -146,7 +147,8 @@ export class World {
       const nb = neighbours[region * 6] >= 0 ? neighbours[region * 6] : neighbours[region * 6 + 1];
       basis = basisAt(
         centres[region * 3], centres[region * 3 + 1], centres[region * 3 + 2],
-        centres[nb * 3], centres[nb * 3 + 1], centres[nb * 3 + 2]);
+        centres[nb * 3], centres[nb * 3 + 1], centres[nb * 3 + 2],
+        ROSETTE_TURN_RAD);
       sample = (x, y, z) => samplePlanet(this.planet, x, y, z);
       inflow = inflowFromPlanet(this.planet, region);
     } else {
@@ -160,7 +162,8 @@ export class World {
       basis = nb >= 0
         ? basisAt(
           above.dirs[cell * 3], above.dirs[cell * 3 + 1], above.dirs[cell * 3 + 2],
-          above.dirs[nb * 3], above.dirs[nb * 3 + 1], above.dirs[nb * 3 + 2])
+          above.dirs[nb * 3], above.dirs[nb * 3 + 1], above.dirs[nb * 3 + 2],
+          ROSETTE_TURN_RAD)
         : basisAt(above.dirs[cell * 3], above.dirs[cell * 3 + 1], above.dirs[cell * 3 + 2]);
       // READ WHICHEVER OF THE TWO OUT-RESOLVES THIS LAYER.
       //
