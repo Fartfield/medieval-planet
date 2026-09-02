@@ -1,7 +1,7 @@
 {
   "seed": 1237075107,
   "radiusM": 6371000,
-  "turn": 2514,
+  "turn": 2579,
   "players": [
     {
       "id": 0,
@@ -20,6 +20,12 @@
       "name": "player-1120",
       "seat": null,
       "house": 2
+    },
+    {
+      "id": 3,
+      "name": "player-6376",
+      "seat": null,
+      "house": 3
     }
   ],
   "polities": [],

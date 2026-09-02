@@ -71,11 +71,39 @@ export function newCamera(): Camera {
 
 /** Rotate a direction into view space. Yaw about the pole, then pitch. */
 export function rotate(cam: Camera, x: number, y: number, z: number): [number, number, number] {
-  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
-  const x1 = x * cy - z * sy;
-  const z1 = x * sy + z * cy;
-  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
-  return [x1, y * cp - z1 * sp, y * sp + z1 * cp];
+  const t = camTrig(cam);
+  const x1 = x * t.cy - z * t.sy;
+  const z1 = x * t.sy + z * t.cy;
+  return [x1, y * t.cp - z1 * t.sp, y * t.sp + z1 * t.cp];
+}
+
+/**
+ * The camera's four trig values, taken once instead of per point.
+ *
+ * `rotate` is a convenience and reads like one -- pass a point, get a point --
+ * and on the world view it was called about 125,000 times a frame, once for
+ * every lattice point and tile centre of every visible region. Each call took
+ * a cosine and a sine of the yaw and of the pitch, so a frame spent half a
+ * million transcendentals re-deriving four numbers that do not change within
+ * it, and returned a freshly allocated triple each time for the garbage
+ * collector to take away again.
+ *
+ * The hot loops take the four values once and do six multiplies a point into
+ * a buffer they already own. `rotate` is kept for everything that runs a
+ * handful of times a frame, where the clarity is worth more than the cycles.
+ */
+export interface CamTrig {
+  cy: number;
+  sy: number;
+  cp: number;
+  sp: number;
+}
+
+export function camTrig(cam: Camera): CamTrig {
+  return {
+    cy: Math.cos(cam.yaw), sy: Math.sin(cam.yaw),
+    cp: Math.cos(cam.pitch), sp: Math.sin(cam.pitch),
+  };
 }
 
 /** And back, for turning a click into a point on the sphere. */
@@ -821,6 +849,80 @@ function pentagonTilePolygons(
  *
  * Entries are null for tiles round the back of the globe.
  */
+/**
+ * The lattice a region's tiles are built from, on the sphere, cached.
+ *
+ * One ring wider than the map so the outermost tiles have corners to be built
+ * from; the halo points carry no data because a corner is only a position.
+ *
+ * These are directions, not screen positions, and that is the whole point of
+ * separating them: a lattice point sits where it sits on the sphere no matter
+ * where the camera is, so the expensive half -- `toDirection`, which costs an
+ * asin and two more transcendentals -- is done once per region and kept. Only
+ * the rotation into view space is per frame.
+ *
+ * Through `toDirection`, the very function the generator used to place the
+ * cell. Not a copy of it: the function. This WAS a copy, and it was left
+ * behind when the ladder moved off the cylindrical projection onto an
+ * isotropic tangent one. Near a pole the stale version clamped its
+ * sine-of-latitude at 1 and folded neighbouring lattice points onto each
+ * other, so a rim tile came out with duplicate corners -- five pairs of tiles
+ * on a map at 67 degrees sharing ten corners instead of two. It left no gap,
+ * which is why nothing looked wrong, and it was the third copy of this
+ * arithmetic to drift from the original. Now there is no third copy.
+ */
+const LATTICE_SPAN = 2 * (RADIUS + 1) + 1;
+const latticeOk = new Uint8Array(LATTICE_SPAN * LATTICE_SPAN);
+const scratchX = new Float64Array(LATTICE_SPAN * LATTICE_SPAN);
+const scratchY = new Float64Array(LATTICE_SPAN * LATTICE_SPAN);
+
+function latticeAt(q: number, rr: number): number {
+  return (q + RADIUS + 1) * LATTICE_SPAN + (rr + RADIUS + 1);
+}
+
+for (let q = -(RADIUS + 1); q <= RADIUS + 1; q++) {
+  for (let rr = -(RADIUS + 1); rr <= RADIUS + 1; rr++) {
+    const ss = -q - rr;
+    if (ss < -(RADIUS + 1) || ss > RADIUS + 1) continue;
+    latticeOk[latticeAt(q, rr)] = 1;
+  }
+}
+
+/**
+ * Somewhere to put a region's tile outlines, reused frame to frame.
+ *
+ * A visible region built 91 fresh Float64Arrays every frame and there are
+ * about 240 of them, so the world view allocated 22,000 short-lived arrays a
+ * frame purely to hand them straight to the canvas. The caller reads them
+ * before asking for the next region's, so one store serves them all.
+ */
+const hexPolyStore = new Float64Array(SUBCELL_COUNT * 12);
+const hexPoly: Float64Array[] = Array.from(
+  { length: SUBCELL_COUNT },
+  (_, k) => hexPolyStore.subarray(k * 12, k * 12 + 12),
+);
+const hexOut: (Float64Array | null)[] = new Array(SUBCELL_COUNT).fill(null);
+
+const latticeCache = new WeakMap<ChildFrame, Float64Array>();
+
+function latticeDirections(kids: ChildFrame): Float64Array {
+  const hit = latticeCache.get(kids);
+  if (hit !== undefined) return hit;
+
+  const b = kids.basis;
+  const r = kids.cellRadiusRad;
+  const dirs = new Float64Array(LATTICE_SPAN * LATTICE_SPAN * 3);
+  for (let q = -(RADIUS + 1); q <= RADIUS + 1; q++) {
+    for (let rr = -(RADIUS + 1); rr <= RADIUS + 1; rr++) {
+      const i = latticeAt(q, rr);
+      if (latticeOk[i] === 0) continue;
+      toDirection(b, COVER * r * SQRT3 * (q + rr / 2), COVER * r * 1.5 * rr, dirs, i * 3);
+    }
+  }
+  latticeCache.set(kids, dirs);
+  return dirs;
+}
+
 export function tilePolygons(
   kids: ChildFrame,
   cam: Camera,
@@ -841,54 +943,46 @@ export function tilePolygons(
   // Every lattice point the region needs, one ring wider than the map itself
   // so the outermost tiles have corners to be built from. The halo points are
   // positions only -- no data, and none needed: a corner is a position.
-  const SPAN = 2 * (RADIUS + 1) + 1;
-  const dir = new Float64Array(3);
-  const px = new Float64Array(SPAN * SPAN);
-  const py = new Float64Array(SPAN * SPAN);
-  const ok = new Uint8Array(SPAN * SPAN);
-  const at = (q: number, rr: number): number => (q + RADIUS + 1) * SPAN + (rr + RADIUS + 1);
+  //
+  // THE DIRECTIONS ARE CACHED AND THE SCREEN POSITIONS ARE NOT, because only
+  // one of the two depends on the camera. A lattice point's direction is fixed
+  // on the sphere for ever; where it lands on screen changes as the globe
+  // turns. Recomputing both every frame put a `toDirection` -- an asin and two
+  // more transcendentals -- on 169 points for each of ~240 visible regions,
+  // forty thousand a frame, and that was 26 ms of the world view's 30. Now the
+  // sphere part is done once per region and the frame does six multiplies a
+  // point.
+  const dirs = latticeDirections(kids);
+  const px = scratchX;
+  const py = scratchY;
+  const t = camTrig(cam);
 
-  for (let q = -(RADIUS + 1); q <= RADIUS + 1; q++) {
-    for (let rr = -(RADIUS + 1); rr <= RADIUS + 1; rr++) {
-      const ss = -q - rr;
-      if (ss < -(RADIUS + 1) || ss > RADIUS + 1) continue;
-      // Lattice position, then onto the sphere, then onto the screen -- and
-      // onto the sphere THROUGH `toDirection`, the very function the generator
-      // used to place the cell. Not a copy of it: the function.
-      //
-      // This was a copy, and it was left behind when the ladder moved off the
-      // cylindrical projection onto an isotropic tangent one. Near a pole the
-      // stale version clamped its sine-of-latitude at 1 and folded neighbouring
-      // lattice points onto each other, so a rim tile came out with duplicate
-      // corners -- five pairs of tiles on a map at 67 degrees sharing ten
-      // corners with each other instead of two. It left no gap, which is why
-      // nothing looked wrong, and it was the third copy of this arithmetic to
-      // drift from the original. Now there is no third copy.
-      toDirection(b, COVER * r * Math.sqrt(3) * (q + rr / 2), COVER * r * 1.5 * rr, dir, 0);
-      const [rx, ry] = rotate(cam, dir[0], dir[1], dir[2]);
-      const i = at(q, rr);
-      px[i] = cx + rx * radius;
-      py[i] = cy - ry * radius;
-      ok[i] = 1;
-    }
+  const out = hexOut;
+  out.fill(null);
+  for (let i = 0; i < LATTICE_SPAN * LATTICE_SPAN; i++) {
+    if (latticeOk[i] === 0) continue;
+    const x = dirs[i * 3], y = dirs[i * 3 + 1], z = dirs[i * 3 + 2];
+    const z1 = x * t.sy + z * t.cy;
+    px[i] = cx + (x * t.cy - z * t.sy) * radius;
+    py[i] = cy - (y * t.cp - z1 * t.sp) * radius;
   }
 
-  const out: (Float64Array | null)[] = new Array(kids.patch.count).fill(null);
   for (let k = 0; k < kids.patch.count; k++) {
-    const [, , pz] = rotate(cam, kids.dirs[k * 3], kids.dirs[k * 3 + 1], kids.dirs[k * 3 + 2]);
-    if (pz < 0) continue;
+    const x = kids.dirs[k * 3], y = kids.dirs[k * 3 + 1], z = kids.dirs[k * 3 + 2];
+    const z1 = x * t.sy + z * t.cy;
+    if (y * t.sp + z1 * t.cp < 0) continue;
 
     const q = coords[k * 2];
     const rr = coords[k * 2 + 1];
-    const self = at(q, rr);
-    const poly = new Float64Array(12);
+    const self = latticeAt(q, rr);
+    const poly = hexPoly[k];
     let usable = true;
     for (let d = 0; d < 6; d++) {
       const da = DIRECTIONS[d];
       const db = DIRECTIONS[(d + 1) % 6];
-      const ia = at(q + da[0], rr + da[1]);
-      const ib = at(q + db[0], rr + db[1]);
-      if (ok[ia] === 0 || ok[ib] === 0) { usable = false; break; }
+      const ia = latticeAt(q + da[0], rr + da[1]);
+      const ib = latticeAt(q + db[0], rr + db[1]);
+      if (latticeOk[ia] === 0 || latticeOk[ib] === 0) { usable = false; break; }
       poly[d * 2] = (px[self] + px[ia] + px[ib]) / 3;
       poly[d * 2 + 1] = (py[self] + py[ia] + py[ib]) / 3;
     }

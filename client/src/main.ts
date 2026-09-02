@@ -479,26 +479,23 @@ function invalidate(): void {
 }
 
 /**
- * FREE PARAMETER: how long after the last input the detailed picture returns.
+ * THE TILES ARE NEVER RATIONED, and the note is here because they were.
  *
- * While the view is moving the mosaic is skipped and cells are drawn in their
- * blended colour, because a tile a few pixels across is not distinguishable
- * from that blend while it is sliding past, and drawing 91 of them per cell is
- * most of the frame. When the hand stops, the detail comes back.
+ * A view that was moving used to be drawn without its mosaic -- cells in their
+ * blended colour instead of out of their own children -- on the reasoning that
+ * a tile a few pixels across is not distinguishable from that blend while it
+ * is sliding past. The reasoning is fine and the result was not: the world
+ * view is the one place a player most wants to see the ground it is made of,
+ * and rationing it there meant sometimes not seeing it at all.
  *
- * A tenth of a second is ours. It wants to be longer than the gap between
- * mouse events -- so a steady drag stays smooth rather than flickering between
- * the two pictures -- and short enough that letting go feels immediate.
- * Nothing measures where that line is.
+ * It is affordable now without the trade. Two changes paid for it -- nothing
+ * redraws unless something changed, and tilePolygons stopped taking half a
+ * million transcendentals a frame -- which took the world view from 29.8 ms a
+ * frame to 11.8, and an idle one from 29.8 to nothing.
  */
-const SETTLE_MS = 120;
-
-let movingUntil = 0;
-let wasMoving = false;
 
 /** Called by anything that moves the view: pan, zoom, spin. */
 function moved(): void {
-  movingUntil = performance.now() + SETTLE_MS;
   invalidate();
 }
 
@@ -509,10 +506,6 @@ function frame(): void {
   // the canvas is redrawn.
   const remaining = Math.max(0, Math.round((nextTurnAt - performance.now()) / 1000));
   (document.getElementById('next') as HTMLElement).textContent = `${remaining}s`;
-
-  // Settling is a change: the detailed picture has to replace the quick one.
-  const moving = performance.now() < movingUntil;
-  if (moving !== wasMoving) { wasMoving = moving; invalidate(); }
 
   if (!dirty) return;
   dirty = false;
@@ -532,12 +525,9 @@ function frame(): void {
 
   const { owned, populated } = visibleOverlays(world);
 
-  // Tiles only when the view is still. See SETTLE_MS.
-  const detail = <T>(v: T): T | null => (moving ? null : v);
-
   if (path.length === 0) {
     drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned,
-      tintFor(world, []), detail(childrenFor(world, [])));
+      tintFor(world, []), childrenFor(world, []));
   } else {
     const view = flatView(w, h, cam);
     const frame = frameFor(world);
@@ -548,11 +538,11 @@ function frame(): void {
     for (const nb of neighbourMapsOf(world, path)) {
       const side = visibleOverlays(world, nb);
       drawSubMap(ctx, world.subMap(nb), view, -1, side.owned, side.populated,
-        null, tintFor(world, nb), detail(childrenFor(world, nb)), frame);
+        null, tintFor(world, nb), childrenFor(world, nb), frame);
     }
 
     drawSubMap(ctx, world.subMap(path), view, selected, owned, populated,
-      workedOverlay(world), tintFor(world, path), detail(childrenFor(world, path)), frame);
+      workedOverlay(world), tintFor(world, path), childrenFor(world, path), frame);
   }
 
 }
