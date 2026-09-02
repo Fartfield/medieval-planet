@@ -499,6 +499,9 @@ function moved(): void {
   invalidate();
 }
 
+/** Said once, the first time the world view is drawn. */
+let saidGlobe = false;
+
 function frame(): void {
   requestAnimationFrame(frame);
 
@@ -509,6 +512,31 @@ function frame(): void {
 
   if (!dirty) return;
   dirty = false;
+
+  try {
+    draw();
+  } catch (err) {
+    // A THROWN FRAME USED TO FREEZE THE PICTURE, and that is a hazard the
+    // dirty flag introduced. Before it, every frame redrew, so a one-off
+    // failure healed itself on the next one and nobody ever saw it; now the
+    // frame that throws has already cleared `dirty`, so nothing draws again
+    // until the next input and the canvas keeps whatever was on it when the
+    // exception happened -- which looks exactly like a feature quietly not
+    // working rather than like an error.
+    ctx.fillStyle = '#e06c5a';
+    ctx.font = '13px ui-monospace, monospace';
+    ctx.fillText(`frame failed: ${(err as Error).message}`, 20, 40);
+    if (!saidError) {
+      saidError = true;
+      log(`frame failed: ${(err as Error).message}`);
+    }
+  }
+}
+
+/** Said once, so a failing frame does not fill the log sixty times a second. */
+let saidError = false;
+
+function draw(): void {
 
   const w = window.innerWidth;
   const h = window.innerHeight;
@@ -526,8 +554,16 @@ function frame(): void {
   const { owned, populated } = visibleOverlays(world);
 
   if (path.length === 0) {
-    drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned,
+    const drawn = drawGlobe(ctx, world.planet, cam, globeView(w, h), selected, owned,
       tintFor(world, []), childrenFor(world, []));
+    // ONCE, not every frame. "The world view is not showing its tiles" and
+    // "the world view is showing its tiles" look identical from here, and
+    // three attempts to tell them apart by reading the code were all wrong.
+    if (!saidGlobe) {
+      saidGlobe = true;
+      log(`world view: ${drawn.regions} regions, ${drawn.mosaics} drawn from their own`
+        + ` tiles, tile ${drawn.tilePx.toFixed(1)} px, lookup ${drawn.offered ? 'given' : 'MISSING'}`);
+    }
   } else {
     const view = flatView(w, h, cam);
     const frame = frameFor(world);

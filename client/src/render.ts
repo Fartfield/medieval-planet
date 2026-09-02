@@ -331,6 +331,27 @@ export function globeView(w: number, h: number): GlobeView {
  * cell exactly on the limb is either wholly drawn or wholly skipped, which is
  * invisible at this size and halves the work.
  */
+/**
+ * What the world view actually did, so a caller can say so out loud.
+ *
+ * Added because "the world map is not showing its tiles" could not be told
+ * apart from "the world map is showing its tiles and they look like this" from
+ * outside the function, and every attempt to reason it out from the code was
+ * wrong. The renderer draws 23,500 filled tiles when called directly with a
+ * stub canvas, so whatever is happening is happening to the CALL, and the only
+ * way to find that out is to have the call describe itself.
+ */
+export interface GlobeDrawn {
+  /** Regions facing the camera and therefore drawn at all. */
+  regions: number;
+  /** Of those, how many were drawn out of their own tiles. */
+  mosaics: number;
+  /** How wide one tile is on screen, which is what decides the above. */
+  tilePx: number;
+  /** Whether a tile lookup was supplied at all. */
+  offered: boolean;
+}
+
 export function drawGlobe(
   ctx: CanvasRenderingContext2D,
   planet: Planet,
@@ -340,7 +361,7 @@ export function drawGlobe(
   owned: Map<number, number>,
   tint: CellTint | null = null,
   children: ChildLookup | null = null,
-): void {
+): GlobeDrawn {
   const { cx, cy, radius } = view;
 
   // The ocean, as one disc behind everything. Cheaper than drawing seven
@@ -414,6 +435,8 @@ export function drawGlobe(
     // through would be visible. Sealing here only added a stroke per region.
   }
 
+  let mosaics = 0;
+
   // PASS TWO: the tiles, unclipped. The clip used to be here to keep a cell's
   // silhouette clean however ragged the tiling inside it was -- which is the
   // same mistake in the other direction, since it cut off exactly the
@@ -421,7 +444,10 @@ export function drawGlobe(
   if (wantMosaic) {
     for (const c of visible) {
       const kids = children!(c);
-      if (kids !== null) drawGlobeChildren(ctx, kids, cam, view, lambertOf[c], childEdges);
+      if (kids !== null) {
+        drawGlobeChildren(ctx, kids, cam, view, lambertOf[c], childEdges);
+        mosaics++;
+      }
     }
   }
 
@@ -476,6 +502,8 @@ export function drawGlobe(
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.stroke();
+
+  return { regions: visible.length, mosaics, tilePx: childPx * 2, offered: children !== null };
 }
 
 /**
