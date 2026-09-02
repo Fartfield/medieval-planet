@@ -2031,3 +2031,61 @@ the last cell's protrusions, and its own tiles never covered that ground
 because the ground belongs to the neighbour: every seam came out as a band of
 flat parent colour between two mosaics. All the fills, then all the tiles, then
 all the edges.
+
+## Layer 2's tiles are tilted, and no orientation trick fixes it
+
+Reported from the game: at the region layer some tiles are visibly turned
+against their neighbours, and every layer below renders correctly. Measured, as
+the angle between two adjoining maps' lattices reduced mod 60 degrees, which is
+the symmetry a hex lattice has:
+
+    layer 2, region to region     median 2.42   90th 9.55   worst 23.13 deg
+    layer 3, inside one region    median 0.02   90th 0.05   worst  0.11 deg
+
+The layers below work because a child map takes its orientation from the map
+above it, whose cells ARE a lattice, so every child of one map runs the same
+way. A region has no such parent: it faces its own first neighbour on the
+globe, and the globe's neighbour bearings depart from a 60-degree lattice by up
+to 20.45 degrees.
+
+Three replacements were tried and measured. All are struck through.
+
+**~~Orient every region to its icosahedral face~~.** All twenty faces are flat
+and each has one east, carried into each region's tangent plane -- which is the
+correct gnomonic pushforward, not an approximation. Median improved 2.42 to
+1.31 and the WORST got worse, 23.13 to 28.91, so it was measured again split by
+where the pair sits:
+
+    both on one face (72.8% of pairs)   median 0.86   worst  5.35 deg
+    across a face edge (27.2%)          median 5.36   worst 29.07 deg
+
+It works inside a face and fails at the thirty edges. Turning every face's east
+by 30 degrees to align it with an edge rather than a vertex changed nothing,
+and could not have: a rotation applied to every face alike cannot change how
+two faces relate. The real requirement is that the icosahedron's edge be a
+whole number of lattice steps, and the region centres are not lattice points at
+all -- which is the regrid, not an orientation.
+
+**~~Fit each region's lattice to all six neighbours~~** rather than facing one,
+via the hexatic order parameter -- angles multiplied by six so all six
+neighbours land on top of each other, averaged, divided back. The best of the
+three: median 1.33, 90th 5.03, worst 12.14. It halves the worst tilt and is
+cheap. It does not remove it.
+
+**~~Relax the orientation field over the whole globe~~**, averaging each
+region's orientation with its neighbours' in that same six-fold representation,
+on the reasoning that the defect would drain to the twelve pentagons where a
+60-degree defect is invisible. It does not drain. Over 400 passes the median
+sat still and the WORST rose from 12.14 to 28.59: the topological charge does
+not spread out, it concentrates into a sharper seam somewhere else.
+
+    passes    median   90th    worst
+         0      1.33    5.03   12.14
+        10      1.23    4.91   20.00
+       100      1.28    5.00   29.90
+       400      1.32    5.10   28.59
+
+What all three have in common is that they try to give a lattice orientation to
+cells that are not on a lattice. The layers below are not doing something
+cleverer -- they are standing on a lattice. Layer 2 can only be made to render
+the way they do by giving it one.
