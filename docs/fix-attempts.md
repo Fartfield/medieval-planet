@@ -2089,3 +2089,37 @@ What all three have in common is that they try to give a lattice orientation to
 cells that are not on a lattice. The layers below are not doing something
 cleverer -- they are standing on a lattice. Layer 2 can only be made to render
 the way they do by giving it one.
+
+### ~~Phase 2 alone: put the world grid's centres on a planar lattice~~
+
+The world grid is a Class-I geodesic whose subdivision points are placed by
+EQUAL ARC (slerp). Equal arc gives near-uniform cells and is not a lattice:
+the points are not the image of a regular triangular lattice in any face's
+plane. The obvious phase-2 move is to place them by equal steps in the face
+plane instead, which IS such an image.
+
+Measured, both ways:
+
+                              equal arc   planar lattice
+    cell area spread            1.131        1.448
+    layer 2 tilt, median         2.42         1.34 deg
+    layer 2 tilt, WORST         23.13        23.34 deg
+
+**The worst tilt does not move.** The median halves and the areas get 28% less
+uniform, which is the trade this file already recorded once -- the comment in
+sphere.ts notes the chord version was tried before and rejected because it
+bunches points towards the corners and left pentagons at half a hexagon's area.
+
+Why the worst does not move: a region map still takes its orientation from its
+own neighbours' bearings, and near a face corner the gnomonic projection
+distorts those by exactly as much as before. Putting the CENTRES on a lattice
+does not help while the ORIENTATION is still read off the sphere, and putting
+the orientation on a lattice does not help while the centres are not -- both
+were tried separately and neither is sufficient.
+
+What would work is both together AND the sub-maps laid out in face-plane
+coordinates rather than each in its own tangent plane, so that every cell at
+every depth is the image of one planar lattice per face. That is not phase 2;
+it is phase 2 and phase 4 together, and it replaces sphere.ts, submap.ts and
+patch.ts. The honest estimate is that it is the largest single change the
+project has had.

@@ -50,6 +50,21 @@ export const FACE_COUNT = 20;
  */
 export const vertices = new Float64Array(VERTEX_COUNT * 3);
 
+/**
+ * A LATTICE DIRECTION of each face, in 3D, lying in the face's own plane.
+ *
+ * The edge from the face's first vertex to its second. It matters that this is
+ * an EDGE and not the direction to a vertex: a triangular lattice drawn on a
+ * face runs along its edges, and the direction from the centre to a vertex sits
+ * thirty degrees off that -- which, against the sixty-degree symmetry of a hex
+ * lattice, is the difference between aligned and as misaligned as it is
+ * possible to be.
+ *
+ * Both faces either side of a shared edge have that edge among their own, so a
+ * lattice aligned to edges meets itself across the join.
+ */
+export const faceLatticeDir = new Float64Array(FACE_COUNT * 3);
+
 /** The three vertices of each face, as indices. */
 export const faceVertices = new Int32Array(FACE_COUNT * 3);
 
@@ -150,6 +165,15 @@ function build(): void {
     faceEast[i * 3] = ex;
     faceEast[i * 3 + 1] = ey;
     faceEast[i * 3 + 2] = ez;
+    // The first edge, which lies in the face's plane because both its ends do.
+    let lx = vertices[b * 3] - vertices[a * 3];
+    let ly = vertices[b * 3 + 1] - vertices[a * 3 + 1];
+    let lz = vertices[b * 3 + 2] - vertices[a * 3 + 2];
+    const llen = Math.sqrt(lx * lx + ly * ly + lz * lz);
+    faceLatticeDir[i * 3] = lx / llen;
+    faceLatticeDir[i * 3 + 1] = ly / llen;
+    faceLatticeDir[i * 3 + 2] = lz / llen;
+
     // North completes the right-handed frame.
     faceNorth[i * 3] = cy * ez - cz * ey;
     faceNorth[i * 3 + 1] = cz * ex - cx * ez;
