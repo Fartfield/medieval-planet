@@ -24,6 +24,7 @@ import {
   PENT_SUBCELL_COUNT, PENT_RADIUS, pentRing, pentCentres,
   pentNeighbours, pentNeighbourCount, pentFromPoint,
 } from '../sim/geo/pentgrid.ts';
+import { basisAt, toDirection, toLocal } from '../sim/gen/submap.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 /**
@@ -557,6 +558,54 @@ suite('address', () => {
   measure('ground tile area m2', (4 * Math.PI * A.EARTH_RADIUS_M ** 2) / groundCells);
   measure('finest layer area m2',
     (4 * Math.PI * A.EARTH_RADIUS_M ** 2) / (CELL_COUNT * SUBCELL_COUNT ** (MAX_DEPTH - 1)));
+});
+
+suite('the projection survives the smallest cells', () => {
+  // THE DEEPEST LAYERS WERE BEING LAID OUT AGAINST NOISE, and nothing here
+  // noticed because every check in the project worked at the top of the
+  // ladder where there was plenty of precision to spare.
+  //
+  // toLocal recovered its radius as acos(dot) and then a sine. acos is
+  // ill-conditioned near 1: a dot product wrong in its last bit returns an
+  // angle wrong by about 1.4e-8 radians, and that error is a CONSTANT -- it
+  // does not shrink as the cells do. A layer-7 cell is 1.379e-8 radians
+  // across, so the error was the whole cell.
+  //
+  // Measured as a fraction of one cell, before and after taking the radius as
+  // a chord instead:
+  //
+  //     layer 5    8 m cells    7.8e-5  ->  5.0e-11
+  //     layer 6   84 cm cells   6.2e-3  ->  7.1e-10
+  //     layer 7    9 cm cells   1.00    ->  3.3e-9
+  //     layer 8    1 cm cells   9.31    ->  3.3e-8
+  //
+  // Checked down to layer 8, which is past the ground layer on purpose: the
+  // ladder is meant to keep working below where the simulation stops, and a
+  // floor like this one would show up there first.
+  const b = basisAt(0.3, 0.5, Math.sqrt(1 - 0.09 - 0.25), 1, 0, 0);
+  const dir = new Float64Array(3);
+  let worstFraction = 0;
+  let worstLayer = 0;
+  for (let depth = 1; depth <= 8; depth++) {
+    const r = CELL_R / Math.pow(Math.sqrt(SUBCELL_COUNT), depth);
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * 2 * Math.PI;
+      const u = r * Math.cos(a);
+      const v = r * Math.sin(a);
+      toDirection(b, u, v, dir, 0);
+      const p = toLocal(b, dir[0], dir[1], dir[2]);
+      const f = Math.hypot(p.x - u, p.y - v) / r;
+      if (f > worstFraction) { worstFraction = f; worstLayer = depth; }
+    }
+  }
+  measure('deepest layer checked', 8);
+  measure('worst layout error, fraction of a cell', worstFraction);
+  measure('the layer it happens at', worstLayer);
+  // A millionth of a cell is far tighter than anything can see and far looser
+  // than the 3e-8 measured, so this fails on a real regression rather than on
+  // the last few bits moving.
+  assert('a cell is laid out where it belongs, at every depth',
+    worstFraction < 1e-6);
 });
 
 suite('the ladder nests the same at every latitude', () => {

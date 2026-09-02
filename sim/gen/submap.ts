@@ -344,8 +344,32 @@ export function toDirection(b: Basis, x: number, y: number, out: Float64Array, a
  */
 export function toLocal(b: Basis, x: number, y: number, z: number): { x: number; y: number } {
   const dot = clamp(x * b.ox + y * b.oy + z * b.oz, -1, 1);
-  const theta = Math.acos(dot);
-  const rho = 2 * dsin(theta / 2);
+
+  // THE RADIUS IS A CHORD, MEASURED, NOT AN ANGLE PUT THROUGH A SINE.
+  //
+  // rho is 2.sin(theta/2) by definition of the projection, and 2.sin(theta/2)
+  // is exactly the straight-line distance between two unit vectors -- so it
+  // can be measured directly instead of recovered from the angle between them.
+  //
+  // It used to be acos(dot) and then a sine, and that quietly destroyed the
+  // deepest layers. acos is ill-conditioned near 1: a dot product wrong in its
+  // last bit comes back as an angle wrong by about 1.4e-8 radians, and that
+  // error is a CONSTANT -- it does not shrink as the cells do. Measured as a
+  // fraction of one cell, round-tripping a point one cell-radius out:
+  //
+  //     layer 4   76 m cells    7.9e-7
+  //     layer 5    8 m cells    7.8e-5
+  //     layer 6   84 cm cells   6.2e-3
+  //     layer 7    9 cm cells   1.00      -- the error IS a whole cell
+  //     layer 8    1 cm cells   9.31
+  //
+  // So everything from about the sixth layer down was being laid out against a
+  // number with no significant digits left in it. The chord has no such floor:
+  // it is a subtraction and a square root, both exact to the last bit.
+  const dx = x - b.ox;
+  const dy = y - b.oy;
+  const dz = z - b.oz;
+  const rho = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
   let tx = x - dot * b.ox;
   let ty = y - dot * b.oy;
