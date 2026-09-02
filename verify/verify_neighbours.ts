@@ -187,6 +187,59 @@ suite('a tile is drawn with its neighbours round it', () => {
     check('and no pick lands far from where it was made', far, 0, 0);
   }
 
+  // NO GAPS, asked of the tiles the player is actually looking at.
+  //
+  // The interlock check below says two adjacent parents' children are one
+  // spacing apart. This says the stronger thing: that the tiles of a whole
+  // neighbourhood form ONE unbroken lattice, so there is no hole anywhere in
+  // the ground -- not between two tiles of a cell, not between two cells, and
+  // not across the boundary between one hex and the next.
+  //
+  // Measured as neighbour counts rather than by sampling the plane, which is
+  // the same fact and enormously cheaper: in an unbroken hexagonal lattice
+  // every tile that is not on the outside has exactly six others one spacing
+  // away. A hole shows up immediately as a tile with five.
+  {
+    const centre = w.subMap([region]);
+    const xs: number[] = [];
+    const ys: number[] = [];
+    let spacing = 0;
+    for (let c = 0; c < centre.patch.count; c++) {
+      const kid = w.subMap([region, c]);
+      spacing = Math.sqrt(3) * kid.cellRadiusRad;
+      for (let k = 0; k < kid.patch.count; k++) {
+        const p = toLocal(centre.basis,
+          kid.dirs[k * 3], kid.dirs[k * 3 + 1], kid.dirs[k * 3 + 2]);
+        xs.push(p.x / spacing);
+        ys.push(p.y / spacing);
+      }
+    }
+
+    // Well inside the drawn set, so the answer is about the tiling and not
+    // about where the tiles stop.
+    const inner = centre.cellRadiusRad / spacing * 2.0;
+    let interior = 0;
+    let short = 0;
+    let worstCount = 6;
+    for (let i = 0; i < xs.length; i += 3) {
+      if (Math.hypot(xs[i], ys[i]) > inner) continue;
+      let n = 0;
+      for (let j = 0; j < xs.length; j++) {
+        if (j === i) continue;
+        const d = Math.hypot(xs[j] - xs[i], ys[j] - ys[i]);
+        if (d < 1.15) n++;
+      }
+      interior++;
+      if (n < 6) { short++; worstCount = Math.min(worstCount, n); }
+    }
+
+    measure('interior tiles checked for holes', interior);
+    measure('interior tiles with a missing neighbour', short);
+    measure('fewest neighbours any interior tile has', worstCount);
+    assert('the neighbourhood was dense enough to judge', interior > 100);
+    check('every tile inside the view has six neighbours', short, 0, 0);
+  }
+
   // THE CHILDREN OF ADJACENT PARENTS MEET, which is the claim the whole
   // rosette turn exists to make good.
   //

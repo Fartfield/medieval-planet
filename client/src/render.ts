@@ -407,6 +407,11 @@ export function drawGlobe(
       ?? BIOME_COLOURS[planet.biome[c]];
     ctx.fillStyle = shade(base, lambert * altitude);
     ctx.fill();
+    // NOT sealed, unlike the tiles. A region's fill is followed by its own
+    // outline in pass three whenever the grid is drawn at all, and that line
+    // covers the seam; below the grid's threshold the regions are so small
+    // that a hairline between them is narrower than the ocean disc showing
+    // through would be visible. Sealing here only added a stroke per region.
   }
 
   // PASS TWO: the tiles, unclipped. The clip used to be here to keep a cell's
@@ -1021,7 +1026,15 @@ function drawGlobeChildren(
     for (let i = 1; i < corners; i++) ctx.lineTo(poly[i * 2], poly[i * 2 + 1]);
     ctx.closePath();
     ctx.fill();
-    if (drawEdges) ctx.stroke();
+    // Sealed the same way the flat maps are: two polygons sharing an edge
+    // leave a hairline of background between them on a canvas.
+    if (drawEdges) {
+      ctx.stroke();
+    } else {
+      ctx.strokeStyle = ctx.fillStyle;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
   }
 }
 
@@ -1265,13 +1278,18 @@ export function drawSubMap(
     const base = (wantTint ? tint!(c) : null) ?? BIOME_COLOURS[map.biome[c]];
     ctx.fillStyle = shade(base, relief);
     ctx.fill();
+    // The same seal between cells, for the same reason as between tiles.
+    ctx.strokeStyle = ctx.fillStyle;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // The cell's own outline, only while it is NOT showing its tiles.
+    if (!wantMosaic) {
+      ctx.strokeStyle = 'rgba(12,20,30,0.5)';
+      ctx.stroke();
+    }
   }
 
   if (wantMosaic) {
-    if (childEdges > 0) {
-      ctx.strokeStyle = 'rgba(10,16,24,0.30)';
-      ctx.lineWidth = childEdges;
-    }
     for (let c = 0; c < map.patch.count; c++) {
       const g = at(c);
       const x = cx + g.x * size;
@@ -1294,23 +1312,44 @@ export function drawSubMap(
         ctx.fillStyle = kids.elevationM[k] < 0
           ? OCEAN
           : shade(BIOME_COLOURS[kids.biome[k]], alt);
+        if (childEdges > 0) {
+          ctx.strokeStyle = 'rgba(10,16,24,0.30)';
+          ctx.lineWidth = childEdges;
+        }
         tracePolygon(ctx, UNIT_POINTY, kx, ky, kg.r * size, kg.cos, kg.sin);
         ctx.fill();
+        // SEALED, so no background shows between two tiles that touch.
+        //
+        // Adjacent tiles share an edge exactly -- measured, the worst point of
+        // ground sits 0.5619 tile spacings from a centre against a hexagon's
+        // reach of 0.5774, so there is no hole anywhere. What there IS, is the
+        // canvas: two polygons sharing an edge each cover about half the pixels
+        // along it, and half plus half of a blended pixel is not one, so the
+        // background shows through as a hairline. Stroking a tile in its own
+        // colour puts the missing half back.
+        //
+        // Only when no edge line is being drawn, because a line along that
+        // seam covers it already.
         if (childEdges > 0) ctx.stroke();
+        else { ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1; ctx.stroke(); }
       }
     }
 
-    // The cells' own edges, over their texture, once every tile is down.
-    ctx.strokeStyle = 'rgba(12,20,30,0.5)';
-    ctx.lineWidth = 1;
-    for (let c = 0; c < map.patch.count; c++) {
-      const g = at(c);
-      const x = cx + g.x * size;
-      const y = cy + g.y * size;
-      if (offScreen(x, y)) continue;
-      tracePolygon(ctx, UNIT_POINTY, x, y, g.r * size, g.cos, g.sin);
-      ctx.stroke();
-    }
+    // NO OUTLINE ROUND A CELL THAT IS SHOWING ITS TILES, and this is a
+    // reversal worth recording rather than a tidy-up.
+    //
+    // A cell used to be outlined over its own mosaic, and the argument for it
+    // was good: a sub-map's cells outlined over their children is exactly what
+    // makes them read as tiles made of tiles, and it is why the globe was
+    // eventually given the same treatment. But once neighbours are on screen
+    // the same line is the seam BETWEEN one hex's tiles and the next hex's,
+    // and there is no seam there -- the tiles are one lattice across the
+    // boundary, and drawing a line along it says otherwise.
+    //
+    // So the cell keeps its outline while it is drawn flat, where the outline
+    // is the only thing saying where the cell is, and loses it once its own
+    // tiles are what you are looking at. The selection ring still marks the
+    // cell you have chosen.
   }
 
   // Water second, so channels sit on top of the ground they cut through.
