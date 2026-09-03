@@ -1320,3 +1320,69 @@ export const MESH_RELIEF_M = 900.0;
 export const MESH_EROSION_PASSES = 8;
 export const MESH_EROSION_RATE = 4.0e-5;
 export const MESH_CREEP = 0.18;
+
+// ---------------------------------------------------------------------------
+// What grows, and how much of it there is
+// ---------------------------------------------------------------------------
+
+/**
+ * The dry above-ground wood in one mature forest tree, tonnes.
+ *
+ * From allometry rather than from a stand count. A temperate broadleaf at 30 cm
+ * diameter at breast height carries roughly half a tonne of dry above-ground
+ * mass, and 30 cm is about the mean of a mature mixed stand once the
+ * understorey stems are counted with the canopy ones.
+ *
+ * It is worth saying what this predicts, because nothing was tuned to make it
+ * land there: a temperate forest at TIMBER_TEMPERATE_T_PER_HA carries
+ * 150 / 0.5 = 300 stems a hectare, and mature temperate forests are measured at
+ * 300 to 500. The stand density is a RESULT of the timber and the tree, not a
+ * third number set beside them.
+ */
+export const TREE_WOOD_T = 0.5;
+
+/**
+ * The crown a tree of that size casts, metres across.
+ *
+ * Crown diameter runs about 25 times the stem diameter in open-grown broadleaf
+ * and rather less where trees are crowded; 8 m at 30 cm dbh is the crowded
+ * figure, which is the one a closed stand wants.
+ */
+export const TREE_CROWN_M = 8.0;
+
+/** Dry above-ground wood in one mature shrub, kg. A hazel or a juniper of a
+ *  few stems and a couple of metres, measured at 10 to 30 kg. */
+export const SHRUB_WOOD_KG = 15.0;
+
+/** And the crown it casts, metres. */
+export const SHRUB_CROWN_M = 2.0;
+
+/**
+ * Dry wood in one liana, kg, and the crown it occupies.
+ *
+ * A liana puts almost nothing into its own stem and almost everything into
+ * reaching a canopy it did not build: a 5 cm stem carries perhaps 20 kg while
+ * spreading through several tree crowns. Its "crown" here is the canopy area it
+ * occupies rather than anything it holds up.
+ */
+export const VINE_WOOD_KG = 20.0;
+export const VINE_CROWN_M = 5.0;
+
+/**
+ * Dry mass of one grass plant, grams -- a tuft, not a tiller.
+ *
+ * A perennial bunchgrass carries a few grams of standing dry matter per tuft.
+ * Against a temperate grassland's 300 to 500 g/m2 of above-ground biomass this
+ * gives 100 to 170 tufts a square metre, which is what a hand-sized quadrat of
+ * ordinary sward holds.
+ */
+export const GRASS_TUFT_G = 3.0;
+
+/**
+ * How long herbaceous growth stands before it is shed, years.
+ *
+ * One, near enough: a grass sward replaces its above-ground parts annually,
+ * which is why standing biomass and annual production are the same number in a
+ * grassland and are not remotely the same number in a forest.
+ */
+export const HERB_RESIDENCE_YR = 1.0;
