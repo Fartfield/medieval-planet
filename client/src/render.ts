@@ -1271,6 +1271,89 @@ function tracePolygon(
 }
 
 /**
+ * FREE PARAMETER: how much of a tile's colour comes from the tiles around it.
+ *
+ * Zero draws every tile in its own flat colour, and the hexagons then read as
+ * hexagons: a run of ground that is really a gradient comes out as a mosaic of
+ * discrete steps, and the eye finds the grid instead of the landscape.
+ *
+ * A third is ours. It is enough that a slope of the same biome reads as a
+ * slope rather than as a tiling, and little enough that a real boundary -- a
+ * coast, a treeline, a river's edge -- still lands within one tile instead of
+ * being smeared across three. Nothing measures where that line is; it is a
+ * judgement about what the picture is for.
+ */
+const TILE_BLEND = 1 / 3;
+
+/**
+ * A map's tile colours, worked out once and kept.
+ *
+ * Two things at once, and the second is why this is worth a cache rather than
+ * a loop. It BLENDS: each tile takes TILE_BLEND of its colour from the mean of
+ * its neighbours, which needs six lookups a tile and would be absurd to redo
+ * sixty times a second for an answer fixed by the terrain.
+ *
+ * And it removes the last of the per-tile string work from the frame. The
+ * mosaic used to call `shade` once per tile -- 28,000 times a frame -- and
+ * even memoised that is a lookup and a fillStyle assignment per tile. Now the
+ * colour is an array index.
+ *
+ * Keyed weakly by the map, and re-made if the relief window it was shaded
+ * against moves, which happens when the parent it is drawn inside changes.
+ */
+interface TileColours {
+  lo: number;
+  span: number;
+  colours: string[];
+}
+
+const mosaicCache = new WeakMap<ChildFrame, TileColours>();
+
+function mosaicColours(kids: ChildFrame, lo: number, span: number): string[] {
+  const hit = mosaicCache.get(kids);
+  if (hit !== undefined && hit.lo === lo && hit.span === span) return hit.colours;
+
+  const n = kids.patch.count;
+  const r = new Float64Array(n);
+  const g = new Float64Array(n);
+  const b = new Float64Array(n);
+
+  // Own colour first, in numbers rather than strings, so the blend below is
+  // arithmetic instead of parsing.
+  for (let k = 0; k < n; k++) {
+    const hex = kids.elevationM[k] < 0 ? OCEAN : BIOME_COLOURS[kids.biome[k]];
+    const v = parseInt(hex.slice(1), 16);
+    // The same relief shading the tiles had before, applied here instead.
+    const f = Math.max(0.25, Math.min(1.55,
+      0.72 + 0.5 * ((kids.elevationM[k] - lo) / span)));
+    r[k] = ((v >> 16) & 255) * f;
+    g[k] = ((v >> 8) & 255) * f;
+    b[k] = (v & 255) * f;
+  }
+
+  const colours: string[] = new Array(n);
+  for (let k = 0; k < n; k++) {
+    let nr = 0, ng = 0, nb = 0, count = 0;
+    for (let i = 0; i < 6; i++) {
+      const j = kids.patch.neighbours[k * 6 + i];
+      if (j < 0) continue;
+      nr += r[j]; ng += g[j]; nb += b[j]; count++;
+    }
+    // A rim tile has fewer neighbours and takes proportionally less from them,
+    // rather than pulling in a direction it happens to have one on.
+    const t = count === 0 ? 0 : TILE_BLEND;
+    const mr = count === 0 ? r[k] : r[k] * (1 - t) + (nr / count) * t;
+    const mg = count === 0 ? g[k] : g[k] * (1 - t) + (ng / count) * t;
+    const mb = count === 0 ? b[k] : b[k] * (1 - t) + (nb / count) * t;
+    colours[k] = `rgb(${Math.min(255, Math.round(mr))},`
+      + `${Math.min(255, Math.round(mg))},${Math.min(255, Math.round(mb))})`;
+  }
+
+  mosaicCache.set(kids, { lo, span, colours });
+  return colours;
+}
+
+/**
  * Is any of this map on screen at all?
  *
  * drawSubMap culls cell by cell, which is the right grain once you are drawing
@@ -1393,14 +1476,12 @@ export function drawSubMap(
       // Placed through the same projection as everything else, so a child sits
       // where the sphere says it sits.
       const kplace = unitPlacements(kids, f);
+      const kcol = mosaicColours(kids, lo, span);
       for (let k = 0; k < kids.patch.count; k++) {
         const kg = kplace[k];
         const kx = cx + kg.x * size;
         const ky = cy + kg.y * size;
-        const alt = 0.72 + 0.5 * ((kids.elevationM[k] - lo) / span);
-        ctx.fillStyle = kids.elevationM[k] < 0
-          ? OCEAN
-          : shade(BIOME_COLOURS[kids.biome[k]], alt);
+        ctx.fillStyle = kcol[k];
         if (childEdges > 0) {
           ctx.strokeStyle = 'rgba(10,16,24,0.30)';
           ctx.lineWidth = childEdges;
