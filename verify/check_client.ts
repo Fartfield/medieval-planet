@@ -215,6 +215,7 @@ for (let depth = 1; depth <= 7; depth++) {
   fire('keydown', { key: 'Enter' });
   frames(2);
   drewThisLayer(`layer ${depth}`);
+  if (depth === 2 || depth === 4) dragTest(`dragging on layer ${depth}`);
 }
 console.log('');
 
@@ -225,6 +226,27 @@ console.log('');
 // ZOOMED OUT, which is where a wider range shows. At the default zoom the view
 // fits one map and everything beyond it is culled, so more maps drawn is more
 // maps generated and the same picture; zoom out and the extra ground appears.
+// SCROLLING, TIMED. This is the thing that has to feel like real time: a drag
+// moves the view, new ground comes in at the leading edge, and every map and
+// every tile of it has to be built before it can be drawn.
+function dragTest(label: string): void {
+  const times: number[] = [];
+  fire('canvas:mousedown', { clientX: 800, clientY: 450, button: 0 });
+  let x = 800;
+  for (let i = 0; i < 30; i++) {
+    x -= 40;
+    fire('mousemove', { clientX: x, clientY: 450 });
+    const t0 = Date.now();
+    frames(1);
+    times.push(Date.now() - t0);
+  }
+  fire('mouseup', {});
+  times.sort((a, b) => a - b);
+  const total = times.reduce((a, b) => a + b, 0);
+  console.log(`    ${label}: median ${times[15]} ms, 90th ${times[27]} ms, worst ${times[29]} ms,`
+    + ` total ${total} ms, ${times.filter((t) => t > 16).length} of 30 over 16 ms`);
+}
+
 console.log('  the same layer, zoomed out');
 for (const steps of [0, 3, 6, 9]) {
   for (let i = 0; i < steps; i++) fire('canvas:wheel', { deltaY: 120, preventDefault: () => {} });

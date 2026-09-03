@@ -34,7 +34,7 @@ import type { Polity } from '../../sim/model/polity.ts';
 import { AUTHORITY_REACH_KM } from '../../sim/model/polity.ts';
 import {
   newCamera, globeView, flatView, drawGlobe, drawSubMap,
-  pickGlobe, pickAmong, houseColour, blendColours, TINT_MIN_PX, MOSAIC_MIN_PX,
+  pickGlobe, pickAmong, mapIsVisible, houseColour, blendColours, TINT_MIN_PX, MOSAIC_MIN_PX,
   type Frame,
   type ChildLookup,
   type Camera, type CellTint,
@@ -257,8 +257,16 @@ const VIEW_RANGE = 5;
  * from the cost of drawing it: drawSubMap culls each cell before asking for
  * its children, so a map beyond the window costs one map and no tiles.
  */
+let drawnCacheKey = '';
+let drawnCache: number[][] = [];
+
 function drawnMapsOf(w: World, at: readonly number[]): number[][] {
   if (at.length <= 1) return [];
+  // The set only changes when the middle map does, and asking the world for it
+  // is a descent per candidate -- 0.30 ms, which is small until it is paid
+  // sixty times a second for an answer that has not changed.
+  const key = toKey(at as number[]);
+  if (key === drawnCacheKey) return drawnCache;
   const parent = w.subMap((at as number[]).slice(0, -1));
   const here = w.tile(at as number[]).dir;
   // A little past the range, so a map exactly at the limit is not lost to
@@ -266,7 +274,9 @@ function drawnMapsOf(w: World, at: readonly number[]): number[][] {
   const reach = parent.spacingM * (VIEW_RANGE + 0.35);
   const near = w.cellsWithin(here[0], here[1], here[2], reach, at.length, 4096);
   const mine = toKey(at as number[]);
-  return near.filter((a) => a[0] === at[0] && toKey(a) !== mine) as number[][];
+  drawnCacheKey = key;
+  drawnCache = near.filter((a) => a[0] === at[0] && toKey(a) !== mine) as number[][];
+  return drawnCache;
 }
 
 /**
@@ -407,6 +417,37 @@ function visibleOverlays(
     if (d.population) populated.set(cell, (populated.get(cell) ?? 0) + d.population);
   }
   return { owned, populated };
+}
+
+/**
+ * Every map's overlays at one depth, built in a single pass.
+ *
+ * The same grouping visibleOverlays does for one map, done once for all of
+ * them: a delta's address says which map it belongs to, so one walk over the
+ * deltas fills every map's buckets at once. What was a hundred and twenty
+ * walks of a growing list per frame is one.
+ */
+function overlayIndex(
+  w: World, depth: number,
+): Map<string, { owned: Map<number, number>; populated: Map<number, number> }> {
+  const out = new Map<string, { owned: Map<number, number>; populated: Map<number, number> }>();
+  for (const d of w.allDeltas()) {
+    const address = fromKey(d.key);
+    if (address.length <= depth) continue;
+    const key = toKey(address.slice(0, depth));
+    let bucket = out.get(key);
+    if (bucket === undefined) {
+      bucket = { owned: new Map<number, number>(), populated: new Map<number, number>() };
+      out.set(key, bucket);
+    }
+    const cell = address[depth];
+    if (d.owner !== undefined && d.owner >= 0) {
+      const house = polities.find((p) => p.id === d.owner)?.house ?? d.owner;
+      bucket.owned.set(cell, house);
+    }
+    if (d.population) bucket.populated.set(cell, (bucket.populated.get(cell) ?? 0) + d.population);
+  }
+  return out;
 }
 
 /**
@@ -642,9 +683,21 @@ function draw(): void {
     // scrolling onto one still hands it the middle and clicking one still
     // finds it. They are not DRAWN, they are still there.
     if (path.length > 1) {
+      // ONE PASS OVER THE DELTAS FOR ALL THE MAPS, not one pass each.
+      //
+      // visibleOverlays walks every delta in the world to find the ones under
+      // a given map. Called per drawn map that is a hundred and twenty walks
+      // of the same list every frame, and the list is the part of the world
+      // that grows as the game is played -- so the view would get slower the
+      // longer anyone played it, which is the wrong way round.
+      const index = overlayIndex(world, path.length);
+      const empty = { owned: new Map<number, number>(), populated: new Map<number, number>() };
       for (const nb of drawnMapsOf(world, path)) {
-        const side = visibleOverlays(world, nb);
-        drawSubMap(ctx, world.subMap(nb), view, -1, side.owned, side.populated,
+        const map = world.subMap(nb);
+        // Off screen entirely: no placement, no overlay lookup, no cell loop.
+        if (!mapIsVisible(map, frame, view, w, h)) continue;
+        const side = index.get(toKey(nb)) ?? empty;
+        drawSubMap(ctx, map, view, -1, side.owned, side.populated,
           null, tintFor(world, nb), childrenFor(world, nb), frame);
       }
     }
