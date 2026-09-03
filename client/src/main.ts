@@ -222,6 +222,54 @@ function neighbourMapsOf(w: World, at: readonly number[]): number[][] {
 }
 
 /**
+ * FREE PARAMETER: how far the picture reaches, in maps.
+ *
+ * One means the middle map and the ring touching it, which is what the view
+ * showed when neighbours were first drawn. Five means every map within five
+ * steps -- up to ninety-one of them -- so the ground runs well past the edge
+ * of the window at ordinary zoom and panning does not walk off the end of it.
+ *
+ * Nothing measures where this should sit. It is bounded below by wanting to
+ * see past the tile you are on, and above by what it costs to generate maps
+ * that are then culled off-screen. Five is ours.
+ */
+const VIEW_RANGE = 5;
+
+/**
+ * The maps DRAWN around the middle one, which is not the same set as the maps
+ * that can be navigated to.
+ *
+ * Two rules, and both are about what can honestly be drawn together.
+ *
+ * SAME REGION ONLY. Everything descended from one region is a single lattice
+ * -- the rosette turn carries the region's grain all the way down, and two
+ * adjoining maps inside a region measure 0.02 degrees out of parallel at the
+ * median. Maps in a DIFFERENT region are on a different lattice: the globe is
+ * not a lattice, its neighbour bearings depart from a 60-degree one by up to
+ * 20.45 degrees, and those maps arrive turned by up to 23 degrees and offset
+ * by several tiles. Drawing them is drawing a tiling that does not exist, so
+ * the picture stops at the region's edge. See docs/fix-attempts.md.
+ *
+ * NOT AT THE REGION LAYER AT ALL, for the same reason taken to its conclusion:
+ * there, every neighbour IS another region.
+ *
+ * Generating a map that is then culled off-screen is not free, but it is far
+ * from the cost of drawing it: drawSubMap culls each cell before asking for
+ * its children, so a map beyond the window costs one map and no tiles.
+ */
+function drawnMapsOf(w: World, at: readonly number[]): number[][] {
+  if (at.length <= 1) return [];
+  const parent = w.subMap((at as number[]).slice(0, -1));
+  const here = w.tile(at as number[]).dir;
+  // A little past the range, so a map exactly at the limit is not lost to
+  // rounding in the distance test.
+  const reach = parent.spacingM * (VIEW_RANGE + 0.35);
+  const near = w.cellsWithin(here[0], here[1], here[2], reach, at.length, 4096);
+  const mine = toKey(at as number[]);
+  return near.filter((a) => a[0] === at[0] && toKey(a) !== mine) as number[][];
+}
+
+/**
  * Put a different map in the middle without the picture moving.
  *
  * Walking off one tile onto the next has to be seamless or it is not walking,
@@ -594,7 +642,7 @@ function draw(): void {
     // scrolling onto one still hands it the middle and clicking one still
     // finds it. They are not DRAWN, they are still there.
     if (path.length > 1) {
-      for (const nb of neighbourMapsOf(world, path)) {
+      for (const nb of drawnMapsOf(world, path)) {
         const side = visibleOverlays(world, nb);
         drawSubMap(ctx, world.subMap(nb), view, -1, side.owned, side.populated,
           null, tintFor(world, nb), childrenFor(world, nb), frame);

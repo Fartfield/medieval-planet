@@ -222,6 +222,17 @@ console.log('');
 // drawn once on load and again every time the player comes back to it, and
 // "it worked and then it did not" is exactly what a second visit failing looks
 // like.
+// ZOOMED OUT, which is where a wider range shows. At the default zoom the view
+// fits one map and everything beyond it is culled, so more maps drawn is more
+// maps generated and the same picture; zoom out and the extra ground appears.
+console.log('  the same layer, zoomed out');
+for (const steps of [0, 3, 6, 9]) {
+  for (let i = 0; i < steps; i++) fire('canvas:wheel', { deltaY: 120, preventDefault: () => {} });
+  drewThisLayer(`zoom out x${steps}`);
+  for (let i = 0; i < steps; i++) fire('canvas:wheel', { deltaY: -120, preventDefault: () => {} });
+}
+console.log('');
+
 console.log('  climbing back up');
 for (let depth = 7; depth >= 1; depth--) {
   fire('keydown', { key: 'Escape' });
