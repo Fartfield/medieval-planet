@@ -164,24 +164,24 @@ export type CellTint = (cell: number) => string | null;
 export type ChildLookup = (cell: number) => ChildFrame | null;
 
 /**
- * How wide a TILE must be on screen before its parent is drawn out of tiles.
+ * How wide a tile has to be on screen before a cell is drawn out of its own
+ * tiles at all. Below this the blend says the same thing more cheaply.
  *
- * Measured on the tile, not on the parent, and that is the whole point: it is
- * the tile that either reads as a shape or does not, so it is the tile the
- * question is about. Below four pixels the blend takes over, which is the same
- * information averaged, and at that size averaging is what the eye is doing
- * anyway.
+ * WHERE THIS BITES, measured, because it is a silent switch and worth knowing
+ * the size of. The world view's tile width is the globe's radius times CELL_R
+ * over sqrt(91), so at four pixels the mosaic turns off below about 458 CSS
+ * pixels of window:
  *
- * IT USED TO BE A THRESHOLD ON THE PARENT, and the globe and the flat maps
- * divide parent by child differently -- 9.5 against 8.7 -- so the same number
- * meant 3.9 px tiles on a sub-map and 7.4 px tiles on the globe. The globe was
- * held to twice the standard, and the moment the world map went from 92 cells
- * to 192 the window needed to clear it grew from about 390 px to 600. Under
- * that, the world view quietly fell back to a flat blend: the same
- * "constituent hexes are not being drawn" that had been fixed twice already,
- * arriving a third time through the one line that decides whether to draw them.
+ *     window   tile px      window   tile px
+ *       900      7.86         500      4.37
+ *       700      6.11         450      3.93   <- off
+ *       600      5.24         400      3.49   <- off
  *
- * Stated once, in tile pixels, both callers ask the identical question.
+ * CSS pixels are what innerHeight reports, so browser zoom moves a window
+ * across that line without its size changing. It was lowered to 1.5 on the
+ * suspicion that this was why the world view kept losing its tiles, and put
+ * back: verify_render deliberately asserts a 200 px globe asks for no
+ * children, and a window under 458 px is not what was being reported.
  */
 export const MOSAIC_MIN_PX = 4;
 

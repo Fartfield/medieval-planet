@@ -568,13 +568,37 @@ function draw(): void {
     const view = flatView(w, h, cam);
     const frame = frameFor(world);
 
-    // Neighbours first and the middle last, so where two maps overlap -- and
-    // they do, a hexagon of 91 hexagons covering about 91% of its parent -- the
-    // tile you are actually looking at is the one drawn on top.
-    for (const nb of neighbourMapsOf(world, path)) {
-      const side = visibleOverlays(world, nb);
-      drawSubMap(ctx, world.subMap(nb), view, -1, side.owned, side.populated,
-        null, tintFor(world, nb), childrenFor(world, nb), frame);
+    // NEIGHBOURS, EXCEPT AT THE REGION LAYER, and the exception is the whole
+    // of what can honestly be done about layer 2 for now.
+    //
+    // Every layer below this one draws neighbours that are children of the
+    // same map, so they and the middle map are ONE lattice and they mesh:
+    // measured, two adjoining maps inside a region are 0.02 degrees out of
+    // parallel at the median and 0.11 at the worst.
+    //
+    // A region's neighbours are other REGIONS, children of the globe, and the
+    // globe is not a lattice -- its neighbour bearings depart from a 60-degree
+    // lattice by up to 20.45 degrees. So those maps arrive turned against this
+    // one by up to 23 degrees and offset by several tiles, and drawing them is
+    // drawing a tiling that does not exist. Four ways of choosing a better
+    // orientation were tried and measured; the best halved it and none removed
+    // it, and the reason is structural rather than a bug to find. See
+    // docs/fix-attempts.md.
+    //
+    // So at the region layer the picture shows the region, exactly, and stops.
+    // A hard edge is a true statement about where this grid can still tile;
+    // tiles at 23 degrees to their neighbours are not. Everything below draws
+    // its neighbours as before, because there they are real.
+    //
+    // Navigation is untouched: onScreen still returns the neighbouring maps, so
+    // scrolling onto one still hands it the middle and clicking one still
+    // finds it. They are not DRAWN, they are still there.
+    if (path.length > 1) {
+      for (const nb of neighbourMapsOf(world, path)) {
+        const side = visibleOverlays(world, nb);
+        drawSubMap(ctx, world.subMap(nb), view, -1, side.owned, side.populated,
+          null, tintFor(world, nb), childrenFor(world, nb), frame);
+      }
     }
 
     drawSubMap(ctx, world.subMap(path), view, selected, owned, populated,

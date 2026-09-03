@@ -218,6 +218,18 @@ for (let depth = 1; depth <= 7; depth++) {
 }
 console.log('');
 
+// BACK UP THE LADDER, which is the path nobody had tested. The world view is
+// drawn once on load and again every time the player comes back to it, and
+// "it worked and then it did not" is exactly what a second visit failing looks
+// like.
+console.log('  climbing back up');
+for (let depth = 7; depth >= 1; depth--) {
+  fire('keydown', { key: 'Escape' });
+  frames(2);
+  drewThisLayer(`back to layer ${depth - 1 === 0 ? 'world view' : String(depth - 1)}`);
+}
+console.log('');
+
 console.log('  what the client logged');
 for (const line of logLines) console.log(`    ${line}`);
 console.log('');
