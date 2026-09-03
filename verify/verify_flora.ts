@@ -14,6 +14,7 @@
 import * as A from '../sim/anchors.ts';
 import { Biome, type BiomeId } from '../sim/model/biome.ts';
 import { floraAt, countOn, FloraKind, FLORA_NAMES } from '../sim/model/flora.ts';
+import { underCanopy } from '../client/src/render.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 /** Productivity, g/m2/yr, roughly what each biome actually manages. */
@@ -125,6 +126,39 @@ suite('what grows on it', () => {
   assert('a parish tile holds a few trees', parish > 1 && parish < 20);
   assert('and a pace tile holds a small fraction of one',
     pace > 0 && pace < 0.001);
+
+  // THE CANOPY THE MAP DRAWS IS THE CANOPY THE MODEL DERIVED.
+  //
+  // Plant life is drawn by thresholding a noise field at the cover the model
+  // gives, so the picture is only telling the truth if that threshold means
+  // what it says. It did not: a smooth noise is bell-shaped, not uniform, and
+  // measured over 200,000 samples noise3 sits about 0.5 with a standard
+  // deviation of 0.130 -- so asking for values under 0.8 returned 99.4% of the
+  // ground. An 81%-cover forest would have drawn as solid leaf and a 26%
+  // savanna as nearly bare, and nothing would have said so.
+  //
+  // This walks the corrected field over a great many points and counts how
+  // much ground it actually puts under a crown.
+  const dir = new Float64Array(3);
+  let worstMiss = 0;
+  for (const cover of [0.1, 0.26, 0.5, 0.81, 0.95]) {
+    let under = 0;
+    const n = 20000;
+    for (let i = 0; i < n; i++) {
+      // A deterministic spiral over the sphere, the same points every run.
+      const t = (i + 0.5) / n;
+      const y = 1 - 2 * t;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const a = i * 2.399963229728653;
+      dir[0] = Math.cos(a) * r; dir[1] = y; dir[2] = Math.sin(a) * r;
+      if (underCanopy(dir[0], dir[1], dir[2], 6371000, 8, cover)) under++;
+    }
+    const got = under / n;
+    measure(`ground under canopy at cover ${cover}`, got);
+    worstMiss = Math.max(worstMiss, Math.abs(got - cover));
+  }
+  measure('worst miss between drawn cover and derived cover', worstMiss);
+  assert('the map draws the canopy the model derived', worstMiss < 0.06);
 
   // The names line up with the enum, so a label can never name the wrong thing.
   check('every habit has a name', FLORA_NAMES.length, 5, 0);

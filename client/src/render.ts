@@ -18,6 +18,9 @@ import { BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import type { Planet } from '../../sim/gen/planet.ts';
 import type { SubMap, Basis } from '../../sim/gen/submap.ts';
 import { toDirection, toLocal, cellContaining } from '../../sim/gen/submap.ts';
+import { noise3 } from '../../sim/gen/noise.ts';
+import { floraAt, FloraKind } from '../../sim/model/flora.ts';
+import * as A from '../../sim/anchors.ts';
 import type { Patch } from '../../sim/geo/patch.ts';
 import {
   PENT_HALO_COUNT, pentCornerNeighbours,
@@ -832,6 +835,17 @@ export interface ChildFrame {
   cellRadiusRad: number;
   /** 91 hexagons or 76 pentagon-patch cells. See sim/geo/patch.ts. */
   patch: Patch;
+  /**
+   * Productivity, and the scale the map is drawn at.
+   *
+   * Both are here because PLANT LIFE is drawn from them: how much grows
+   * follows from productivity, and whether a crown can be told from its
+   * neighbours follows from how big a tile is against a crown. The spacing in
+   * metres and the spacing in radians together also give the sphere's radius,
+   * so the renderer never has to be told it separately.
+   */
+  nppGm2: Float32Array;
+  spacingM: number;
 }
 
 /**
@@ -1271,6 +1285,109 @@ function tracePolygon(
 }
 
 /**
+ * The colours plant life is drawn in.
+ *
+ * Not biome colours -- those say what KIND of place it is. These say what is
+ * standing on it, so that a thin wood and a closed one differ on the map by
+ * more than their label. Leaf is what a crown looks like from above; ground is
+ * what shows between crowns, which is bare earth where nothing grows under
+ * them and grass where something does.
+ */
+const LEAF_TREE = '#2c4a24';
+const LEAF_SHRUB = '#4a5a2c';
+const LEAF_VINE = '#3a6030';
+const GRASS_GREEN = '#7a8b46';
+const BARE_GROUND = '#8a7d63';
+
+/**
+ * Is this spot under a crown?
+ *
+ * A noise field at one cycle per crown, thresholded at the canopy cover the
+ * flora model derived -- so a wood at 81% cover has 81% of its ground under
+ * leaf, and a savanna at 26% has 26%.
+ *
+ * THE THRESHOLD NEEDS CORRECTING FIRST, and getting this wrong is silent. A
+ * smooth noise is not uniformly distributed: measured over 200,000 samples,
+ * noise3 is bell-shaped about 0.5 with a standard deviation of 0.130, so
+ * asking for values below 0.8 returns 99.4% of the ground rather than 80%. An
+ * 81%-cover forest would have drawn as solid leaf and a 26% savanna as almost
+ * bare, and nothing about the picture would have said so.
+ *
+ * Put through its own distribution first the threshold means what it says. A
+ * logistic is a close enough stand-in for the normal CDF here -- measured
+ * after correction, asking for 0.25 gives 0.272, 0.50 gives 0.499 and 0.80
+ * gives 0.780, which is well inside what a canopy estimate is worth.
+ */
+const NOISE_MEAN = 0.5;
+const NOISE_SD = 0.1303;
+
+export function underCanopy(
+  dirX: number, dirY: number, dirZ: number,
+  radiusM: number, crownM: number, cover: number,
+): boolean {
+  if (cover <= 0) return false;
+  if (cover >= 1) return true;
+  const f = radiusM / Math.max(1e-9, crownM);
+  const raw = (noise3(dirX * f, dirY * f, dirZ * f, 0x10A5) + 1) / 2;
+  const uniform = 1 / (1 + Math.exp(-1.702 * (raw - NOISE_MEAN) / NOISE_SD));
+  return uniform < cover;
+}
+
+/**
+ * How plant life is drawn, and why it is ONE mechanism at every scale.
+ *
+ * The obvious way is two ways: a texture standing for density when zoomed out,
+ * and individual plants drawn when zoomed in. That is two models of the same
+ * wood, and they disagree -- the texture says a third of the ground is covered
+ * while the trees you can count say something else, and the picture changes its
+ * mind as you descend.
+ *
+ * So there is one model: a canopy field at the crown's own size. At every point
+ * of the world a noise value decides whether that spot is under a crown, and
+ * the threshold is the canopy cover the flora model derived. Where a tile is
+ * SMALLER than a crown the field resolves into individual crowns, which is a
+ * tree drawn as the many tiles it stands on -- branch by branch, because at the
+ * yard layer a tile IS part of a tree. Where a tile is LARGER than a crown the
+ * same field averages to the cover fraction and reads as a density texture.
+ *
+ * The two are the same number seen at two distances, so descending through the
+ * layers shows the same wood getting nearer rather than a different one.
+ *
+ * `detail` is what fades between them: one when a crown spans several tiles,
+ * zero when a tile swallows a crown whole.
+ */
+function floraColour(
+  hex: string, dirX: number, dirY: number, dirZ: number,
+  biome: number, npp: number, radiusM: number, tileSpacingM: number,
+): string {
+  const flora = floraAt(biome as never, npp);
+  if (flora.dominant === FloraKind.None) return hex;
+
+  const crownM = flora.dominant === FloraKind.Tree ? A.TREE_CROWN_M
+    : flora.dominant === FloraKind.Vine ? A.VINE_CROWN_M
+      : flora.dominant === FloraKind.Shrub ? A.SHRUB_CROWN_M
+        : A.SHRUB_CROWN_M / 4;
+
+  // How much of a crown a tile covers decides whether crowns can be told apart
+  // at all. Below a third of a crown they resolve; above it they blur.
+  const detail = Math.max(0, Math.min(1, crownM / Math.max(1e-9, tileSpacingM * 3)));
+  if (detail <= 0.01) return hex;
+
+  const leaf = flora.dominant === FloraKind.Tree ? LEAF_TREE
+    : flora.dominant === FloraKind.Vine ? LEAF_VINE
+      : flora.dominant === FloraKind.Shrub ? LEAF_SHRUB : GRASS_GREEN;
+  // What shows between the crowns: grass if the ground grows any, else earth.
+  const between = flora.grassPerM2 > 20 ? GRASS_GREEN : BARE_GROUND;
+
+  // The canopy field, at one cycle per crown.
+  const under = underCanopy(dirX, dirY, dirZ, radiusM, crownM, flora.canopyCover);
+
+  // Blend towards what is actually there, by how much of it can be resolved.
+  const target = under ? leaf : between;
+  return mixHex(hex, target, detail * (under ? 0.75 : 0.55));
+}
+
+/**
  * FREE PARAMETER: how much of a tile's colour comes from the tiles around it.
  *
  * Zero draws every tile in its own flat colour, and the hexagons then read as
@@ -1314,6 +1431,9 @@ function mosaicColours(kids: ChildFrame, lo: number, span: number): string[] {
   if (hit !== undefined && hit.lo === lo && hit.span === span) return hit.colours;
 
   const n = kids.patch.count;
+  // The sphere's radius, recovered from what a map already carries: a cell's
+  // spacing in metres over its spacing in radians.
+  const radiusM = kids.spacingM / (SQRT3 * kids.cellRadiusRad);
   const r = new Float64Array(n);
   const g = new Float64Array(n);
   const b = new Float64Array(n);
@@ -1321,7 +1441,11 @@ function mosaicColours(kids: ChildFrame, lo: number, span: number): string[] {
   // Own colour first, in numbers rather than strings, so the blend below is
   // arithmetic instead of parsing.
   for (let k = 0; k < n; k++) {
-    const hex = kids.elevationM[k] < 0 ? OCEAN : BIOME_COLOURS[kids.biome[k]];
+    const base = kids.elevationM[k] < 0 ? OCEAN : BIOME_COLOURS[kids.biome[k]];
+    // What is growing on it, drawn at whatever scale this map is at.
+    const hex = kids.elevationM[k] < 0 ? base : floraColour(
+      base, kids.dirs[k * 3], kids.dirs[k * 3 + 1], kids.dirs[k * 3 + 2],
+      kids.biome[k], kids.nppGm2[k], radiusM, kids.spacingM);
     const v = parseInt(hex.slice(1), 16);
     // The same relief shading the tiles had before, applied here instead.
     const f = Math.max(0.25, Math.min(1.55,
