@@ -29,6 +29,7 @@
 // of ground.
 
 import * as A from './anchors.ts';
+import { woodNeedKgPerYear } from './model/woodland.ts';
 import { SOLDIER_GRAIN_KG_PER_DAY } from './derive.ts';
 import { fromKey, type Address } from './geo/address.ts';
 import { clamp } from './gen/mathx.ts';
@@ -75,7 +76,12 @@ export interface Report {
   ironOut: number;
   ironLimitedBy: 'no ore' | 'hands' | 'wood';
   oreRichness: number;
+  /** What the woodland in reach GROWS in a year, kg. Not what it stands. */
   timberKgPerYear: number;
+  /** What the hearths burn in a year, kg, before any smelting. */
+  woodNeedKgPerYear: number;
+  /** How much of that the woodland's growth covers, 0..1. */
+  woodSupply: number;
 
   /** Is there anybody else in the world to trade with?
    *
@@ -187,8 +193,25 @@ export function runEconomy(world: World): EconomyResult {
     const catchment = world.catchmentFor(address, population);
     const idleDays =
       (population * A.WORKERS_PER_FAMILY) / 5 * A.WORKING_DAYS_PER_YEAR * (1 - farmShare);
+
+    // THE HEARTHS ARE SERVED BEFORE THE FURNACE, and until now they were not
+    // served at all: ironworking had the whole of the woodland's increment to
+    // burn while the people living there heated and cooked on nothing.
+    //
+    // Fuel first is not a rule imposed on the model, it is what a village does.
+    // Nobody smelts iron in a cold house. So the domestic demand comes off the
+    // top and the smith gets the remainder, which is why a big settlement in
+    // thin woodland stops making iron long before it stops being a settlement.
+    //
+    // It is also a much larger demand than the furnace: measured, a village of
+    // 200 burns 204 tonnes a year at its hearths and 4 at its forge.
+    const woodNeed = woodNeedKgPerYear(population, 0);
+    const woodSupplyRatio = woodNeed <= 0
+      ? 1
+      : Math.min(1, catchment.timberKgPerYear / woodNeed);
+    const woodForIron = Math.max(0, catchment.timberKgPerYear - woodNeed);
     const ironMade =
-      ironOutputKgPerYear(idleDays, oreRichness, catchment.timberKgPerYear) * perTurn;
+      ironOutputKgPerYear(idleDays, oreRichness, woodForIron) * perTurn;
 
     reports.set(delta.key, {
       key: delta.key,
@@ -207,9 +230,11 @@ export function runEconomy(world: World): EconomyResult {
       ironStock: ironStock + ironMade,
       ironIn: 0,
       ironOut: 0,
-      ironLimitedBy: ironLimit(idleDays, oreRichness, catchment.timberKgPerYear),
+      ironLimitedBy: ironLimit(idleDays, oreRichness, woodForIron),
       oreRichness,
       timberKgPerYear: catchment.timberKgPerYear,
+      woodNeedKgPerYear: woodNeed,
+      woodSupply: woodSupplyRatio,
       alone,
       ration: 0,
       idleShare: 0,

@@ -19,6 +19,10 @@ import {
   annualGrowthTPerHa, sustainableCutTPerHa, yearsOfStock, woodNeedKgPerYear,
   woodlandNeededHa, woodSupply, WOOD_KG_PER_PERSON_YEAR, BUILDING_KG_PER_PERSON_YEAR,
 } from '../sim/model/woodland.ts';
+import { World } from '../sim/world.ts';
+import { resolveTurn } from '../sim/turn.ts';
+import { toKey } from '../sim/geo/address.ts';
+import { bestRegion, groundSiteIn } from './sites.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 const TEMPERATE_NPP = 1000;
@@ -123,4 +127,60 @@ suite('wood, and how much of it there is', () => {
   check('an empty tile wants no wood', woodNeedKgPerYear(0, 0), 0, 0);
   check('and is therefore supplied',
     woodSupply(0, 0, 0, Biome.TemperateForest, TEMPERATE_NPP).supply, 1, 0);
+});
+
+suite('fuel is a town problem and an open-country problem', () => {
+  // The finding this model exists to produce, and it is not the one the phrase
+  // "medieval deforestation" suggests. A VILLAGE never runs short of fuel,
+  // wherever it stands -- even in desert, 200 people burn 204 tonnes against
+  // 225 grown. What runs short is a TOWN, and it runs short faster the more
+  // open the country is.
+  //
+  // That is the historical shape: fuel crises were urban and they were worst
+  // where there was no wood to begin with. London burned coal by the
+  // fourteenth century; a Wealden village never did.
+
+  function supplyFor(biome: number, people: number): number {
+    const finder = new World({ seed: 20260826 });
+    let region = -1;
+    try { region = bestRegion(finder, biome as never); } catch { return NaN; }
+    if (region < 0) return NaN;
+    const w = new World({ seed: 20260826 });
+    const site = groundSiteIn(w, region);
+    const crown = w.foundPolity(toKey(site), 0);
+    w.setDelta(site, {
+      owner: crown.id, population: people, populationHealth: 1,
+      grainStock: people * 330, farmShare: 1,
+    });
+    const r = resolveTurn(w, [], 1).reports.get(toKey(site));
+    return r === undefined ? NaN : r.woodSupply;
+  }
+
+  for (const [name, biome] of [
+    ['forest', Biome.TemperateForest],
+    ['taiga', Biome.Taiga],
+    ['savanna', Biome.Savanna],
+    ['grassland', Biome.TemperateGrassland],
+    ['desert', Biome.Desert],
+  ] as [string, number][]) {
+    const village = supplyFor(biome, 200);
+    const town = supplyFor(biome, 7000);
+    measure(`${name}: a village of 200 is supplied`, village);
+    measure(`${name}: a town of 7,000 is supplied`, town);
+    assert(`a village of 200 keeps its fires in ${name}`, village > 0.99);
+    assert(`and a town never has it easier than a village in ${name}`,
+      town <= village + 1e-9);
+  }
+
+  // The ordering is the claim: the more open the country, the sooner a town
+  // runs out. Nothing sorts these; the productivity and the woody fraction do.
+  const forestTown = supplyFor(Biome.TemperateForest, 7000);
+  const taigaTown = supplyFor(Biome.Taiga, 7000);
+  const grassTown = supplyFor(Biome.TemperateGrassland, 7000);
+  const desertTown = supplyFor(Biome.Desert, 7000);
+  assert('a town in forest is better fuelled than one in taiga',
+    forestTown > taigaTown);
+  assert('taiga better than grassland', taigaTown > grassTown);
+  assert('and grassland better than desert', grassTown > desertTown);
+  assert('a town on open ground is genuinely short', grassTown < 0.5);
 });
