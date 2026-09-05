@@ -1428,3 +1428,43 @@ export const HOUSE_PEOPLE = 5.0;
 
 /** Air-dry mixed hardwood, kg per cubic metre. Oak is 700, pine 500. */
 export const WOOD_DENSITY_KG_M3 = 600.0;
+
+// ---------------------------------------------------------------------------
+// Grazing
+// ---------------------------------------------------------------------------
+
+/**
+ * The standard livestock unit, kg: a mature cow.
+ *
+ * Herds are counted in these because a cow, an ox, five sheep and six pigs eat
+ * about the same amount, and the thing that limits a settlement is the eating
+ * rather than the animal. Five hundred kilogrammes is the figure agricultural
+ * statistics have used for a century, and a medieval cow was smaller -- so a
+ * herd counted here in units is more animals than it sounds.
+ */
+export const LIVESTOCK_UNIT_KG = 500.0;
+
+/**
+ * Dry matter a grazing animal eats daily, as a fraction of its own mass.
+ *
+ * Two and a half per cent, which is among the better-measured numbers in
+ * animal husbandry and barely varies between ruminants: a cow, a sheep and a
+ * deer all eat about a fortieth of themselves a day in dry fodder. It is set
+ * by gut capacity and passage rate, not by species.
+ */
+export const INTAKE_DRY_FRACTION = 0.025;
+
+/**
+ * FREE PARAMETER: how much of the forage grown is actually eaten.
+ *
+ * Not all of it, and not for want of appetite. A grazing animal treads on some,
+ * fouls some, and must leave enough leaf standing for the sward to regrow --
+ * graze a pasture to the ground and it stops producing. Continuous grazing is
+ * usually put at 40 to 60 per cent of production removed; rotational grazing
+ * does better and neither medieval commons nor open range was rotational.
+ *
+ * A half is ours. GRAZEABLE_FRACTION already says what share of a place's
+ * growth is within reach of something with hooves, which is a different
+ * question -- that one is about the canopy, this one is about the sward.
+ */
+export const PASTURE_UTILISATION = 0.5;

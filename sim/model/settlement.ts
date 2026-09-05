@@ -38,6 +38,8 @@ import { clamp } from '../gen/mathx.ts';
 import { yieldsFor, type SubMap } from '../gen/submap.ts';
 import { hectareDays, threshDays, HELD_HECTARE_DAYS_IRON } from './labour.ts';
 import { WOODY_FRACTION } from './resources.ts';
+import { forageKgPerHaYear } from './pasture.ts';
+import { type BiomeId } from './biome.ts';
 import { NAVIGABLE_M3_PER_S } from '../derive.ts';
 
 import {
@@ -108,6 +110,15 @@ export interface Catchment {
    * out rather than when the ore did.
    */
   timberKgPerYear: number;
+  /**
+   * Forage the catchment grows in a year that an animal could reach, kg dry.
+   *
+   * The grazing counterpart of the timber above, and a flow in the same way --
+   * except that grass has no standing reserve worth the name. A wood cut too
+   * hard hands over twenty years of windfall before it fails; a pasture eaten
+   * too hard is simply short of feed this summer.
+   */
+  forageKgPerYear: number;
 }
 
 export interface Harvest {
@@ -174,6 +185,7 @@ export function buildCatchment(
 
   const candidates: WorkedTile[] = [];
   let timberKgPerYear = 0;
+  let forageKgPerYear = 0;
 
   for (let m = 0; m < maps.length; m++) {
     const map = maps[m];
@@ -197,6 +209,13 @@ export function buildCatchment(
       // in competition with the fields for this, they are what is left over.
       // g/m2/yr to kg/ha/yr is a factor of ten exactly.
       timberKgPerYear += map.nppGm2[c] * 10 * WOODY_FRACTION[map.biome[c]] * areaHa;
+
+      // And what the beasts can eat off it, on the same terms and for the same
+      // reason: grass grows whether or not anyone ploughs, and the share of it
+      // an animal can reach is a property of the place. A savanna hands over
+      // most of its growth and a rainforest almost none of it, which is why the
+      // herds are where they are.
+      forageKgPerYear += forageKgPerHaYear(map.biome[c] as BiomeId, map.nppGm2[c]) * areaHa;
 
       const labourFactor = labourEfficiency(km);
       if (labourFactor <= 0) continue;
@@ -238,7 +257,10 @@ export function buildCatchment(
     || a.map - b.map
     || a.cell - b.cell);
 
-  return { maps, mapAddresses, candidates, radiusM, cellHa: areaHa, timberKgPerYear };
+  return {
+    maps, mapAddresses, candidates, radiusM, cellHa: areaHa,
+    timberKgPerYear, forageKgPerYear,
+  };
 }
 
 /**
