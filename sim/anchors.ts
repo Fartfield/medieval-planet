@@ -1386,3 +1386,45 @@ export const GRASS_TUFT_G = 3.0;
  * grassland and are not remotely the same number in a forest.
  */
 export const HERB_RESIDENCE_YR = 1.0;
+
+// ---------------------------------------------------------------------------
+// What a household burns and builds with
+// ---------------------------------------------------------------------------
+
+/**
+ * Firewood burnt per person per year, kg of dry wood.
+ *
+ * The largest use of wood in any pre-industrial society by a wide margin, and
+ * the one that decides how much woodland a village must keep. European
+ * consumption before coal is reported at one to two cubic metres of solid wood
+ * a head a year -- cooking every day, heating for half of it -- and at 600
+ * kg/m3 for mixed air-dry hardwood that is 600 to 1,200 kg. A tonne is the
+ * middle of it.
+ *
+ * It is worth seeing what this implies before believing it: a temperate wood
+ * grows about 8 t/ha/yr, so ONE hectare feeds eight people's fires for ever,
+ * and a village of two hundred needs twenty-five hectares of managed woodland.
+ * That is why medieval woodland was coppiced, counted and fought over, and the
+ * model producing it from a fuel figure and a growth rate rather than being
+ * told it is the point.
+ */
+export const FIREWOOD_KG_PER_PERSON_YEAR = 1000.0;
+
+/**
+ * The timber in one house, cubic metres, and how long it stands.
+ *
+ * A timber-framed peasant house of the period takes ten to twenty cubic metres
+ * of oak in its frame, and the frames last: surviving English examples are six
+ * hundred years old and still holding a roof up. A hundred years is a
+ * conservative service life for the purpose of an annual replacement rate.
+ *
+ * Building is a small demand next to burning, which is the historically
+ * important part -- a village could not run out of house frames, and could very
+ * easily run out of fuel.
+ */
+export const HOUSE_TIMBER_M3 = 15.0;
+export const HOUSE_LIFE_YEARS = 100.0;
+export const HOUSE_PEOPLE = 5.0;
+
+/** Air-dry mixed hardwood, kg per cubic metre. Oak is 700, pine 500. */
+export const WOOD_DENSITY_KG_M3 = 600.0;
