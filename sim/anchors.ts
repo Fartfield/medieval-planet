@@ -1468,3 +1468,44 @@ export const INTAKE_DRY_FRACTION = 0.025;
  * question -- that one is about the canopy, this one is about the sward.
  */
 export const PASTURE_UTILISATION = 0.5;
+
+// ---------------------------------------------------------------------------
+// The shape of the year
+// ---------------------------------------------------------------------------
+
+/**
+ * The tilt of the axis, degrees.
+ *
+ * The whole reason there is a year rather than a long unchanging day. Earth's
+ * obliquity is 23.44 degrees and it is why the tropics are where they are --
+ * the Tropic of Cancer is the latitude at which the sun reaches the zenith,
+ * which is the tilt exactly, and the Arctic Circle is 90 minus the tilt, the
+ * latitude at which the sun fails to rise at midwinter.
+ *
+ * Change this and you change the world: at zero there are no seasons at all,
+ * and past 54 degrees the poles receive more annual sunlight than the equator
+ * and the whole climate model turns inside out.
+ */
+export const AXIAL_TILT_DEG = 23.44;
+
+/**
+ * The solar constant, W/m2: sunlight arriving at the top of the atmosphere.
+ *
+ * Measured by satellite at 1361. Everything about how much a place grows
+ * begins here, and the seasonal part of it is this number times the geometry
+ * of a tilted sphere.
+ */
+export const SOLAR_CONSTANT_W_M2 = 1361.0;
+
+/**
+ * How far the warmest week lags the longest day, weeks.
+ *
+ * The sun is highest at midsummer and the hottest weather comes a month later,
+ * because ground and air take time to warm and the surplus keeps accumulating
+ * while days are still longer than nights. Over land the lag is measured at
+ * three to five weeks; over ocean it is nearer eight, which is why maritime
+ * summers are late and mild.
+ *
+ * Four weeks is the land figure, and this world's people live on land.
+ */
+export const THERMAL_LAG_WEEKS = 4.0;
