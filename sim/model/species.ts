@@ -20,7 +20,7 @@
 // months -- rather than chosen to look right.
 
 import { type Composition } from './material.ts';
-import { type Species, type PartSpec, Part, PERENNIAL } from './plant.ts';
+import { type Species, type PartSpec, Part, Habit, PERENNIAL } from './plant.ts';
 
 /** Fill in the nine, leaving out what is absent. */
 function mix(parts: Partial<Composition>): Composition {
@@ -110,6 +110,7 @@ const OAK_PARTS: PartSpec[] = [
 
 export const OAK: Species = {
   name: 'oak',
+  habit: Habit.Tree,
   lifespanYears: 400,
   // A mature standard oak: about two tonnes of dry above-ground mass, and the
   // roots again on top of that.
@@ -118,6 +119,9 @@ export const OAK: Species = {
   // timber oak actually does.
   growthRate: 0.0245,
   matureSpreadM: 18,
+  // A mature standard oak in the open: twenty metres, and about as wide.
+  matureHeightM: 20,
+  stems: 1,
   germination: {
     // An acorn needs a winter before it will start, which is why an autumn
     // crop comes up the following spring and not the same month.
@@ -130,12 +134,17 @@ export const OAK: Species = {
 
 export const HAZEL: Species = {
   name: 'hazel',
+  habit: Habit.Shrub,
   lifespanYears: 80,
   matureMassKg: 45,
   // Half its mass by about seven years, which is why the coppice cycle is seven
   // years and not a number somebody picked.
   growthRate: 0.28,
   matureSpreadM: 4,
+  matureHeightM: 5,
+  // A cut stool throws six to ten poles. Seven, and the check is that they come
+  // out at the three to five centimetres a hazel rod actually measures.
+  stems: 7,
   germination: { minTempC: 8, chillWeeks: 10, weeklyOdds: 0.08, seedlingSurvival: 0.05 },
   parts: [
     { part: Part.Root, share: 0.23, densityKgM3: 560, pigment: WOOD_PALE, phenology: PERENNIAL,
@@ -146,7 +155,15 @@ export const HAZEL: Species = {
       composition: mix({ water: 0.12, cellulose: 0.45, lignin: 0.23, tannin: 0.01, sugar: 0.175, protein: 0.011, ash: 0.004 }) },
     { part: Part.Bark, share: 0.09, densityKgM3: 520, pigment: BARK_BROWN, phenology: PERENNIAL,
       composition: mix({ water: 0.16, cellulose: 0.30, lignin: 0.28, tannin: 0.14, sugar: 0.08, protein: 0.02, ash: 0.02 }) },
-    { part: Part.Twig, share: 0.09, densityKgM3: 580, pigment: BARK_BROWN, phenology: { from: SPRING, to: 0 },
+    // SPLIT OUT OF THE TWIG SHARE, and the geometry is what forced it. Hazel
+    // carried 0.09 as Twig and no Branch at all, which made the pipe model
+    // divide nine per cent of the plant among a single year's shoots and hand
+    // back twigs fifteen millimetres thick. Most of that mass is older side
+    // wood, which is Branch; a year's shoot is nearer three per cent, and at
+    // three per cent the derived twig comes out at three millimetres.
+    { part: Part.Branch, share: 0.062, densityKgM3: 590, pigment: BARK_BROWN, phenology: PERENNIAL,
+      composition: mix({ water: 0.20, cellulose: 0.40, lignin: 0.22, tannin: 0.03, sugar: 0.13, protein: 0.015, ash: 0.005 }) },
+    { part: Part.Twig, share: 0.028, densityKgM3: 580, pigment: BARK_BROWN, phenology: { from: SPRING, to: 0 },
       composition: mix({ water: 0.38, cellulose: 0.33, lignin: 0.18, tannin: 0.04, sugar: 0.05, protein: 0.008, ash: 0.002 }) },
     { part: Part.Bud, share: 0.004, densityKgM3: 700, pigment: BARK_BROWN, phenology: { from: AUTUMN, to: SPRING },
       composition: mix({ water: 0.45, cellulose: 0.20, lignin: 0.10, starch: 0.15, protein: 0.05, tannin: 0.03, ash: 0.02 }) },
@@ -167,10 +184,16 @@ export const HAZEL: Species = {
 
 export const BRAMBLE: Species = {
   name: 'bramble',
+  habit: Habit.Climber,
   lifespanYears: 12,
   matureMassKg: 6,
   growthRate: 1.1,
   matureSpreadM: 3,
+  // A cane arches to about waist height before it tips over and roots again,
+  // which is the whole of how a bramble travels.
+  matureHeightM: 1.2,
+  // A mature clump carries about forty canes, built up over several years.
+  stems: 40,
   germination: {
     // Passed through a bird, which is what the fruit is for. No chilling
     // needed and long odds, which is why brambles come up everywhere and
@@ -201,12 +224,19 @@ export const BRAMBLE: Species = {
 
 export const WHEAT: Species = {
   name: 'wheat',
+  habit: Habit.Grass,
   // An annual: it lives one season and dies, which is what makes it a crop.
   lifespanYears: 1,
   matureMassKg: 0.006,
   // Half its mass in about four months, which for an annual is most of a life.
   growthRate: 6.0,
   matureSpreadM: 0.15,
+  // A landrace wheat stands nearly a metre, which is why its straw was worth
+  // as much as its grain and why modern short-strawed wheat is a different
+  // bargain entirely.
+  matureHeightM: 0.9,
+  // Tillers: one sown grain puts up three or four shoots that carry an ear.
+  stems: 3,
   germination: {
     // Sown, not scattered, so no chilling and very high odds -- a farmer who
     // sowed seed that came up one time in ten would starve.
@@ -235,10 +265,14 @@ export const WHEAT: Species = {
 
 export const CARROT: Species = {
   name: 'carrot',
+  habit: Habit.Herb,
   lifespanYears: 2,
   matureMassKg: 0.12,
   growthRate: 4.0,
   matureSpreadM: 0.25,
+  // The leaf rosette. Nothing of the crop shows in it at all.
+  matureHeightM: 0.35,
+  stems: 1,
   germination: { minTempC: 6, chillWeeks: 0, weeklyOdds: 0.55, seedlingSurvival: 0.7 },
   parts: [
     { part: Part.Root, share: 0.08, densityKgM3: 700, pigment: WOOD_PALE, phenology: { from: 10, to: 44 },

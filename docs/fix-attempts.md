@@ -2123,3 +2123,69 @@ every depth is the image of one planar lattice per face. That is not phase 2;
 it is phase 2 and phase 4 together, and it replaces sphere.ts, submap.ts and
 patch.ts. The honest estimate is that it is the largest single change the
 project has had.
+
+
+## Plants have no visible size
+
+The map knew how many trees stood on a hectare and could not draw one. Two
+things were wrong and only the second was suspected.
+
+### ~~Give each species a drawn silhouette and scale it~~ -- not attempted, and
+here is why
+
+A silhouette is a capability typed in: it fixes how thick a trunk is, how many
+twigs hang off it and how dense a crown is, and none of those would then respond
+to the plant's mass. The whole point of a species sheet is that changing the
+mature mass changes the picture. Solving the shape instead costs one file and
+gives four numbers that can be checked against a tape.
+
+### The geometry found a part share that had been wrong since it was written
+
+Hazel carried `Twig 0.09` and no `Branch` part at all. Nothing complained: the
+shares summed to one, every composition check passed, and a hazel weighed what
+a hazel weighs. Then the pipe model divided nine per cent of the plant among a
+single year's shoots and handed back a twig **fifteen millimetres thick**, which
+is a broom handle.
+
+Most of that mass is older side wood, which is Branch. Split at `Branch 0.062,
+Twig 0.028` and the derived twig comes out at **2.6 mm**, against a measured 2
+to 5. Oak, which already had both parts, needed no change and came out at
+**5.0 mm** against a measured 4 to 8.
+
+The point worth keeping: no test of composition, mass or nutrition could ever
+have caught this. It took a second, independent consumer of the same numbers.
+
+### `spreadAt` was taking the site off twice
+
+Found by `a stunted oak is thin as well as short`, which failed at 0.79 where
+geometry demands 0.74 -- and would have read **1.00** at saturation.
+
+`spreadAt` was `matureSpreadM * site * cbrt(m / (matureMassKg * site))`. The
+mass already carries the site; multiplying by it again counted the same fact
+twice, so a poor-site oak had 40% of the mass in a volume 40% as wide -- the
+same wood packed into a sixth of the space. `heightM` inherited the same shape
+when it was written. The two errors then CANCELLED in the trunk derivation,
+because diameter goes as sqrt(volume / length), which is why a stunted oak came
+out with a thriving oak's bole and nothing else ever noticed.
+
+Both are now `cbrt(m / matureMassKg)` and nothing else. Measured after:
+
+        mass ratio at 150 years        0.197
+        trunk ratio                    0.582   = cbrt(0.197)
+        height ratio                   0.582   identical, as it must be
+        trunk ratio at saturation      0.737   = cbrt(0.4), the site ratio
+
+### The check that failed for the third time for the same reason
+
+`a stunted oak is thin as well as short` first asserted the trunk ratio against
+`cbrt(0.4)` -- the cube root of the SITE -- and got 0.582. That is not the rule
+failing. At 150 years the poor tree is at a fifth of the good tree's mass, not
+two fifths, because a poor site slows growth as well as capping it.
+
+This is the third time an unsaturated curve has been read as if it were
+saturated (see the mass ceiling check in `verify_plant.ts`, which did it at 400
+years and again at 4,000). **The habit to break: any ratio taken between two
+growth curves with different rates is a ratio of two paces as well as two
+ceilings, unless both have finished.** The fix each time is the same -- measure
+at saturation for the ceiling, measure the ratio against the actual mass ratio
+for everything else, and never let one number stand for both.

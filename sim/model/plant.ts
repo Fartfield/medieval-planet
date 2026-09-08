@@ -150,6 +150,28 @@ export function senescenceOf(p: Phenology, week: number, weeksPerYear: number): 
   return Math.max(0, Math.min(1, since / span));
 }
 
+/**
+ * How a plant holds itself up.
+ *
+ * Not decoration: it decides which parts carry the load, and therefore how the
+ * geometry in form.ts solves a stem. A tree and a shrub stand on heartwood and
+ * sapwood; a cane, a straw and a leaf stalk are the Branch part doing the same
+ * job with none of the timber. Getting this wrong makes a bramble cane come out
+ * four centimetres thick instead of nine millimetres, which is how the
+ * distinction earned its place.
+ */
+export const Habit = {
+  Tree: 0,
+  Shrub: 1,
+  Climber: 2,
+  Herb: 3,
+  Grass: 4,
+} as const;
+
+export type Habit = typeof Habit[keyof typeof Habit];
+
+export const HABIT_NAMES: readonly string[] = ['tree', 'shrub', 'climber', 'herb', 'grass'];
+
 /** One part of a species: what it is, how much of it, and what colour. */
 export interface PartSpec {
   part: Part;
@@ -184,6 +206,7 @@ export interface Germination {
 /** A species: its traits, and the parts it grows. */
 export interface Species {
   name: string;
+  habit: Habit;
   /** Years to live on good ground. */
   lifespanYears: number;
   /**
@@ -202,6 +225,23 @@ export interface Species {
   growthRate: number;
   /** Widest the plant gets, metres, at maturity on the best site. */
   matureSpreadM: number;
+  /**
+   * Tallest it gets, metres, at maturity on the best site.
+   *
+   * Measured, like the spread, and it earns its keep by solving the stem: the
+   * bole's volume divided by its length is what gives a trunk its thickness.
+   */
+  matureHeightM: number;
+  /**
+   * How many stems it carries from the ground.
+   *
+   * One for a tree. For a coppice shrub it is what the stool throws; for a
+   * bramble it is the canes in a mature clump; for wheat it is the tillers one
+   * grain puts up. This is the number that divides the wood, and the check on
+   * it is that the resulting stem thickness comes out at what a real one
+   * measures -- a hazel pole at a few centimetres, a cane at a few millimetres.
+   */
+  stems: number;
   germination: Germination;
   parts: readonly PartSpec[];
 }
@@ -240,13 +280,30 @@ export function massAt(s: Species, ageYears: number, site: number): number {
   return ceiling * dpow(1 - dexp(-rate * ageYears), 3);
 }
 
-/** How wide it is at that age, metres. Spread follows mass by the cube root. */
+/**
+ * How wide it is at that age, metres.
+ *
+ * SPREAD FOLLOWS MASS BY THE CUBE ROOT, and by nothing else. The first version
+ * of this took the cube root of the mass AND multiplied by the site quality on
+ * top, which counted the ground twice: a poor site already gives less mass, and
+ * scaling the width again on the same fact made a stunted oak forty per cent
+ * the mass of a good one but also forty per cent the width -- so it had the
+ * same wood packed into a sixth of the volume.
+ *
+ * Nothing said so until form.ts started solving trunks from mass and length.
+ * With height double-counted the same way, the two errors cancelled in the
+ * ratio and a stunted oak came out with the SAME trunk diameter as a thriving
+ * one, which is the measurement that found it (0.79 of the good tree's
+ * diameter where geometry demands 0.74, and heading for 1.00 at saturation).
+ *
+ * Taking the cube root of the mass against the species' own mature mass leaves
+ * one rule doing the work, and every linear dimension -- width, height, trunk
+ * -- then scales together as it must.
+ */
 export function spreadAt(s: Species, ageYears: number, site: number): number {
   const m = massAt(s, ageYears, site);
-  if (m <= 0) return 0;
-  const full = s.matureMassKg * Math.max(0, Math.min(1, site));
-  if (full <= 0) return 0;
-  return s.matureSpreadM * Math.max(0, Math.min(1, site)) * dpow(m / full, 1 / 3);
+  if (m <= 0 || s.matureMassKg <= 0) return 0;
+  return s.matureSpreadM * dpow(m / s.matureMassKg, 1 / 3);
 }
 
 /** The age at which it reaches a given share of its own final size, years. */
