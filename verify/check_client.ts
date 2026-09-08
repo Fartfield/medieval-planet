@@ -159,7 +159,7 @@ console.log('');
 console.log('  driving the real client against a stub canvas');
 console.log('');
 
-await import('../client/src/main.ts');
+const client = await import('../client/src/main.ts');
 
 // The world the server would have sent. Same seed the suites use, so what the
 // client builds is the world every other measurement describes.
@@ -212,15 +212,27 @@ function drewThisLayer(label: string): void {
   context.strokes = 0;
   context.nans = 0;
   context.images = 0;
+  // Reset too, now that the tile test subtracts them: left running, the arc
+  // count from earlier layers outgrew the fills and every layer reported FLAT.
+  context.arcs = 0;
   // Force a redraw. The dirty flag means an unchanged view draws nothing, and
   // a resize is the one event that invalidates without also changing what is
   // being looked at.
   fire('resize', {});
   frames(2);
-  const tiles = context.fills > 500;
-  plantsByLayer.set(label, context.images);
+  // POLYGON fills, not every fill. A plant drawn branch by branch at the
+  // deepest layer paints thousands of leaf discs, and counting those as
+  // evidence of a mosaic made a flat layer 7 report itself as tiled -- an arc
+  // is a leaf or a river and a bare fill is a tile.
+  const tiles = context.fills - context.arcs > 500;
+  // The renderer's own count, which is the only honest one now: a plant close
+  // enough to be traced branch by branch is never handed to drawImage, so the
+  // image counter reads zero exactly where the biggest tree on screen is.
+  const grew = client.floraLastFrame();
+  plantsByLayer.set(label, grew.plants);
   console.log(`    ${label.padEnd(28)} ${String(context.fills).padStart(6)} fills  `
-    + `${String(context.images).padStart(6)} plants  `
+    + `${String(grew.plants).padStart(6)} plants  `
+    + `${String(grew.hidden).padStart(5)} hidden  `
     + `${context.nans > 0 ? `${context.nans} NaN  ` : ''}`
     + (tiles ? 'drawn from its own tiles' : 'FLAT -- no constituent tiles'));
 }
@@ -235,7 +247,7 @@ for (let depth = 1; depth <= 7; depth++) {
   fire('keydown', { key: 'Enter' });
   frames(2);
   drewThisLayer(`layer ${depth}`);
-  if (depth === 2 || depth === 4 || depth === 5) dragTest(`dragging on layer ${depth}`);
+  if (depth === 2 || depth === 4 || depth === 5 || depth === 7) dragTest(`dragging on layer ${depth}`);
 }
 console.log('');
 
@@ -312,6 +324,21 @@ for (const [label, n] of plantsByLayer) {
 }
 console.log(`    layers that grew anything: ${plantedLayers}`);
 console.log('');
+
+// THE CLAIM, and it is the one that "I do not see trees" was about. Individuals
+// have to appear once they are affordable and to keep appearing all the way
+// down -- one layer with plants and none below it was the fault the crown
+// lattice was built to fix, and it is worth failing over rather than reading.
+if (plantedLayers < 3) {
+  console.log('  PLANTS APPEAR AT FEWER THAN THREE LAYERS. The lattice is not');
+  console.log('  finding the stems whose crowns cover the deep views.');
+  process.exit(1);
+}
+if (deepest === 0) {
+  console.log('  NOTHING GROWS AT THE DEEP LAYERS, which is where a plant is');
+  console.log('  meant to be drawn branch by branch.');
+  process.exit(1);
+}
 
 const failed = logLines.some((l) => l.startsWith('frame failed'));
 const mosaic = logLines.find((l) => l.startsWith('world view:'));

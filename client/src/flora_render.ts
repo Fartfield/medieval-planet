@@ -194,6 +194,73 @@ export function stampFor(
   return stamp;
 }
 
+/**
+ * The largest image that gets baked. Past this, the plant is traced.
+ *
+ * A stamp is an image at a fixed number of pixels, so drawing one larger than
+ * it was baked is an upscale, and at the deepest layer the upscale is
+ * fifty-fold: a two-metre view under an eighteen-metre oak asks for a crown
+ * fourteen thousand pixels across from a two hundred and fifty-six pixel
+ * picture. Baking bigger is no answer -- the same argument would come back one
+ * layer down, and a 4,096-pixel bake of one oak is sixty-four megabytes.
+ *
+ * So past this size the plant is drawn straight from its form, branch by
+ * branch, at whatever detail the size deserves. That costs about five hundred
+ * strokes for an oak and is affordable precisely BECAUSE it only happens when
+ * a crown fills the screen, which means there are two or three of them.
+ */
+const MAX_STAMP_PX = 256;
+
+/**
+ * Trace one plant at true scale, rather than stamping a picture of it.
+ *
+ * This is the close view the whole system was for: at the pace layer a tile IS
+ * part of a tree, and what you are looking at is its branches, in their real
+ * places, with its real leaves on them.
+ */
+export function traceForm(
+  ctx: CanvasRenderingContext2D,
+  s: Species, ageYears: number, week: number,
+  cx: number, cy: number, pxPerM: number, turn: number, seed: number,
+): number {
+  // Detail from the size, as the bake does, and allowed further because there
+  // are only ever a handful of plants big enough to reach this path.
+  const detail = Math.max(4, Math.min(8, Math.round(Math.log2(spreadAt(s, ageYears, 1) * pxPerM)) - 2));
+  const form = formOf(s, {
+    ageYears, site: 1, week, weeksPerYear: 52, seed, detail,
+  });
+  const c = Math.cos(turn);
+  const sn = Math.sin(turn);
+  const px = (x: number, y: number): [number, number] =>
+    [cx + (x * c - y * sn) * pxPerM, cy + (x * sn + y * c) * pxPerM];
+
+  ctx.lineCap = 'round';
+  for (const st of form.strokes) {
+    const [x0, y0] = px(st.x0, st.y0);
+    const [x1, y1] = px(st.x1, st.y1);
+    ctx.strokeStyle = rgb(st.rgb);
+    ctx.lineWidth = Math.max(1, st.widthM * pxPerM);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+  let drawn = form.strokes.length;
+  for (const pass of [true, false]) {
+    for (const b of form.blobs) {
+      if (b.buried) continue;
+      if ((b.part === Part.Leaf) !== pass) continue;
+      const [x, y] = px(b.x, b.y);
+      ctx.fillStyle = rgb(b.rgb);
+      ctx.beginPath();
+      ctx.arc(x, y, Math.max(1, b.radiusM * pxPerM), 0, Math.PI * 2);
+      ctx.fill();
+      drawn++;
+    }
+  }
+  return drawn;
+}
+
 /** How many images are being held, so a suite can say the cache is bounded. */
 export function stampCacheSize(): number {
   return stampCache.size;
@@ -208,6 +275,10 @@ export interface StandDrawn {
   drawn: number;
   /** Plants skipped because at this zoom they are smaller than a smudge. */
   tooSmall: number;
+  /** Plants not drawn because the canopy above them was already opaque. */
+  hidden: number;
+  /** Screen area their crowns covered, px2, overlaps counted twice. */
+  coverPx2: number;
 }
 
 /**
@@ -225,15 +296,27 @@ export function drawStand(
   plants: readonly Individual[],
   week: number,
   cx: number, cy: number, pxPerM: number, tc: number, ts: number,
+  budgetPx2 = Infinity,
 ): StandDrawn {
   let drawn = 0;
   let tooSmall = 0;
-  if (plants.length === 0 || pxPerM <= 0) return { drawn, tooSmall };
+  let hidden = 0;
+  let coverPx2 = 0;
+  if (plants.length === 0 || pxPerM <= 0) {
+    return { drawn, tooSmall, hidden, coverPx2 };
+  }
 
   const season = seasonOf(week, 52);
   const baseTurn = Math.atan2(ts, tc);
 
   for (const p of plants) {
+    // ONCE THE CANOPY IS OPAQUE, THE REST OF IT IS NOT VISIBLE. At the pace
+    // layer a two-metre view sits under a hundred and fifty crowns, every one
+    // of them eighteen metres wide and covering the whole screen, and drawing
+    // all of them is thirty-six screens of paint for a picture identical to
+    // three. The caller's budget is Beer's law again -- see drawFlora.
+    if (coverPx2 >= budgetPx2) { hidden++; continue; }
+
     // Its own true size, not its class's -- the shape is quantised and the
     // scale never is.
     const spreadM = spreadAt(p.species, p.ageYears, 1);
@@ -241,6 +324,21 @@ export function drawStand(
 
     const cls = sizeClassOf(p.species, p.ageYears, 1);
     const wantPx = spreadM * pxPerM;
+
+    // BRANCH BY BRANCH, once a stamp would be an upscale rather than a picture.
+    if (wantPx > MAX_STAMP_PX) {
+      const turn = ((p.seed % 360) * Math.PI) / 180 + baseTurn;
+      const dx0 = p.x * tc - p.y * ts;
+      const dy0 = p.x * ts + p.y * tc;
+      traceForm(
+        ctx, p.species, p.ageYears, SEASON_WEEKS[season],
+        cx + dx0 * pxPerM, cy + dy0 * pxPerM, pxPerM, turn, p.seed,
+      );
+      drawn++;
+      coverPx2 += (Math.PI * wantPx * wantPx) / 4;
+      continue;
+    }
+
     const stamp = stampFor(p.species, cls, season, quantise(wantPx));
     if (stamp === null) { tooSmall++; continue; }
 
@@ -267,9 +365,10 @@ export function drawStand(
     ctx.drawImage(stamp.image, -halfPx, -halfPx, halfPx * 2, halfPx * 2);
     ctx.restore();
     drawn++;
+    coverPx2 += Math.PI * halfPx * halfPx;
   }
 
-  return { drawn, tooSmall };
+  return { drawn, tooSmall, hidden, coverPx2 };
 }
 
 /**

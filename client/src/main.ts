@@ -38,6 +38,7 @@ import {
   type Frame,
   type ChildLookup,
   type Camera, type CellTint,
+  drawFlora, type FloraDrawn,
 } from './render.ts';
 
 // --- state ------------------------------------------------------------------
@@ -328,6 +329,16 @@ function focusOn(w: World, next: readonly number[]): void {
 }
 
 /** The frame every map in the flat view is drawn in the terms of. */
+/**
+ * What the last frame grew, so the headless client can say where the plants
+ * are rather than a person having to look.
+ */
+let lastFlora: FloraDrawn = { cells: 0, plants: 0, hidden: 0, texture: true };
+
+export function floraLastFrame(): FloraDrawn {
+  return lastFlora;
+}
+
 function frameFor(w: World): Frame {
   const middle = w.subMap(path);
   return { basis: middle.basis, cellRadiusRad: middle.cellRadiusRad, rotDeg: cam.rot };
@@ -704,6 +715,32 @@ function draw(): void {
 
     drawSubMap(ctx, world.subMap(path), view, selected, owned, populated,
       workedOverlay(world), tintFor(world, path), childrenFor(world, path), frame);
+
+    // THE PLANTS, ONCE, AFTER EVERY MAP'S GROUND IS FINISHED.
+    //
+    // Once a frame and not once a map, because the lattice they stand on is
+    // anchored to the REGION rather than to any one map: two adjoining maps
+    // would each claim the lattice cells along the edge they share and stamp
+    // the same trees twice. Drawing them here also gets the layering right for
+    // free -- a crown hangs over the edge of the ground it grows on, and
+    // anything drawn per map paints over its neighbour's overhang.
+    //
+    // The region's basis is what makes a tree keep its place all the way down
+    // the ladder. It is one sub-map lookup of an address the player is already
+    // inside, so it is already built.
+    const region = world.subMap([path[0]]);
+    const radiusM = region.spacingM / (Math.sqrt(3) * region.cellRadiusRad);
+    const nearby = [world.subMap(path)];
+    for (const nb of drawnMapsOf(world, path)) {
+      const m = world.subMap(nb);
+      if (mapIsVisible(m, frame, view, w, h)) nearby.push(m);
+    }
+    // Week 30, high summer, and it stays there until the calendar is something
+    // the simulation lives through rather than something the picture claims.
+    // See docs/known-gaps.md.
+    const grew = drawFlora(ctx, nearby, frame, view, region.basis, radiusM, 30,
+      String(path[0]));
+    lastFlora = grew;
   }
 
 }

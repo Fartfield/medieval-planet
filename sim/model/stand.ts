@@ -35,7 +35,7 @@ import { uniform3 } from '../gen/noise.ts';
 import { type BiomeId } from './biome.ts';
 import { floraAt, countOn, FloraKind, type Flora } from './flora.ts';
 import { type Species, Part, massAt } from './plant.ts';
-import { OAK, HAZEL, BRAMBLE, GRASS } from './species.ts';
+import { OAK, HAZEL, BRAMBLE, GRASS, SPECIES } from './species.ts';
 
 /** One plant, standing somewhere. */
 export interface Individual {
@@ -201,7 +201,32 @@ export interface Ground {
   spacingM: number;
   /** How good this ground is for what grows on it, 0 to 1. */
   site: number;
+  /**
+   * The ground a sample stands for, m2, when it is not a hexagonal tile.
+   *
+   * The crown lattice samples SQUARE cells rather than the hexagons of the tile
+   * ladder, and a square of side s is s^2 where a hexagon of spacing s is
+   * 0.866 s^2. Left out, the hexagon is assumed, which is what every caller
+   * working off the map wants.
+   */
+  areaM2?: number;
 }
+
+/**
+ * How far apart the crown lattice's cells are, metres.
+ *
+ * DERIVED, and from the only thing that could decide it: the widest plant that
+ * gets placed. A lattice cell has to be about one crown across, because that is
+ * what makes the number of stems in a cell independent of how far you have
+ * zoomed in -- which is the whole reason the lattice exists. Finer and a crown
+ * spans many cells and the stems that shade you are outside every one you
+ * looked at; coarser and a cell holds a crowd whose positions have to be
+ * invented within it.
+ *
+ * So it is the largest mature spread in the species list, and it moves on its
+ * own when a bigger tree is added.
+ */
+export const CROWN_GRID_M = SPECIES.reduce((m, s) => Math.max(m, s.matureSpreadM), 1);
 
 /** A hexagonal tile's area, m2. Centre-to-centre spacing squared, times sqrt3/2. */
 export function tileAreaM2(spacingM: number): number {
@@ -232,7 +257,7 @@ export function standOn(
   let omitted = 0;
   if (g.spacingM <= 0) return { plants, omitted, flora };
 
-  const area = tileAreaM2(g.spacingM);
+  const area = g.areaM2 ?? tileAreaM2(g.spacingM);
   // One field cycle per tile, so neighbouring tiles get uncorrelated draws
   // while the same tile always gets the same one.
   const scale = g.radiusM / Math.max(1e-9, g.spacingM);

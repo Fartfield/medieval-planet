@@ -2234,3 +2234,79 @@ which at 238 trees a hectare holds three and a half of them. Four metres gives
 
 `the same ground grows the same wood` compared a stand of trees-and-shrubs
 against a stand of trees-shrubs-and-vines. Nothing was wrong with the ground.
+
+
+## Plants visible at one zoom only
+
+Sampling plants on the tile grid works at exactly one layer, because the tile
+grid changes size by a factor of 9.5 per layer and a crown does not. Measured:
+2,795 plants at layer 5, zero at 6 and 7.
+
+### ~~Gather from a neighbourhood of tiles~~ -- not attempted, and the arithmetic says why
+
+The obvious fix is to let each tile collect stems from the tiles within a crown
+radius. At layer 6 a crown is 90 tiles across, so that is a 181x181 = 32,761
+tile neighbourhood per drawn tile. It also does not terminate: two layers below
+that it is 3,000 tiles across.
+
+### The crown lattice, anchored to the region
+
+Plants are sampled on a square lattice whose cell is CROWN_GRID_M -- derived,
+being the widest mature spread in the species list, currently 18 m for the oak.
+The number of stems in a cell is then a property of the ground rather than of
+the zoom, and the lattice can be walked one cell past the screen edge to catch
+what overhangs it.
+
+Anchored to the REGION and not to the map being drawn, because a per-map
+lattice would move every tree each time the player descended a step. Drawn once
+a frame and not once a map, because two adjoining maps would each claim the
+cells along the edge they share and stamp the same trees twice.
+
+Measured, and note that the shallow layers got FASTER, because the per-tile
+pass is gone entirely:
+
+                        before        after
+    layer 2 drag     16 ms median   10 ms median
+    layer 4 drag     16 ms median   10 ms median
+    layer 5 drag     20 ms median   17 ms median
+    layer 7 drag           --        4 ms median
+    plants at layer 6      0            50
+    plants at layer 7      0             2
+
+### Then layer 7 stamped 89 full-screen crowns
+
+Physically correct: a two-metre view in a closed wood really does sit under
+about 150 crowns, every one of them wider than the screen. Painting them all is
+36 screens of fill for a picture indistinguishable from three.
+
+The cap is Beer's law again, which is the third place in this project the same
+argument has turned up. Crowns overlap, so after n screens' worth of canopy the
+fraction still showing what is behind is exp(-n): one leaves 37%, two 14%,
+three 5%. CANOPY_DEPTH is 3 and the rest is paint on paint. Cells are walked
+nearest-the-middle-first, so that what gets cut is furthest from what the
+player is looking at rather than whichever corner the loop reached last.
+
+    layer 6:  145 plants -> 50 drawn, 95 hidden
+    layer 7:   89 plants ->  2 drawn, 87 hidden
+
+### And then the biggest tree on screen was a fiftyfold upscale
+
+A stamp is baked at a fixed size, so at the pace layer an 18 m oak asks for a
+crown 14,000 px across from a 256 px image. Baking bigger is not an answer --
+the same problem returns one layer down, and a 4,096 px bake of one oak is 64
+MB.
+
+Past MAX_STAMP_PX the plant is traced straight from its form instead, branch by
+branch, at whatever detail the size deserves. That is about 500 strokes for an
+oak and is affordable precisely BECAUSE it only happens when a crown fills the
+screen, which means there are two or three of them. Layer 7 drag: 4 ms median.
+
+### Two harness bugs the change exposed, both mine
+
+The tile test was "fills over 500", and a traced oak paints thousands of leaf
+discs, so a flat layer 7 reported itself as drawn from its own tiles. It is now
+fills minus arcs -- an arc is a leaf or a river, and a bare fill is a tile.
+
+And the arc counter was not being reset per layer, so once it outgrew the fill
+count every layer reported FLAT, including the world view, which had just been
+reported as tiled two lines earlier.

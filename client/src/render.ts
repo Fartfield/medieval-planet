@@ -21,7 +21,7 @@ import { toDirection, toLocal, cellContaining } from '../../sim/gen/submap.ts';
 import { uniform3 } from '../../sim/gen/noise.ts';
 import { floraAt, FloraKind } from '../../sim/model/flora.ts';
 import {
-  standOn, siteFrom, individualsAffordable, type Stand,
+  standOn, siteFrom, individualsAffordable, CROWN_GRID_M, type Stand,
 } from '../../sim/model/stand.ts';
 import { drawStand } from './flora_render.ts';
 import * as A from '../../sim/anchors.ts';
@@ -1480,66 +1480,241 @@ function mosaicColours(kids: ChildFrame, lo: number, span: number): string[] {
 }
 
 /**
- * The plants standing on every tile of one map, worked out once and kept.
+ * THE CROWN LATTICE: where plants are sampled, and why it is not the tile grid.
  *
- * The same weak-cache shape as the tile colours next door, and for a stronger
- * reason: a stand does not change from frame to frame, and recomputing 91 maps
- * of 91 tiles of a dozen plants each -- a hundred thousand plants -- sixty
- * times a second to draw the identical wood would be the whole frame budget
- * spent on an answer that was already known.
+ * The first version asked each tile what stood on it. That works at exactly one
+ * zoom. Go two layers deeper and a tile is 0.2 m across, which is a millionth
+ * of an oak, so the stems whose crowns fill your view stand on ground outside
+ * every tile you looked at -- an oak is eighteen metres and the whole view is
+ * two. The trees were being generated and were not being FOUND, and the measure
+ * of it was blunt: 2,795 plants at layer 5 and zero at layers 6 and 7.
  *
- * KINDS: trees, shrubs and climbers, and deliberately not grass. A hectare
- * holds a million tufts and none of them is an individual anybody can see; the
- * sward is what the ground texture is for.
+ * So plants are sampled on a lattice of ONE CROWN PER CELL, at every zoom. Then
+ * the number of stems in a cell is a property of the ground rather than of how
+ * far you have zoomed in; the lattice can be walked one cell past the screen
+ * edge to catch what overhangs it; and descending shows the same wood getting
+ * nearer instead of a different wood each time.
  *
- * The per-tile limit is not a truncation. A tile that wants more plants than
- * the limit is not drawn plant by plant AT ALL -- it keeps the density colour
- * it already had -- because a tile showing twelve of its fifty trees is a lie
- * about the wood, whereas a tile showing its colour is not.
+ * ANCHORED TO THE REGION, which is what makes "the same wood" true. A region's
+ * tangent plane covers everything below it, so one lattice serves all eight
+ * layers and a tree keeps its place from the shire down to the pace. Anchoring
+ * to whichever map is being drawn would be a line shorter and would move every
+ * tree in the world each time the player descended one step.
+ *
+ * It does move at a region boundary, where the maps do not align anyway -- that
+ * is the ISEA gap in docs/fix-attempts.md, and this neither fixes nor worsens
+ * it.
  */
 const STAND_KINDS = [FloraKind.Tree, FloraKind.Shrub, FloraKind.Vine] as const;
-const STAND_LIMIT = 12;
 
-const standCache = new WeakMap<ChildFrame, (Stand | null)[]>();
+/**
+ * A lattice cell can hold a crowd -- a cell this size on forest ground is
+ * thirty-odd plants -- and all of them are drawn or none are. A cell showing
+ * twelve of its thirty-five would be a lie about the wood; a cell showing the
+ * ground colour it already had is not.
+ */
+const STAND_LIMIT = 256;
 
-function standsOf(kids: ChildFrame): (Stand | null)[] {
-  const hit = standCache.get(kids);
-  if (hit !== undefined) return hit;
+/** As many lattice cells as one frame will walk before it gives up. */
+const MAX_LATTICE_CELLS = 4096;
 
-  const n = kids.patch.count;
-  const radiusM = kids.spacingM / (SQRT3 * kids.cellRadiusRad);
-  const out: (Stand | null)[] = new Array(n);
-  for (let k = 0; k < n; k++) {
-    if (kids.elevationM[k] < 0) { out[k] = null; continue; }
-    const npp = kids.nppGm2[k];
-    const stand = standOn({
-      biome: kids.biome[k] as never, nppGm2: npp,
-      dirX: kids.dirs[k * 3], dirY: kids.dirs[k * 3 + 1], dirZ: kids.dirs[k * 3 + 2],
-      radiusM, spacingM: kids.spacingM, site: siteFrom(npp),
-    }, STAND_KINDS, STAND_LIMIT);
-    out[k] = stand.omitted > 0 ? null : stand;
-  }
-  standCache.set(kids, out);
-  return out;
+const standLattice = new Map<string, Stand | null>();
+let standLatticeRegion = '';
+
+/**
+ * How many screens of canopy are worth painting before the rest is invisible.
+ *
+ * DERIVED, and from the law this project keeps arriving back at. Crowns
+ * overlap, so the fraction of the view still showing what is BEHIND n screens'
+ * worth of canopy is exp(-n): one screen leaves 37%, two leaves 14%, three
+ * leaves 5%. Past three there is nothing left to hide, and every further stamp
+ * is paint applied to paint.
+ *
+ * This is what makes the deep layers affordable. At the pace layer a two-metre
+ * view stands under about a hundred and fifty crowns -- every one of them
+ * eighteen metres wide and covering the whole screen -- which is thirty-six
+ * screens of fill for a picture indistinguishable from three.
+ */
+const CANOPY_DEPTH = 3;
+
+/** What one call to drawFlora did, so a harness can say where the plants are. */
+export interface FloraDrawn {
+  cells: number;
+  plants: number;
+  /** Plants under a canopy that was already opaque, so not painted. */
+  hidden: number;
+  /** True when the zoom is too far out for individuals to be affordable. */
+  texture: boolean;
 }
 
 /**
- * How many plants a square metre of a map carries, for the affordability test.
+ * Draw every plant on the screen, once, after every map's ground is finished.
  *
- * One number for the whole map rather than one per tile, so the decision to
- * resolve into individuals is made once and a map never comes out half drawn
- * as trees and half as texture -- which would put a visible seam through a wood
- * for no reason in the world.
+ * Called once a frame rather than once a map, which removes a problem the
+ * per-map version would have had: the lattice is anchored to the region, so two
+ * adjoining maps would each have claimed the cells along the edge they share
+ * and stamped the same trees twice.
+ *
+ * `anchorKey` names the region, so the cache empties when the player leaves it
+ * rather than growing for the life of the session.
  */
-function plantsPerM2(kids: ChildFrame): number {
-  let total = 0;
-  const n = kids.patch.count;
-  for (let k = 0; k < n; k++) {
-    if (kids.elevationM[k] < 0) continue;
-    const f = floraAt(kids.biome[k] as never, kids.nppGm2[k]);
-    total += (f.treesPerHa + f.shrubsPerHa + f.vinesPerHa) / 10000;
+export function drawFlora(
+  ctx: CanvasRenderingContext2D,
+  maps: readonly SubMap[],
+  frame: Frame,
+  view: FlatView,
+  regionBasis: Basis,
+  radiusM: number,
+  week: number,
+  anchorKey: string,
+): FloraDrawn {
+  const nothing: FloraDrawn = { cells: 0, plants: 0, hidden: 0, texture: true };
+  const { cx, cy, size } = view;
+  if (maps.length === 0 || radiusM <= 0) return nothing;
+
+  // Pixels a metre, straight from the projection and owing nothing to tiles:
+  // pixels per radian of local offset, over metres per radian of arc.
+  const perUnit = size / frame.cellRadiusRad;
+  const pxPerM = perUnit / radiusM;
+  if (!(pxPerM > 0)) return nothing;
+
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+
+  const vr = ((frame.rotDeg ?? 0) * Math.PI) / 180;
+  const vc = Math.cos(vr);
+  const vs = Math.sin(vr);
+  const probe = new Float64Array(3);
+
+  /** Screen pixels to the frame's own local radians, undoing the view turn. */
+  const unproject = (px: number, py: number): [number, number] => {
+    const u = (px - cx) / perUnit;
+    const v = (py - cy) / perUnit;
+    return [u * vc + v * vs, -u * vs + v * vc];
+  };
+
+  // What is under the middle of the screen decides whether individuals are
+  // affordable at all. One lookup, and the whole pass costs that much when the
+  // answer is no.
+  const mid = unproject(w / 2, h / 2);
+  toDirection(frame.basis, mid[0], mid[1], probe, 0);
+  const centre = pickAmong(maps, probe[0], probe[1], probe[2]);
+  if (centre === null) return nothing;
+  const cm = maps[centre.map];
+  const midFlora = floraAt(cm.biome[centre.cell] as never, cm.nppGm2[centre.cell]);
+  const density = (midFlora.treesPerHa + midFlora.shrubsPerHa + midFlora.vinesPerHa) / 10000;
+  if (!individualsAffordable(density, pxPerM, w * h)) return nothing;
+
+  if (standLatticeRegion !== anchorKey) { standLattice.clear(); standLatticeRegion = anchorKey; }
+
+  // The screen's corners in the REGION's plane, so the lattice can be walked in
+  // integers. Extended by one cell, because a crown centred just off the screen
+  // still hangs over it.
+  const S = CROWN_GRID_M / radiusM;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const corner of [[0, 0], [w, 0], [0, h], [w, h]]) {
+    const local = unproject(corner[0], corner[1]);
+    toDirection(frame.basis, local[0], local[1], probe, 0);
+    const r = toLocal(regionBasis, probe[0], probe[1], probe[2]);
+    minX = Math.min(minX, r.x); maxX = Math.max(maxX, r.x);
+    minY = Math.min(minY, r.y); maxY = Math.max(maxY, r.y);
   }
-  return n > 0 ? total / n : 0;
+  const i0 = Math.floor(minX / S) - 1;
+  const i1 = Math.ceil(maxX / S) + 1;
+  const j0 = Math.floor(minY / S) - 1;
+  const j1 = Math.ceil(maxY / S) + 1;
+  if ((i1 - i0 + 1) * (j1 - j0 + 1) > MAX_LATTICE_CELLS) return nothing;
+
+  const margin = CROWN_GRID_M * pxPerM;
+  const step = new Float64Array(3);
+
+  // NEAREST THE MIDDLE FIRST, which matters as soon as the budget below starts
+  // biting: without an order, the cells that got cut would be whichever corner
+  // the loop reached last, and a wood would be bare down one side. Sorted by
+  // distance from the centre of the view, the ones that go are the ones
+  // furthest from what the player is looking at.
+  const visible: { i: number; j: number; x: number; y: number; d2: number }[] = [];
+  for (let i = i0; i <= i1; i++) {
+    for (let j = j0; j <= j1; j++) {
+      toDirection(regionBasis, i * S, j * S, probe, 0);
+      const o = toLocal(frame.basis, probe[0], probe[1], probe[2]);
+      const x = cx + (o.x * vc - o.y * vs) * perUnit;
+      const y = cy + (o.x * vs + o.y * vc) * perUnit;
+      if (x < -margin || y < -margin || x > w + margin || y > h + margin) continue;
+      visible.push({ i, j, x, y, d2: (x - w / 2) ** 2 + (y - h / 2) ** 2 });
+    }
+  }
+  visible.sort((a, b) => a.d2 - b.d2);
+
+  let cells = 0;
+  let plants = 0;
+  let hidden = 0;
+  let coverPx2 = 0;
+  const coverBudget = w * h * CANOPY_DEPTH;
+
+  {
+    for (const cell of visible) {
+      const { i, j, x, y } = cell;
+      toDirection(regionBasis, i * S, j * S, probe, 0);
+      const dx = probe[0];
+      const dy = probe[1];
+      const dz = probe[2];
+      const o = toLocal(frame.basis, dx, dy, dz);
+      cells++;
+
+      const key = i + '|' + j;
+      let stand = standLattice.get(key) ?? null;
+      if (!standLattice.has(key)) {
+        const found = pickAmong(maps, dx, dy, dz);
+        const m = found === null ? null : maps[found.map];
+        if (m === null || found === null || m.elevationM[found.cell] < 0) {
+          standLattice.set(key, null);
+          continue;
+        }
+        const npp = m.nppGm2[found.cell];
+        const got = standOn({
+          biome: m.biome[found.cell] as never,
+          nppGm2: npp,
+          dirX: dx,
+          dirY: dy,
+          dirZ: dz,
+          radiusM,
+          spacingM: CROWN_GRID_M,
+          site: siteFrom(npp),
+          // A SQUARE cell, not a hexagon: side squared rather than 0.866 of it.
+          areaM2: CROWN_GRID_M * CROWN_GRID_M,
+        }, STAND_KINDS, STAND_LIMIT);
+        stand = got.omitted > 0 ? null : got;
+        standLattice.set(key, stand);
+      }
+      if (stand === null || stand.plants.length === 0) continue;
+
+      // The cell's own turn on screen, found the way placeCells finds a tile's:
+      // project a short step along the lattice's x-axis and see where it went.
+      toDirection(regionBasis, i * S + S * 0.01, j * S, step, 0);
+      const t = toLocal(frame.basis, step[0], step[1], step[2]);
+      const ex = t.x - o.x;
+      const ey = t.y - o.y;
+      const ax = ex * vc - ey * vs;
+      const ay = ex * vs + ey * vc;
+      const alen = Math.hypot(ax, ay);
+      const tc = alen > 1e-12 ? ax / alen : 1;
+      const ts = alen > 1e-12 ? ay / alen : 0;
+
+      const did = drawStand(
+        ctx, stand.plants, week, x, y, pxPerM, tc, ts,
+        Math.max(0, coverBudget - coverPx2),
+      );
+      plants += did.drawn;
+      hidden += did.hidden;
+      coverPx2 += did.coverPx2;
+    }
+  }
+
+  return { cells, plants, hidden, texture: false };
 }
 
 /**
@@ -1591,7 +1766,6 @@ export function drawSubMap(
   tint: CellTint | null = null,
   children: ChildLookup | null = null,
   frame: Frame | null = null,
-  week = 30,
 ): void {
   const { cx, cy, size } = view;
   // Its own frame unless told otherwise, so a lone map draws exactly as it did.
@@ -1651,12 +1825,6 @@ export function drawSubMap(
     }
   }
 
-  // Kept from the mosaic pass so the flora pass below does not ask for the same
-  // child maps again. A lookup builds a sub-map when it misses, which is why
-  // verify_render holds it to one call per cell -- and why asking twice showed
-  // up there as 182 against 91 rather than as a slow frame nobody could place.
-  const drawnKids: { kids: ChildFrame; kplace: Placed[] }[] = [];
-
   if (wantMosaic) {
     for (let c = 0; c < map.patch.count; c++) {
       const g = at(c);
@@ -1672,7 +1840,6 @@ export function drawSubMap(
       // Placed through the same projection as everything else, so a child sits
       // where the sphere says it sits.
       const kplace = unitPlacements(kids, f);
-      drawnKids.push({ kids, kplace });
       const kcol = mosaicColours(kids, lo, span);
       for (let k = 0; k < kids.patch.count; k++) {
         const kg = kplace[k];
@@ -1719,33 +1886,10 @@ export function drawSubMap(
     // cell you have chosen.
   }
 
-  // THE PLANTS, once the ground under all of them is finished.
-  //
-  // A third pass and not a line inside the second, for the reason the second
-  // pass exists at all: a crown hangs over the edge of the tile it is counted
-  // in, and drawing a tree during its own cell's turn means the NEXT cell's
-  // tiles paint over the half of it that overhung. Ground first, all of it,
-  // then everything that stands on the ground.
-  if (wantMosaic) {
-    const screenPx2 = ctx.canvas.width * ctx.canvas.height;
-    for (const { kids, kplace } of drawnKids) {
-      // Pixels a metre, from what the tile is drawn at: a tile's circumradius
-      // on screen over its circumradius on the ground, which is its spacing
-      // over root three.
-      const pxPerM = (kplace[0].r * size * SQRT3) / Math.max(1e-9, kids.spacingM);
-      if (!individualsAffordable(plantsPerM2(kids), pxPerM, screenPx2)) continue;
-      const stands = standsOf(kids);
-      for (let k = 0; k < kids.patch.count; k++) {
-        const st = stands[k];
-        if (st === null || st.plants.length === 0) continue;
-        const kg = kplace[k];
-        const kx = cx + kg.x * size;
-        const ky = cy + kg.y * size;
-        if (offScreen(kx, ky)) continue;
-        drawStand(ctx, st.plants, week, kx, ky, pxPerM, kg.cos, kg.sin);
-      }
-    }
-  }
+  // THE PLANTS ARE NOT DRAWN HERE, and that is what drawFlora below is for.
+  // They were, for one commit, and it put trees on exactly one layer of eight:
+  // a plant drawn by the tile holding its stem cannot be found at all once a
+  // tile is a fraction of a crown across. See drawFlora.
 
   // Water second, so channels sit on top of the ground they cut through.
   for (let c = 0; c < map.patch.count; c++) {
