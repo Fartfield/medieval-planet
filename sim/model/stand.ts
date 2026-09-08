@@ -289,6 +289,69 @@ export function standingMassKg(stand: Stand, site: number): number {
 }
 
 /**
+ * Net primary production of the most productive ground there is, g/m2/yr.
+ *
+ * Measured: a temperate forest on a good site fixes about 1,200 grammes of dry
+ * matter a square metre a year, and a tropical rainforest more. This is the
+ * denominator that turns the productivity field into a site quality, so that
+ * one number stands for everything the ground does for a plant.
+ */
+export const NPP_OPTIMUM_GM2 = 1200;
+
+/** How good this ground is, 0 to 1, from the productivity field. */
+export function siteFrom(nppGm2: number): number {
+  return Math.max(0, Math.min(1, nppGm2 / NPP_OPTIMUM_GM2));
+}
+
+/**
+ * How many plants one frame may draw one at a time.
+ *
+ * FREE PARAMETER 2, and it is the honest one to have: everything else about
+ * when individuals appear is DERIVED from it. A browser will stamp a few
+ * thousand images in a frame and not a million, and no amount of physics says
+ * which few thousand.
+ *
+ * MEASURED, on a thirty-frame drag at the plot layer with the headless client:
+ *
+ *     3000    2,795 plants,  median frame 20 ms
+ *     1500        0 plants,  median frame 17 ms
+ *      800        0 plants,  median frame 16 ms
+ *
+ * The zeroes are not a bargain, they are the gap in docs/known-gaps.md: the
+ * affordability test is currently the only thing choosing which layer gets
+ * plants, and it is a knife edge, so below three thousand no layer qualifies at
+ * all. That is a fault in the sampling and not in this number, and when the
+ * crown lattice lands this can come down.
+ */
+export const DRAW_BUDGET = 3000;
+
+/**
+ * Whether individual plants are worth drawing at this zoom, or whether the
+ * ground should stay a texture.
+ *
+ * THE THRESHOLD IS SOLVED, NOT PICKED. A screen of area A pixels showing
+ * ground at p pixels a metre is looking at A/p^2 square metres; at d plants a
+ * square metre that is A.d/p^2 plants. Set that equal to the budget and the
+ * scale at which individuals become affordable falls out:
+ *
+ *     p >= sqrt(A . d / B)
+ *
+ * So a dense forest resolves into trees later than an open savanna does, and a
+ * bigger window resolves later than a small one, and neither of those had to be
+ * thought about. What a person would otherwise do here is pick a zoom level and
+ * find out two months later that it was wrong for wide monitors.
+ */
+export function individualsAffordable(
+  plantsPerM2: number, pxPerM: number, screenPx2: number,
+  budget = DRAW_BUDGET,
+): boolean {
+  if (plantsPerM2 <= 0) return false;
+  if (pxPerM <= 0 || screenPx2 <= 0) return false;
+  const need = Math.sqrt((screenPx2 * plantsPerM2) / Math.max(1, budget));
+  return pxPerM >= need;
+}
+
+/**
  * How wide a crown has to be, in pixels, before drawing individuals beats
  * drawing a texture.
  *

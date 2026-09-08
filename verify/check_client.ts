@@ -27,9 +27,11 @@ class StubContext {
   strokeStyle: unknown = '';
   lineWidth = 1;
   font = '';
+  lineCap = '';
   fills = 0;
   strokes = 0;
   arcs = 0;
+  images = 0;
   texts: string[] = [];
   nans = 0;
 
@@ -50,6 +52,17 @@ class StubContext {
   clip(): void {}
   save(): void {}
   restore(): void {}
+  translate(x: number, y: number): void { this.note(x, y); }
+  rotate(a: number): void { this.note(a); }
+  scale(x: number, y: number): void { this.note(x, y); }
+  // The plant stamps. Counted, and checked for NaN geometry like everything
+  // else -- a tree drawn at NaN is invisible and silent, which is the exact
+  // failure mode this whole harness was built after.
+  drawImage(_img: unknown, x: number, y: number, w: number, h: number): void {
+    this.note(x, y, w, h);
+    this.images++;
+  }
+  createPattern(): null { return null; }
 }
 
 const context = new StubContext();
@@ -190,17 +203,24 @@ function fire(key: string, event: Record<string, unknown>): void {
   for (const fn of listeners.get(key) ?? []) fn(event);
 }
 
+// Which layers grew plants, so the answer to "I cannot see trees" is a row of
+// numbers rather than an opinion.
+const plantsByLayer = new Map<string, number>();
+
 function drewThisLayer(label: string): void {
   context.fills = 0;
   context.strokes = 0;
   context.nans = 0;
+  context.images = 0;
   // Force a redraw. The dirty flag means an unchanged view draws nothing, and
   // a resize is the one event that invalidates without also changing what is
   // being looked at.
   fire('resize', {});
   frames(2);
   const tiles = context.fills > 500;
+  plantsByLayer.set(label, context.images);
   console.log(`    ${label.padEnd(28)} ${String(context.fills).padStart(6)} fills  `
+    + `${String(context.images).padStart(6)} plants  `
     + `${context.nans > 0 ? `${context.nans} NaN  ` : ''}`
     + (tiles ? 'drawn from its own tiles' : 'FLAT -- no constituent tiles'));
 }
@@ -215,7 +235,7 @@ for (let depth = 1; depth <= 7; depth++) {
   fire('keydown', { key: 'Enter' });
   frames(2);
   drewThisLayer(`layer ${depth}`);
-  if (depth === 2 || depth === 4) dragTest(`dragging on layer ${depth}`);
+  if (depth === 2 || depth === 4 || depth === 5) dragTest(`dragging on layer ${depth}`);
 }
 console.log('');
 
@@ -272,6 +292,25 @@ console.log(`    strokes ${context.strokes}`);
 console.log(`    arcs    ${context.arcs}`);
 console.log(`    NaN coordinates ${context.nans}`);
 for (const t of context.texts) console.log(`    text: ${t}`);
+console.log('');
+
+// THE THING THIS WAS BUILT FOR. "I do not see trees" was a true report about a
+// renderer that tinted tiles green and drew no plant at any zoom. Individuals
+// are affordable below a scale that is solved from the draw budget, so the deep
+// layers must stamp them and the shallow ones must not -- and both halves are
+// the claim, because a world view stamping a million oaks would be the other
+// failure.
+console.log('  where the plants are');
+let plantedLayers = 0;
+let deepest = 0;
+for (const [label, n] of plantsByLayer) {
+  if (n > 0) plantedLayers++;
+  if (/^layer [4-7]$/.test(label)) deepest = Math.max(deepest, n);
+}
+for (const [label, n] of plantsByLayer) {
+  if (n > 0) console.log(`    ${label.padEnd(28)} ${n} plants stamped`);
+}
+console.log(`    layers that grew anything: ${plantedLayers}`);
 console.log('');
 
 const failed = logLines.some((l) => l.startsWith('frame failed'));

@@ -20,6 +20,10 @@ import type { SubMap, Basis } from '../../sim/gen/submap.ts';
 import { toDirection, toLocal, cellContaining } from '../../sim/gen/submap.ts';
 import { uniform3 } from '../../sim/gen/noise.ts';
 import { floraAt, FloraKind } from '../../sim/model/flora.ts';
+import {
+  standOn, siteFrom, individualsAffordable, type Stand,
+} from '../../sim/model/stand.ts';
+import { drawStand } from './flora_render.ts';
 import * as A from '../../sim/anchors.ts';
 import type { Patch } from '../../sim/geo/patch.ts';
 import {
@@ -1476,6 +1480,69 @@ function mosaicColours(kids: ChildFrame, lo: number, span: number): string[] {
 }
 
 /**
+ * The plants standing on every tile of one map, worked out once and kept.
+ *
+ * The same weak-cache shape as the tile colours next door, and for a stronger
+ * reason: a stand does not change from frame to frame, and recomputing 91 maps
+ * of 91 tiles of a dozen plants each -- a hundred thousand plants -- sixty
+ * times a second to draw the identical wood would be the whole frame budget
+ * spent on an answer that was already known.
+ *
+ * KINDS: trees, shrubs and climbers, and deliberately not grass. A hectare
+ * holds a million tufts and none of them is an individual anybody can see; the
+ * sward is what the ground texture is for.
+ *
+ * The per-tile limit is not a truncation. A tile that wants more plants than
+ * the limit is not drawn plant by plant AT ALL -- it keeps the density colour
+ * it already had -- because a tile showing twelve of its fifty trees is a lie
+ * about the wood, whereas a tile showing its colour is not.
+ */
+const STAND_KINDS = [FloraKind.Tree, FloraKind.Shrub, FloraKind.Vine] as const;
+const STAND_LIMIT = 12;
+
+const standCache = new WeakMap<ChildFrame, (Stand | null)[]>();
+
+function standsOf(kids: ChildFrame): (Stand | null)[] {
+  const hit = standCache.get(kids);
+  if (hit !== undefined) return hit;
+
+  const n = kids.patch.count;
+  const radiusM = kids.spacingM / (SQRT3 * kids.cellRadiusRad);
+  const out: (Stand | null)[] = new Array(n);
+  for (let k = 0; k < n; k++) {
+    if (kids.elevationM[k] < 0) { out[k] = null; continue; }
+    const npp = kids.nppGm2[k];
+    const stand = standOn({
+      biome: kids.biome[k] as never, nppGm2: npp,
+      dirX: kids.dirs[k * 3], dirY: kids.dirs[k * 3 + 1], dirZ: kids.dirs[k * 3 + 2],
+      radiusM, spacingM: kids.spacingM, site: siteFrom(npp),
+    }, STAND_KINDS, STAND_LIMIT);
+    out[k] = stand.omitted > 0 ? null : stand;
+  }
+  standCache.set(kids, out);
+  return out;
+}
+
+/**
+ * How many plants a square metre of a map carries, for the affordability test.
+ *
+ * One number for the whole map rather than one per tile, so the decision to
+ * resolve into individuals is made once and a map never comes out half drawn
+ * as trees and half as texture -- which would put a visible seam through a wood
+ * for no reason in the world.
+ */
+function plantsPerM2(kids: ChildFrame): number {
+  let total = 0;
+  const n = kids.patch.count;
+  for (let k = 0; k < n; k++) {
+    if (kids.elevationM[k] < 0) continue;
+    const f = floraAt(kids.biome[k] as never, kids.nppGm2[k]);
+    total += (f.treesPerHa + f.shrubsPerHa + f.vinesPerHa) / 10000;
+  }
+  return n > 0 ? total / n : 0;
+}
+
+/**
  * Is any of this map on screen at all?
  *
  * drawSubMap culls cell by cell, which is the right grain once you are drawing
@@ -1524,6 +1591,7 @@ export function drawSubMap(
   tint: CellTint | null = null,
   children: ChildLookup | null = null,
   frame: Frame | null = null,
+  week = 30,
 ): void {
   const { cx, cy, size } = view;
   // Its own frame unless told otherwise, so a lone map draws exactly as it did.
@@ -1583,6 +1651,12 @@ export function drawSubMap(
     }
   }
 
+  // Kept from the mosaic pass so the flora pass below does not ask for the same
+  // child maps again. A lookup builds a sub-map when it misses, which is why
+  // verify_render holds it to one call per cell -- and why asking twice showed
+  // up there as 182 against 91 rather than as a slow frame nobody could place.
+  const drawnKids: { kids: ChildFrame; kplace: Placed[] }[] = [];
+
   if (wantMosaic) {
     for (let c = 0; c < map.patch.count; c++) {
       const g = at(c);
@@ -1598,6 +1672,7 @@ export function drawSubMap(
       // Placed through the same projection as everything else, so a child sits
       // where the sphere says it sits.
       const kplace = unitPlacements(kids, f);
+      drawnKids.push({ kids, kplace });
       const kcol = mosaicColours(kids, lo, span);
       for (let k = 0; k < kids.patch.count; k++) {
         const kg = kplace[k];
@@ -1642,6 +1717,34 @@ export function drawSubMap(
     // is the only thing saying where the cell is, and loses it once its own
     // tiles are what you are looking at. The selection ring still marks the
     // cell you have chosen.
+  }
+
+  // THE PLANTS, once the ground under all of them is finished.
+  //
+  // A third pass and not a line inside the second, for the reason the second
+  // pass exists at all: a crown hangs over the edge of the tile it is counted
+  // in, and drawing a tree during its own cell's turn means the NEXT cell's
+  // tiles paint over the half of it that overhung. Ground first, all of it,
+  // then everything that stands on the ground.
+  if (wantMosaic) {
+    const screenPx2 = ctx.canvas.width * ctx.canvas.height;
+    for (const { kids, kplace } of drawnKids) {
+      // Pixels a metre, from what the tile is drawn at: a tile's circumradius
+      // on screen over its circumradius on the ground, which is its spacing
+      // over root three.
+      const pxPerM = (kplace[0].r * size * SQRT3) / Math.max(1e-9, kids.spacingM);
+      if (!individualsAffordable(plantsPerM2(kids), pxPerM, screenPx2)) continue;
+      const stands = standsOf(kids);
+      for (let k = 0; k < kids.patch.count; k++) {
+        const st = stands[k];
+        if (st === null || st.plants.length === 0) continue;
+        const kg = kplace[k];
+        const kx = cx + kg.x * size;
+        const ky = cy + kg.y * size;
+        if (offScreen(kx, ky)) continue;
+        drawStand(ctx, st.plants, week, kx, ky, pxPerM, kg.cos, kg.sin);
+      }
+    }
   }
 
   // Water second, so channels sit on top of the ground they cut through.

@@ -204,3 +204,37 @@ replace it with `ws` before it faces anything else.
 
 **No spatial index for "which settlements are near this one".** Supply lines
 will want one immediately.
+
+
+## Plants are drawn at one layer only
+
+Measured with `verify/check_client.ts`, which now counts stamped plants per
+layer:
+
+    world view   0      layer 3   0      layer 6   0
+    layer 1      0      layer 4   0      layer 7   0  (flat, no mosaic)
+    layer 2      0      layer 5   2,795
+
+Layer 5 is right. Layer 4 and above are right too -- at the parish layer there
+would be twenty-six thousand plants on screen and the density tint says the
+same thing more cheaply. **Layers 6 and 7 are the gap**, and the cause is
+precise:
+
+A plant is drawn by the tile that holds its STEM. At layer 6 a tile is about
+0.2 m across, so it holds 0.0000006 of an oak, and the stems that would cover
+your view are on ground outside the visible map entirely -- an oak's crown is
+eighteen metres and the whole layer-6 view is two. So the trees do not fail to
+be generated; they fail to be *found*, because the search grid is the tile
+ladder and the tile ladder is ninety times finer than a crown down there.
+
+It also explains why the draw budget is a knife edge (see `DRAW_BUDGET`): one
+layer at a time falls inside it, and there is no layer below where the same
+trees persist and simply get bigger.
+
+**The fix is a lattice of about one crown per cell**, anchored to the region
+rather than to whichever map is being drawn, sampled over the visible rectangle
+extended by a crown radius. Then the same wood is generated at every depth and
+descending shows it getting nearer -- which is the argument `floraColour`
+already makes in the renderer about the canopy field, applied to the plants
+themselves. It needs the region's basis passed down, so it is a change to
+`drawSubMap`'s signature and to `main.ts`, not a local edit.
