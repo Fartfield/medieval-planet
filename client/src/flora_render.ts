@@ -31,6 +31,8 @@ import {
   type Species, Part, massAt, spreadAt, ageAtFraction, isBuried,
 } from '../../sim/model/plant.ts';
 import { type Individual, worthDrawing } from '../../sim/model/stand.ts';
+import { GRASS } from '../../sim/model/species.ts';
+import { seed, below } from '../../sim/rng.ts';
 
 /**
  * The four weeks that stand for the four seasons.
@@ -268,6 +270,191 @@ export function stampCacheSize(): number {
 
 export function clearStampCache(): void {
   stampCache.clear();
+}
+
+
+// --- the ground between them -------------------------------------------------
+//
+// A hectare of pasture holds a million tufts of grass, so the sward can never
+// be stamped one plant at a time the way the trees are. It is a TEXTURE, and
+// the honest way to make one is to bake it out of the same plants: scatter real
+// grass forms into a small square that repeats, and lay that under everything.
+//
+// What that buys over a flat colour is not prettiness. It is that the texture
+// is a consequence rather than an asset -- the sward's own species decides its
+// shape, its pigment decides its colour, and its phenology decides whether
+// there is anything there at all. A winter tile has bare earth in it because
+// the grass's Leaf part is out of season, and nothing had to be told that.
+
+/** How much ground one repeat of the texture covers, metres. */
+const GROUND_TILE_M = 1.5;
+
+/**
+ * And at what resolution -- quantised, and chosen from the zoom.
+ *
+ * Fixed at 128 the sward blurred at the deepest layers for the same reason the
+ * biggest tree did: a 1.5 m tile drawn where a metre is eight hundred pixels is
+ * a ninefold upscale. Baking to a power of two between 64 and 512 keeps a tuft
+ * near ten pixels at every zoom it is drawn at, and the cache stays small
+ * because only one or two of those sizes are ever on screen at once.
+ */
+const GROUND_TILE_MIN_PX = 64;
+const GROUND_TILE_MAX_PX = 512;
+
+function groundPxFor(pxPerM: number): number {
+  const want = Math.max(1, pxPerM * GROUND_TILE_M);
+  const p = Math.ceil(Math.log2(want));
+  return 1 << Math.max(6, Math.min(9, p));
+}
+
+/**
+ * As many tufts as one bake will draw.
+ *
+ * A dense sward is 170 tufts a square metre, which is 380 in a tile this size,
+ * and drawing every one of them costs more than the picture gains. Past the cap
+ * the tufts left are drawn LARGER, by the square root of the ratio, so that the
+ * ground they cover is the ground the sward covers -- the same conservation the
+ * crop uses across detail levels, and for the same reason.
+ */
+const MAX_TUFTS = 200;
+
+/** A baked patch of sward: the image and the pixels it was baked at. */
+export interface GroundTile {
+  image: CanvasImageSource;
+  px: number;
+}
+
+const groundCache = new Map<string, GroundTile | null>();
+
+/**
+ * A repeating patch of sward, baked once.
+ *
+ * `tuftsPerM2` is quantised into octaves before it becomes a key, because a
+ * texture cannot show the difference between 130 tufts and 137 and a cache
+ * should not be asked to hold both.
+ */
+export function groundTileFor(
+  season: number, tuftsPerM2: number, pxPerM: number,
+): GroundTile | null {
+  if (tuftsPerM2 <= 0) return null;
+  const octave = Math.round(Math.log2(tuftsPerM2) * 2) / 2;
+  const GROUND_TILE_PX = groundPxFor(pxPerM);
+  const key = season + '|' + octave + '|' + GROUND_TILE_PX;
+  const hit = groundCache.get(key);
+  if (hit !== undefined) return hit;
+
+  const density = Math.pow(2, octave);
+  const wanted = density * GROUND_TILE_M * GROUND_TILE_M;
+  const n = Math.max(1, Math.min(MAX_TUFTS, Math.round(wanted)));
+  // Conserve the ground covered when the count is capped: n discs of radius r
+  // cover what `wanted` discs of the true radius would, if r grows as the
+  // square root of the ratio.
+  const swell = Math.sqrt(wanted / n);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = GROUND_TILE_PX;
+  canvas.height = GROUND_TILE_PX;
+  const c = canvas.getContext('2d');
+  if (c === null) { groundCache.set(key, null); return null; }
+
+  const k = (GROUND_TILE_PX / GROUND_TILE_M) * swell;
+  const T = GROUND_TILE_PX;
+  c.lineCap = 'round';
+  let painted = 0;
+
+  for (let i = 0; i < n; i++) {
+    // A mature tuft, since a sward is perennial and mostly grown. Its own seed,
+    // so no two are the same plant.
+    const form = formOf(GRASS, {
+      ageYears: 3, site: 1, week: SEASON_WEEKS[season], weeksPerYear: 52,
+      seed: 0xC5A55 + i, detail: 2,
+    });
+    if (form.strokes.length === 0 && form.blobs.length === 0) continue;
+
+    // Scattered by the same deterministic stream, so the texture is the same
+    // texture on every machine and in every session.
+    const rng = seed(0x62055 + i);
+    const px = (below(rng, 10000) / 10000) * T;
+    const py = (below(rng, 10000) / 10000) * T;
+
+    // SEAMLESS, by drawing anything near an edge again on the far side. A tuft
+    // is small, so this is one extra copy for the few that straddle a border
+    // rather than nine copies of everything.
+    const reach = 0.5 * GROUND_TILE_M * k;
+    const wrapX = px < reach ? T : px > T - reach ? -T : 0;
+    const wrapY = py < reach ? T : py > T - reach ? -T : 0;
+    const xs = wrapX === 0 ? [0] : [0, wrapX];
+    const ys = wrapY === 0 ? [0] : [0, wrapY];
+    for (const ox of xs) {
+      for (const oy of ys) {
+        for (const st of form.strokes) {
+          c.strokeStyle = rgb(st.rgb);
+          c.lineWidth = Math.max(0.5, st.widthM * k);
+          c.beginPath();
+          c.moveTo(px + ox + st.x0 * k, py + oy + st.y0 * k);
+          c.lineTo(px + ox + st.x1 * k, py + oy + st.y1 * k);
+          c.stroke();
+        }
+        for (const b of form.blobs) {
+          if (b.buried) continue;
+          c.fillStyle = rgb(b.rgb);
+          c.beginPath();
+          c.arc(px + ox + b.x * k, py + oy + b.y * k, Math.max(0.5, b.radiusM * k), 0, Math.PI * 2);
+          c.fill();
+        }
+        painted++;
+      }
+    }
+  }
+
+  const out: GroundTile | null = painted > 0
+    ? { image: canvas as CanvasImageSource, px: GROUND_TILE_PX }
+    : null;
+  groundCache.set(key, out);
+  return out;
+}
+
+/** How many ground textures are held, so a suite can say the cache is bounded. */
+export function groundCacheSize(): number {
+  return groundCache.size;
+}
+
+const patternCache = new WeakMap<object, CanvasPattern | null>();
+
+/**
+ * Lay the sward over one lattice cell.
+ *
+ * The pattern is placed through the canvas transform rather than through
+ * CanvasPattern.setTransform, which needs a DOMMatrix -- the plainer route
+ * works in every browser and in the headless harness, and it anchors the
+ * repeat to the cell's own position, so the grass does not swim across the
+ * ground when the view is panned.
+ */
+export function drawGround(
+  ctx: CanvasRenderingContext2D,
+  tile: GroundTile,
+  cx: number, cy: number, pxPerM: number, tc: number, ts: number, halfM: number,
+): boolean {
+  let pattern = patternCache.get(tile.image as object);
+  if (pattern === undefined) {
+    pattern = ctx.createPattern(tile.image, 'repeat');
+    patternCache.set(tile.image as object, pattern);
+  }
+  if (pattern === null || pattern === undefined) return false;
+
+  // Metres to the pattern's own pixels.
+  const scale = (pxPerM * GROUND_TILE_M) / tile.px;
+  if (!(scale > 0)) return false;
+  const half = (halfM * pxPerM) / scale;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(Math.atan2(ts, tc));
+  ctx.scale(scale, scale);
+  ctx.fillStyle = pattern;
+  ctx.fillRect(-half, -half, half * 2, half * 2);
+  ctx.restore();
+  return true;
 }
 
 /** What a call to drawStand actually did, for anything that wants to know. */

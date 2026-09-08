@@ -23,7 +23,7 @@ import { floraAt, FloraKind } from '../../sim/model/flora.ts';
 import {
   standOn, siteFrom, individualsAffordable, CROWN_GRID_M, type Stand,
 } from '../../sim/model/stand.ts';
-import { drawStand } from './flora_render.ts';
+import { drawStand, groundTileFor, drawGround, seasonOf } from './flora_render.ts';
 import * as A from '../../sim/anchors.ts';
 import type { Patch } from '../../sim/geo/patch.ts';
 import {
@@ -1543,6 +1543,8 @@ export interface FloraDrawn {
   plants: number;
   /** Plants under a canopy that was already opaque, so not painted. */
   hidden: number;
+  /** Lattice cells that got a sward laid under them. */
+  ground: number;
   /** True when the zoom is too far out for individuals to be affordable. */
   texture: boolean;
 }
@@ -1568,7 +1570,9 @@ export function drawFlora(
   week: number,
   anchorKey: string,
 ): FloraDrawn {
-  const nothing: FloraDrawn = { cells: 0, plants: 0, hidden: 0, texture: true };
+  const nothing: FloraDrawn = {
+    cells: 0, plants: 0, hidden: 0, ground: 0, texture: true,
+  };
   const { cx, cy, size } = view;
   if (maps.length === 0 || radiusM <= 0) return nothing;
 
@@ -1652,69 +1656,107 @@ export function drawFlora(
   let cells = 0;
   let plants = 0;
   let hidden = 0;
+  let ground = 0;
   let coverPx2 = 0;
   const coverBudget = w * h * CANOPY_DEPTH;
+  const season = seasonOf(week, 52);
 
-  {
-    for (const cell of visible) {
-      const { i, j, x, y } = cell;
-      toDirection(regionBasis, i * S, j * S, probe, 0);
-      const dx = probe[0];
-      const dy = probe[1];
-      const dz = probe[2];
-      const o = toLocal(frame.basis, dx, dy, dz);
-      cells++;
+  // RESOLVE EVERY CELL FIRST, then draw in two passes over the resolved list.
+  //
+  // The two drawing passes are needed for the same reason the tile mosaic needs
+  // two: a cell's sward fills a square that overlaps its neighbours, so laying
+  // grass and trees cell by cell would have each cell's turf painting over the
+  // last cell's trunks. Ground first, all of it, then everything standing on
+  // the ground -- which is the third time that sentence has earned its place in
+  // this file.
+  const ready: {
+    x: number; y: number; tc: number; ts: number; stand: Stand;
+  }[] = [];
 
-      const key = i + '|' + j;
-      let stand = standLattice.get(key) ?? null;
-      if (!standLattice.has(key)) {
-        const found = pickAmong(maps, dx, dy, dz);
-        const m = found === null ? null : maps[found.map];
-        if (m === null || found === null || m.elevationM[found.cell] < 0) {
-          standLattice.set(key, null);
-          continue;
-        }
-        const npp = m.nppGm2[found.cell];
-        const got = standOn({
-          biome: m.biome[found.cell] as never,
-          nppGm2: npp,
-          dirX: dx,
-          dirY: dy,
-          dirZ: dz,
-          radiusM,
-          spacingM: CROWN_GRID_M,
-          site: siteFrom(npp),
-          // A SQUARE cell, not a hexagon: side squared rather than 0.866 of it.
-          areaM2: CROWN_GRID_M * CROWN_GRID_M,
-        }, STAND_KINDS, STAND_LIMIT);
-        stand = got.omitted > 0 ? null : got;
-        standLattice.set(key, stand);
+  for (const cell of visible) {
+    const { i, j, x, y } = cell;
+    toDirection(regionBasis, i * S, j * S, probe, 0);
+    const dx = probe[0];
+    const dy = probe[1];
+    const dz = probe[2];
+    const o = toLocal(frame.basis, dx, dy, dz);
+    cells++;
+
+    const key = i + '|' + j;
+    let stand = standLattice.get(key) ?? null;
+    if (!standLattice.has(key)) {
+      const found = pickAmong(maps, dx, dy, dz);
+      const m = found === null ? null : maps[found.map];
+      if (m === null || found === null || m.elevationM[found.cell] < 0) {
+        standLattice.set(key, null);
+        continue;
       }
-      if (stand === null || stand.plants.length === 0) continue;
-
-      // The cell's own turn on screen, found the way placeCells finds a tile's:
-      // project a short step along the lattice's x-axis and see where it went.
-      toDirection(regionBasis, i * S + S * 0.01, j * S, step, 0);
-      const t = toLocal(frame.basis, step[0], step[1], step[2]);
-      const ex = t.x - o.x;
-      const ey = t.y - o.y;
-      const ax = ex * vc - ey * vs;
-      const ay = ex * vs + ey * vc;
-      const alen = Math.hypot(ax, ay);
-      const tc = alen > 1e-12 ? ax / alen : 1;
-      const ts = alen > 1e-12 ? ay / alen : 0;
-
-      const did = drawStand(
-        ctx, stand.plants, week, x, y, pxPerM, tc, ts,
-        Math.max(0, coverBudget - coverPx2),
-      );
-      plants += did.drawn;
-      hidden += did.hidden;
-      coverPx2 += did.coverPx2;
+      const npp = m.nppGm2[found.cell];
+      const got = standOn({
+        biome: m.biome[found.cell] as never,
+        nppGm2: npp,
+        dirX: dx,
+        dirY: dy,
+        dirZ: dz,
+        radiusM,
+        spacingM: CROWN_GRID_M,
+        site: siteFrom(npp),
+        // A SQUARE cell, not a hexagon: side squared rather than 0.866 of it.
+        areaM2: CROWN_GRID_M * CROWN_GRID_M,
+      }, STAND_KINDS, STAND_LIMIT);
+      stand = got.omitted > 0 ? null : got;
+      standLattice.set(key, stand);
     }
+    if (stand === null) continue;
+
+    // The cell's own turn on screen, found the way placeCells finds a tile's:
+    // project a short step along the lattice's x-axis and see where it went.
+    toDirection(regionBasis, i * S + S * 0.01, j * S, step, 0);
+    const t = toLocal(frame.basis, step[0], step[1], step[2]);
+    const ex = t.x - o.x;
+    const ey = t.y - o.y;
+    const ax = ex * vc - ey * vs;
+    const ay = ex * vs + ey * vc;
+    const alen = Math.hypot(ax, ay);
+    ready.push({
+      x,
+      y,
+      tc: alen > 1e-12 ? ax / alen : 1,
+      ts: alen > 1e-12 ? ay / alen : 0,
+      stand,
+    });
   }
 
-  return { cells, plants, hidden, texture: false };
+  // PASS ONE: the sward.
+  //
+  // Laid only where individuals are drawn, which is the honest place for it: at
+  // the zooms above this a tile is eight pixels across and a grass texture
+  // would be aliasing noise standing where a perfectly good colour already is.
+  //
+  // Half a cell plus a whisker, so two neighbouring squares meet rather than
+  // leaving a hairline of bare ground down the join.
+  const halfM = CROWN_GRID_M * 0.52;
+  for (const r of ready) {
+    // Tufts a square metre, straight from the flora model, which is what makes
+    // a heath thinner than a meadow without either being drawn differently.
+    const tile = groundTileFor(season, r.stand.flora.grassPerM2, pxPerM);
+    if (tile === null) continue;
+    if (drawGround(ctx, tile, r.x, r.y, pxPerM, r.tc, r.ts, halfM)) ground++;
+  }
+
+  // PASS TWO: everything standing on it.
+  for (const r of ready) {
+    if (r.stand.plants.length === 0) continue;
+    const did = drawStand(
+      ctx, r.stand.plants, week, r.x, r.y, pxPerM, r.tc, r.ts,
+      Math.max(0, coverBudget - coverPx2),
+    );
+    plants += did.drawn;
+    hidden += did.hidden;
+    coverPx2 += did.coverPx2;
+  }
+
+  return { cells, plants, hidden, ground, texture: false };
 }
 
 /**

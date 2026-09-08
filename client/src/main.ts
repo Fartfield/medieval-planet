@@ -333,7 +333,9 @@ function focusOn(w: World, next: readonly number[]): void {
  * What the last frame grew, so the headless client can say where the plants
  * are rather than a person having to look.
  */
-let lastFlora: FloraDrawn = { cells: 0, plants: 0, hidden: 0, texture: true };
+let lastFlora: FloraDrawn = {
+  cells: 0, plants: 0, hidden: 0, ground: 0, texture: true,
+};
 
 export function floraLastFrame(): FloraDrawn {
   return lastFlora;

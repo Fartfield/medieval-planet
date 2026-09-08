@@ -2310,3 +2310,22 @@ fills minus arcs -- an arc is a leaf or a river, and a bare fill is a tile.
 And the arc counter was not being reset per layer, so once it outgrew the fill
 count every layer reported FLAT, including the world view, which had just been
 reported as tiled two lines earlier.
+
+
+## The sward reported itself as absent at every layer
+
+The ground texture was written, wired, type-checked and measured at zero swards
+laid on every one of the eight layers. That reads exactly like a renderer bug
+and was not one.
+
+The headless canvas stub returns null from createPattern -- which is an honest
+thing for a stub to do, having no pixels to repeat -- and drawGround takes a
+null pattern as "cannot draw" and returns false. So the entire turf path was
+switched off in the harness only, and the harness was the only thing looking.
+
+It now hands back a pattern object. Measured immediately after: 159 swards at
+layer 5, 8 at layer 6, 5 at layer 7.
+
+The general shape is worth keeping: a stub that returns a plausible failure
+value will report a fault in the code under test. The stub's job is to be the
+smallest browser that will do, and null is not what a browser does.

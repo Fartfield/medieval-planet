@@ -32,6 +32,7 @@ class StubContext {
   strokes = 0;
   arcs = 0;
   images = 0;
+  rects = 0;
   texts: string[] = [];
   nans = 0;
 
@@ -46,7 +47,10 @@ class StubContext {
   arc(x: number, y: number, r: number): void { this.note(x, y, r); this.arcs++; }
   fill(): void { this.fills++; }
   stroke(): void { this.strokes++; }
-  fillRect(): void {}
+  fillRect(x: number, y: number, w: number, h: number): void {
+    this.note(x, y, w, h);
+    this.rects++;
+  }
   fillText(t: string): void { this.texts.push(t); }
   setTransform(): void {}
   clip(): void {}
@@ -62,7 +66,11 @@ class StubContext {
     this.note(x, y, w, h);
     this.images++;
   }
-  createPattern(): null { return null; }
+  // A pattern the harness can hand back. Returning null -- which a stub can
+  // honestly do, since it has no pixels to repeat -- silently switched the
+  // whole turf path off and reported zero swards at every layer, which read
+  // exactly like a bug in the renderer.
+  createPattern(): Record<string, unknown> { return { setTransform: () => {} }; }
 }
 
 const context = new StubContext();
@@ -160,6 +168,7 @@ console.log('  driving the real client against a stub canvas');
 console.log('');
 
 const client = await import('../client/src/main.ts');
+const assets = await import('../client/src/flora_render.ts');
 
 // The world the server would have sent. Same seed the suites use, so what the
 // client builds is the world every other measurement describes.
@@ -233,6 +242,7 @@ function drewThisLayer(label: string): void {
   console.log(`    ${label.padEnd(28)} ${String(context.fills).padStart(6)} fills  `
     + `${String(grew.plants).padStart(6)} plants  `
     + `${String(grew.hidden).padStart(5)} hidden  `
+    + `${String(grew.ground).padStart(5)} turf  `
     + `${context.nans > 0 ? `${context.nans} NaN  ` : ''}`
     + (tiles ? 'drawn from its own tiles' : 'FLAT -- no constituent tiles'));
 }
@@ -334,6 +344,18 @@ if (plantedLayers < 3) {
   console.log('  finding the stems whose crowns cover the deep views.');
   process.exit(1);
 }
+// THE CACHES ARE THE WHOLE ARGUMENT FOR BAKING. Twenty images a species and a
+// handful of sward tiles, or the bake was not worth doing and the numbers here
+// would say so by climbing after a session of walking about.
+console.log(`    baked plant images: ${assets.stampCacheSize()}`);
+console.log(`    baked sward tiles:  ${assets.groundCacheSize()}`);
+if (assets.stampCacheSize() > 400 || assets.groundCacheSize() > 60) {
+  console.log('  THE ASSET CACHE IS NOT BOUNDED. Something is keying a bake on');
+  console.log('  a value that varies continuously -- a zoom, a week, an age.');
+  process.exit(1);
+}
+console.log('');
+
 if (deepest === 0) {
   console.log('  NOTHING GROWS AT THE DEEP LAYERS, which is where a plant is');
   console.log('  meant to be drawn branch by branch.');
