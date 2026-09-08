@@ -289,4 +289,52 @@ export const CARROT: Species = {
   ],
 };
 
-export const SPECIES: readonly Species[] = [OAK, HAZEL, BRAMBLE, WHEAT, CARROT];
+// --- meadow grass ------------------------------------------------------------
+
+/**
+ * The sixth, and the one that covers the world.
+ *
+ * A perennial bunchgrass -- a fescue or a bent, the sward of an ordinary
+ * pasture. It is here because everything else needed it: the map's ground
+ * between the trees is grass, and until now there was no grass to bake it from.
+ *
+ * Its mature mass is set by an anchor that already existed. GRASS_TUFT_G says a
+ * tuft carries three grammes of standing dry matter above ground, which is what
+ * a hand-sized quadrat of sward weighs out at; with roots at 45% -- a grass
+ * keeps nearly half its mass below ground, which is the whole reason a sward
+ * survives grazing -- the whole plant is about six grammes.
+ */
+export const GRASS: Species = {
+  name: 'grass',
+  habit: Habit.Grass,
+  lifespanYears: 6,
+  matureMassKg: 0.006,
+  // A tussock fills out in a season: half its mass in about three months.
+  growthRate: 3.0,
+  matureSpreadM: 0.12,
+  matureHeightM: 0.5,
+  // Tillers. A bunchgrass is a crowd of shoots from one crown, which is why it
+  // is a tuft and not a stem.
+  stems: 25,
+  germination: { minTempC: 5, chillWeeks: 2, weeklyOdds: 0.2, seedlingSurvival: 0.15 },
+  parts: [
+    // Nearly half of it, and out of sight. This is what makes a pasture
+    // survive being eaten to the ground every week of the summer.
+    { part: Part.Root, share: 0.45, densityKgM3: 420, pigment: WOOD_PALE, phenology: PERENNIAL,
+      composition: mix({ water: 0.60, cellulose: 0.22, lignin: 0.08, protein: 0.03, sugar: 0.04, ash: 0.03 }) },
+    { part: Part.Rhizome, share: 0.05, densityKgM3: 450, pigment: WOOD_PALE, phenology: PERENNIAL,
+      composition: mix({ water: 0.62, cellulose: 0.18, lignin: 0.06, starch: 0.08, protein: 0.02, ash: 0.04 }) },
+    { part: Part.Branch, share: 0.12, densityKgM3: 350, pigment: STRAW, phenology: { from: 10, to: 48 },
+      composition: mix({ water: 0.55, cellulose: 0.24, lignin: 0.09, sugar: 0.07, protein: 0.02, ash: 0.03 }) },
+    { part: Part.Leaf, share: 0.32, densityKgM3: 330, pigment: GREEN, phenology: { from: 8, to: 48 },
+      composition: mix({ water: 0.72, cellulose: 0.13, lignin: 0.04, protein: 0.05, sugar: 0.02, oil: 0.01, ash: 0.03 }) },
+    { part: Part.Flower, share: 0.02, densityKgM3: 320, pigment: STRAW, phenology: { from: 22, to: 28 },
+      composition: mix({ water: 0.60, cellulose: 0.18, lignin: 0.06, sugar: 0.08, protein: 0.05, ash: 0.03 }) },
+    { part: Part.Seed, share: 0.03, densityKgM3: 900, pigment: STRAW, phenology: { from: 26, to: 36 },
+      composition: mix({ water: 0.12, starch: 0.60, protein: 0.14, oil: 0.03, cellulose: 0.07, sugar: 0.02, ash: 0.02 }) },
+    { part: Part.Husk, share: 0.01, densityKgM3: 280, pigment: STRAW, phenology: { from: 26, to: 36 },
+      composition: mix({ water: 0.10, cellulose: 0.42, lignin: 0.20, sugar: 0.19, protein: 0.03, ash: 0.06 }) },
+  ],
+};
+
+export const SPECIES: readonly Species[] = [OAK, HAZEL, BRAMBLE, WHEAT, CARROT, GRASS];

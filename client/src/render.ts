@@ -18,7 +18,7 @@ import { BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import type { Planet } from '../../sim/gen/planet.ts';
 import type { SubMap, Basis } from '../../sim/gen/submap.ts';
 import { toDirection, toLocal, cellContaining } from '../../sim/gen/submap.ts';
-import { noise3 } from '../../sim/gen/noise.ts';
+import { uniform3 } from '../../sim/gen/noise.ts';
 import { floraAt, FloraKind } from '../../sim/model/flora.ts';
 import * as A from '../../sim/anchors.ts';
 import type { Patch } from '../../sim/geo/patch.ts';
@@ -1318,9 +1318,6 @@ const BARE_GROUND = '#8a7d63';
  * after correction, asking for 0.25 gives 0.272, 0.50 gives 0.499 and 0.80
  * gives 0.780, which is well inside what a canopy estimate is worth.
  */
-const NOISE_MEAN = 0.5;
-const NOISE_SD = 0.1303;
-
 export function underCanopy(
   dirX: number, dirY: number, dirZ: number,
   radiusM: number, crownM: number, cover: number,
@@ -1328,9 +1325,10 @@ export function underCanopy(
   if (cover <= 0) return false;
   if (cover >= 1) return true;
   const f = radiusM / Math.max(1e-9, crownM);
-  const raw = (noise3(dirX * f, dirY * f, dirZ * f, 0x10A5) + 1) / 2;
-  const uniform = 1 / (1 + Math.exp(-1.702 * (raw - NOISE_MEAN) / NOISE_SD));
-  return uniform < cover;
+  // The correction now lives in noise.ts, because a second caller -- stand.ts,
+  // drawing a wood's age structure -- fell into exactly the same hole and lost
+  // a third of the timber to it. Two callers is where a fix stops being local.
+  return uniform3(dirX * f, dirY * f, dirZ * f, 0x10A5) < cover;
 }
 
 /**

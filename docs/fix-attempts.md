@@ -2189,3 +2189,48 @@ growth curves with different rates is a ratio of two paces as well as two
 ceilings, unless both have finished.** The fix each time is the same -- measure
 at saturation for the ceiling, measure the ratio against the actual mass ratio
 for everything else, and never let one number stand for both.
+
+
+## The wood on the screen was not the wood in the model
+
+`stand.ts` places individual plants; the check that matters is whether the
+plants you could count and fell weigh what the timber model says stands there.
+First measurement: **0.646**. A third of the forest was missing.
+
+### ~~The age distribution is wrong~~ -- it was right, and it was not being drawn
+
+The suspicion was that an exponential age structure is too young to carry the
+mass. It is not: `meanAgeFor` solves for the mean age whose distribution has
+exactly the anchor mass, and `meanMassOfStand` at that age reads 662.252 kg
+against a target of 662.252. The distribution was correct and the sampling from
+it was not.
+
+### Gradient noise is not uniform, for the SECOND time in this project
+
+`noise3` is a sum of interpolated gradients, so it is bell-shaped about 0.5
+with a standard deviation of 0.130. Ages were drawn through the inverse
+exponential, `-mean.ln(1-u)`, which needs a uniform `u`. With a bell-shaped one,
+every tree lands near the median and the old trees that carry most of a wood's
+mass are simply absent.
+
+The renderer already had this exact bug and already had the fix inlined in
+`underCanopy` -- an 81%-cover forest drawing as solid leaf. Two independent
+callers falling into the same hole is where a fix stops being local, so the
+correction is now `uniform3` in `noise.ts` and both call it.
+
+Measured after:
+
+        drawn wood over one hectare      0.646  ->  0.996
+        over a hundred hectares          0.646  ->  0.994
+        share of parish tiles with a tree 1.00   ->  0.305 (wanted 0.329)
+
+### Two of the four failures were the test, and saying so
+
+`trees on a parish-layer tile = 3.48` was asserted to be less than one. The
+assertion was right about what it wanted and wrong about the arithmetic: 13 m
+was picked by guessing rather than by dividing, and a 13 m tile is 146 m2,
+which at 238 trees a hectare holds three and a half of them. Four metres gives
+14 m2 and a third of a tree.
+
+`the same ground grows the same wood` compared a stand of trees-and-shrubs
+against a stand of trees-shrubs-and-vines. Nothing was wrong with the ground.
