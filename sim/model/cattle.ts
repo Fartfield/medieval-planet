@@ -142,5 +142,11 @@ export const CATTLE: Animal = {
   // single number on the sheet that five centuries of breeding moved most, and
   // getting it wrong would give a village a dairy industry it never had.
   milkLitresPerYear: 600,
+  // Dun and red-brown, which is what the landraces were before anybody bred
+  // for a colour. Not derivable from anything, and said so on the sheet.
+  coat: [124, 88, 62],
+  // Horned, as every beast was: polling is a modern convenience and a
+  // medieval ox worked in a yoke that its horns held.
+  horned: true,
   tissues: TISSUES,
 };

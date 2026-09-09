@@ -30,8 +30,10 @@ import { formOf, type Form } from '../../sim/model/form.ts';
 import {
   type Species, Part, massAt, spreadAt, ageAtFraction, isBuried,
 } from '../../sim/model/plant.ts';
-import { type Individual, worthDrawing } from '../../sim/model/stand.ts';
+import { type Individual, worthDrawing, VANISH_PX } from '../../sim/model/stand.ts';
 import { GRASS } from '../../sim/model/species.ts';
+import { beastOf } from '../../sim/model/beastform.ts';
+import { type Beastie } from '../../sim/model/herd.ts';
 import { seed, below } from '../../sim/rng.ts';
 
 /**
@@ -580,6 +582,72 @@ export function drawBuried(
     ctx.beginPath();
     ctx.arc(cx + b.x * pxPerM, cy + b.y * pxPerM, b.radiusM * pxPerM, 0, Math.PI * 2);
     ctx.fill();
+    drawn++;
+  }
+  return drawn;
+}
+
+
+// --- the beasts --------------------------------------------------------------
+
+/**
+ * Stamp a patch's cattle.
+ *
+ * TRACED, NOT BAKED, and that is the right call for an animal where it was the
+ * wrong one for a tree. A cow is fourteen shapes; an oak at full detail is six
+ * hundred. There are never more than a few dozen beasts on screen, because a
+ * beast is two metres across and needs a close view, so tracing costs a few
+ * hundred operations a frame and saves a cache with an age dimension in it.
+ *
+ * The size is the animal's own, always: a calf is drawn as the calf it is,
+ * because beastOf reads its mass and its mass reads its age.
+ */
+export function drawHerd(
+  ctx: CanvasRenderingContext2D,
+  beasts: readonly Beastie[],
+  cx: number, cy: number, pxPerM: number, tc: number, ts: number,
+): number {
+  if (beasts.length === 0 || pxPerM <= 0) return 0;
+  const baseTurn = Math.atan2(ts, tc);
+  let drawn = 0;
+
+  for (const b of beasts) {
+    const form = beastOf(b.animal, b.ageYears, b.seed);
+    const lengthPx = form.build.overallLengthM * pxPerM;
+    // The same vanishing rule the plants get, and it moves on its own: a calf
+    // disappears from a view that still shows its mother.
+    if (lengthPx < VANISH_PX) continue;
+
+    const dx = b.x * tc - b.y * ts;
+    const dy = b.x * ts + b.y * tc;
+    const x = cx + dx * pxPerM;
+    const y = cy + dy * pxPerM;
+    // Which way she is facing. Her own, from her own seed, so a herd is not a
+    // parade -- and stable, so she does not spin when the view is dragged.
+    const turn = ((b.seed % 360) * Math.PI) / 180 + baseTurn;
+    const c = Math.cos(turn);
+    const sn = Math.sin(turn);
+    const at = (px: number, py: number): [number, number] =>
+      [x + (px * c - py * sn) * pxPerM, y + (px * sn + py * c) * pxPerM];
+
+    ctx.lineCap = 'round';
+    for (const st of form.strokes) {
+      const [x0, y0] = at(st.x0, st.y0);
+      const [x1, y1] = at(st.x1, st.y1);
+      ctx.strokeStyle = rgb(st.rgb);
+      ctx.lineWidth = Math.max(0.7, st.widthM * pxPerM);
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.stroke();
+    }
+    for (const bl of form.blobs) {
+      const [bx, by] = at(bl.x, bl.y);
+      ctx.fillStyle = rgb(bl.rgb);
+      ctx.beginPath();
+      ctx.arc(bx, by, Math.max(0.7, bl.radiusM * pxPerM), 0, Math.PI * 2);
+      ctx.fill();
+    }
     drawn++;
   }
   return drawn;

@@ -334,7 +334,7 @@ function focusOn(w: World, next: readonly number[]): void {
  * are rather than a person having to look.
  */
 let lastFlora: FloraDrawn = {
-  cells: 0, plants: 0, hidden: 0, ground: 0, texture: true,
+  cells: 0, plants: 0, hidden: 0, ground: 0, beasts: 0, texture: true,
 };
 
 export function floraLastFrame(): FloraDrawn {
@@ -695,6 +695,11 @@ function draw(): void {
     // Navigation is untouched: onScreen still returns the neighbouring maps, so
     // scrolling onto one still hands it the middle and clicking one still
     // finds it. They are not DRAWN, they are still there.
+    // Hoisted out of the neighbour block below, because the grazing predicate
+    // needs the same settlement index and is built after the maps are drawn.
+    const index = overlayIndex(world, path.length);
+    const empty = { owned: new Map<number, number>(), populated: new Map<number, number>() };
+
     if (path.length > 1) {
       // ONE PASS OVER THE DELTAS FOR ALL THE MAPS, not one pass each.
       //
@@ -703,8 +708,6 @@ function draw(): void {
       // of the same list every frame, and the list is the part of the world
       // that grows as the game is played -- so the view would get slower the
       // longer anyone played it, which is the wrong way round.
-      const index = overlayIndex(world, path.length);
-      const empty = { owned: new Map<number, number>(), populated: new Map<number, number>() };
       for (const nb of drawnMapsOf(world, path)) {
         const map = world.subMap(nb);
         // Off screen entirely: no placement, no overlay lookup, no cell loop.
@@ -733,15 +736,40 @@ function draw(): void {
     const region = world.subMap([path[0]]);
     const radiusM = region.spacingM / (Math.sqrt(3) * region.cellRadiusRad);
     const nearby = [world.subMap(path)];
+    const mapAddresses: number[][] = [path as number[]];
     for (const nb of drawnMapsOf(world, path)) {
       const m = world.subMap(nb);
-      if (mapIsVisible(m, frame, view, w, h)) nearby.push(m);
+      if (!mapIsVisible(m, frame, view, w, h)) continue;
+      nearby.push(m);
+      mapAddresses.push(nb);
     }
     // Week 30, high summer, and it stays there until the calendar is something
     // the simulation lives through rather than something the picture claims.
     // See docs/known-gaps.md.
+    // WHERE THE CATTLE ARE ALLOWED TO BE. A herd belongs to somebody, so the
+    // renderer is told which ground is within reach of a settlement rather than
+    // scattering beasts over every meadow on the planet -- which would be a
+    // picture making a claim the simulation cannot back.
+    //
+    // A settled tile and the ring around it: a village grazes its own land and
+    // the commons next to it, and beyond that the beasts would have to be
+    // driven, which is a thing nothing does yet.
+    const grazedByMap: Set<number>[] = nearby.map((m, i) => {
+      const set = new Set<number>();
+      const people = i === 0 ? populated : (index.get(toKey(mapAddresses[i])) ?? empty).populated;
+      for (const [cell, n] of people) {
+        if (n <= 0 || cell < 0 || cell >= m.patch.count) continue;
+        set.add(cell);
+        for (let k = 0; k < 6; k++) {
+          const nb = m.patch.neighbours[cell * 6 + k];
+          if (nb >= 0) set.add(nb);
+        }
+      }
+      return set;
+    });
     const grew = drawFlora(ctx, nearby, frame, view, region.basis, radiusM, 30,
-      String(path[0]));
+      String(path[0]),
+      (mapIndex, cell) => grazedByMap[mapIndex]?.has(cell) ?? false);
     lastFlora = grew;
   }
 

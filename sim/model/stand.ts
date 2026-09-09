@@ -31,7 +31,7 @@
 
 import * as A from '../anchors.ts';
 import { dexp, dlog } from '../gen/mathx.ts';
-import { uniform3 } from '../gen/noise.ts';
+import { uniformAt } from '../gen/noise.ts';
 import { type BiomeId } from './biome.ts';
 import { floraAt, countOn, FloraKind, type Flora } from './flora.ts';
 import { type Species, Part, massAt } from './plant.ts';
@@ -183,8 +183,17 @@ export function meanAgeCached(s: Species, site: number, targetKg: number): numbe
 function field(
   dirX: number, dirY: number, dirZ: number, scale: number, salt: number,
 ): number {
-  const v = uniform3(dirX * scale, dirY * scale, dirZ * scale, salt);
-  return Math.max(0, Math.min(0.999999, v));
+  // A HASH AND NOT THE SMOOTH FIELD, and the difference is only visible where
+  // the probability is small. Gradient noise is bounded -- it never leaves
+  // 0.089 to 0.907 -- so thresholding it at a fortieth returns a quarter of
+  // what it should, which at the parish layer is three quarters of a forest
+  // that never came up. See uniformAt in noise.ts.
+  //
+  // The quantum is an eighth of the sample's own spacing: far coarser than the
+  // rounding difference between two maps covering the same ground, and far
+  // finer than anything that would make two neighbouring patches agree.
+  const quantum = 1 / (8 * Math.max(1e-9, scale));
+  return Math.max(0, Math.min(0.999999, uniformAt(dirX, dirY, dirZ, quantum, salt)));
 }
 
 /** What a tile is asked about. */

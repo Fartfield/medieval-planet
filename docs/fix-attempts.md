@@ -2485,3 +2485,67 @@ gap decides where stock can be kept.
 person will eat. Offal, blood and head are food and are not carcass; a butcher
 weighs the beast alive and again on the hook, and the gap is the hide, the gut
 fill and everything the hook does not hold.
+
+
+## Gradient noise cannot deliver a rare event
+
+Found by asking how many eighteen-metre patches of pasture hold a cow. The
+answer should be about one in thirty-seven; the model said one in a hundred and
+thirty-three.
+
+`uniform3` puts `noise3` through a logistic correction so that thresholding it
+means what it says, and it does -- in the middle. Measured over 400,000 samples,
+against a wanted probability:
+
+    wanted   got      wanted   got
+    0.005    0.000    0.300    0.312
+    0.010    0.000    0.500    0.501
+    0.027    0.007    0.800    0.796
+    0.050    0.028    0.900    0.914
+    0.100    0.086    0.950    0.972
+
+Fine from a fifth to four fifths and useless below a twentieth.
+
+### The cause is that gradient noise is BOUNDED
+
+Measured over 100,000 samples, `noise3` mapped to [0, 1] runs from **0.089 to
+0.907** and never leaves that band. It is a weighted average of eight
+gradients, so it cannot reach the extremes a normal distribution has. No
+correction can produce a value the underlying function never takes, and a
+correction fitted to the bulk will always lie about the tail.
+
+### ~~Fit a better curve~~ -- there is nothing there to fit
+
+A tabulated inverse CDF would reproduce the measured distribution exactly and
+would still return nothing below 0.089, because that is the function's floor.
+The problem is not the shape of the correction.
+
+### Use the field for what is smooth and a hash for what is independent
+
+A canopy is spatially correlated -- trees stand in woods -- and wants a smooth
+field. Whether one particular patch holds one particular animal is a coin, and
+a coin wants a hash, which is uniform by construction at every probability
+there is.
+
+`uniformAt` hashes the direction QUANTISED to an eighth of the sample spacing.
+That is the part that makes it safe: the same ground reached through two
+different maps gives directions agreeing to about a part in 1e12, and a quantum
+six orders of magnitude coarser cannot straddle a boundary in practice.
+Hashing the raw float would reshuffle the world every time the projection
+rounded differently -- which is the reason the smooth field was chosen in the
+first place, and the reason worth keeping.
+
+Measured after, on both the cattle and the trees that were already using it:
+
+    beasts counted against the pasture model   0.863  ->  0.983
+    parish tiles with a tree on them           0.926  ->  1.071
+    wood drawn over a hundred hectares         0.994  ->  0.987
+
+### And one of the two failures was a sample too small to see with
+
+`a fraction of a beast is that fraction of the patches` read 1.39 after the fix
+and looked like a fault. At a probability of a fortieth, four hundred trials
+have a standard deviation of three quarters of a per cent on an expected
+eleven, so a perfectly correct model reads anywhere between 0.75 and 1.25 of
+the truth. Four thousand trials read 1.17. The sample has to be large enough to
+see what is being asked about, and that is not a thing to discover twice.

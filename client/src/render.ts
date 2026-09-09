@@ -23,7 +23,10 @@ import { floraAt, FloraKind } from '../../sim/model/flora.ts';
 import {
   standOn, siteFrom, individualsAffordable, CROWN_GRID_M, type Stand,
 } from '../../sim/model/stand.ts';
-import { drawStand, groundTileFor, drawGround, seasonOf } from './flora_render.ts';
+import {
+  drawStand, groundTileFor, drawGround, seasonOf, drawHerd,
+} from './flora_render.ts';
+import { herdOn, type Herd } from '../../sim/model/herd.ts';
 import * as A from '../../sim/anchors.ts';
 import type { Patch } from '../../sim/geo/patch.ts';
 import {
@@ -1545,9 +1548,24 @@ export interface FloraDrawn {
   hidden: number;
   /** Lattice cells that got a sward laid under them. */
   ground: number;
+  /** Cattle standing on somebody's pasture. */
+  beasts: number;
   /** True when the zoom is too far out for individuals to be affordable. */
   texture: boolean;
 }
+
+/**
+ * Which ground is grazed, asked of the caller.
+ *
+ * CATTLE ARE NOT WILDLIFE. A herd belongs to somebody, and until a settlement
+ * owns one there is no honest way to scatter cattle across every meadow on the
+ * planet -- it would be a picture making a claim the simulation cannot back,
+ * which is the exact trap the tree work spent three commits climbing out of.
+ *
+ * So the renderer asks. main.ts answers from the settlements it already knows
+ * about, and where there is nobody, there are no cattle.
+ */
+export type Grazed = (mapIndex: number, cell: number) => boolean;
 
 /**
  * Draw every plant on the screen, once, after every map's ground is finished.
@@ -1569,9 +1587,10 @@ export function drawFlora(
   radiusM: number,
   week: number,
   anchorKey: string,
+  grazed: Grazed | null = null,
 ): FloraDrawn {
   const nothing: FloraDrawn = {
-    cells: 0, plants: 0, hidden: 0, ground: 0, texture: true,
+    cells: 0, plants: 0, hidden: 0, ground: 0, beasts: 0, texture: true,
   };
   const { cx, cy, size } = view;
   if (maps.length === 0 || radiusM <= 0) return nothing;
@@ -1670,7 +1689,7 @@ export function drawFlora(
   // the ground -- which is the third time that sentence has earned its place in
   // this file.
   const ready: {
-    x: number; y: number; tc: number; ts: number; stand: Stand;
+    x: number; y: number; tc: number; ts: number; stand: Stand; herd: Herd | null;
   }[] = [];
 
   for (const cell of visible) {
@@ -1683,7 +1702,19 @@ export function drawFlora(
     cells++;
 
     const key = i + '|' + j;
+    let grazedHere = false;
+    let pasture: { biome: number; npp: number } | null = null;
     let stand = standLattice.get(key) ?? null;
+    {
+      const found = pickAmong(maps, dx, dy, dz);
+      const m = found === null ? null : maps[found.map];
+      if (m === null || found === null || m.elevationM[found.cell] < 0) {
+        standLattice.set(key, null);
+        continue;
+      }
+      grazedHere = grazed !== null && grazed(found.map, found.cell);
+      pasture = { biome: m.biome[found.cell], npp: m.nppGm2[found.cell] };
+    }
     if (!standLattice.has(key)) {
       const found = pickAmong(maps, dx, dy, dz);
       const m = found === null ? null : maps[found.map];
@@ -1724,6 +1755,17 @@ export function drawFlora(
       tc: alen > 1e-12 ? ax / alen : 1,
       ts: alen > 1e-12 ? ay / alen : 0,
       stand,
+      herd: grazedHere && pasture !== null
+        ? herdOn({
+          biome: pasture.biome as never,
+          nppGm2: pasture.npp,
+          dirX: dx,
+          dirY: dy,
+          dirZ: dz,
+          radiusM,
+          spacingM: CROWN_GRID_M,
+        })
+        : null,
     });
   }
 
@@ -1756,7 +1798,15 @@ export function drawFlora(
     coverPx2 += did.coverPx2;
   }
 
-  return { cells, plants, hidden, ground, texture: false };
+  // PASS THREE: the cattle, over the grass and over the plants, because a beast
+  // stands on the ground rather than under it.
+  let beasts = 0;
+  for (const r of ready) {
+    if (r.herd === null) continue;
+    beasts += drawHerd(ctx, r.herd.beasts, r.x, r.y, pxPerM, r.tc, r.ts);
+  }
+
+  return { cells, plants, hidden, ground, beasts, texture: false };
 }
 
 /**

@@ -163,6 +163,17 @@ export interface Animal {
    * modern dairying, which is the opposite of true.
    */
   milkLitresPerYear: number;
+  /**
+   * Coat colour, rgb.
+   *
+   * ON THE SHEET, and for the same reason a plant's pigment is: colour is not
+   * a consequence of bulk chemistry, and claiming otherwise would be inventing.
+   * A landrace of medieval cattle was dun and red-brown because that is what
+   * the landrace was, and no allometry predicts it.
+   */
+  coat: [number, number, number];
+  /** Whether it carries horns. Every medieval beast did; polled breeds are new. */
+  horned: boolean;
   tissues: readonly Tissue[];
 }
 

@@ -120,6 +120,48 @@ export function uniform3(x: number, y: number, z: number, seed: number): number 
   return 1 / (1 + dexp((-1.702 * (raw - NOISE_MEAN)) / NOISE_SD));
 }
 
+/**
+ * AND IT STILL CANNOT DELIVER A RARE EVENT, because gradient noise is BOUNDED.
+ *
+ * Measured over 100,000 samples, noise3 mapped to [0, 1] runs from 0.089 to
+ * 0.907 and never leaves that band -- it is a weighted average of eight
+ * gradients, so it cannot reach the extremes a normal distribution has. No
+ * correction can produce a value the underlying function never takes.
+ *
+ * The consequence is sharp and measured. Against a wanted probability:
+ *
+ *     wanted   got      wanted   got
+ *     0.005    0.000    0.300    0.312
+ *     0.010    0.000    0.500    0.501
+ *     0.027    0.007    0.800    0.796
+ *     0.050    0.028    0.900    0.914
+ *     0.100    0.086    0.950    0.972
+ *
+ * Fine from a fifth to four fifths, and useless below a twentieth -- which is
+ * exactly the range a scattered thing lives in. Asking "is there a cow on this
+ * eighteen-metre patch" is asking for 0.027, and the answer came back at a
+ * quarter of the herd there should have been.
+ *
+ * SO USE THE FIELD FOR WHAT IS SMOOTH AND A HASH FOR WHAT IS INDEPENDENT. A
+ * canopy is spatially correlated -- trees stand in woods -- and wants the
+ * field. Whether one particular patch holds one particular animal is a coin,
+ * and a coin wants a hash, which is uniform by construction at every
+ * probability there is.
+ */
+export function uniformAt(
+  x: number, y: number, z: number, quantum: number, seed: number,
+): number {
+  // QUANTISED, which is what makes it stable. The same ground reached through
+  // two different maps gives directions agreeing to about a part in 1e12; a
+  // quantum some six orders of magnitude coarser than that cannot straddle a
+  // boundary in practice, and if it ever did, one patch of ground would gain or
+  // lose one animal. Hashing the raw float instead would reshuffle the world
+  // every time the projection rounded differently.
+  const q = quantum > 0 ? quantum : 1;
+  const h = hash3(Math.round(x / q), Math.round(y / q), Math.round(z / q), seed);
+  return (h >>> 0) / 4294967296;
+}
+
 export function noise2(x: number, y: number, seed: number): number {
   return noise3(x, y, 0.5, seed);
 }

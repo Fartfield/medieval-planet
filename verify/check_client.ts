@@ -243,6 +243,7 @@ function drewThisLayer(label: string): void {
     + `${String(grew.plants).padStart(6)} plants  `
     + `${String(grew.hidden).padStart(5)} hidden  `
     + `${String(grew.ground).padStart(5)} turf  `
+    + `${String(grew.beasts).padStart(4)} cattle  `
     + `${context.nans > 0 ? `${context.nans} NaN  ` : ''}`
     + (tiles ? 'drawn from its own tiles' : 'FLAT -- no constituent tiles'));
 }
@@ -344,6 +345,56 @@ if (plantedLayers < 3) {
   console.log('  finding the stems whose crowns cover the deep views.');
   process.exit(1);
 }
+// THE CATTLE, EXERCISED DIRECTLY, because the descent above cannot reach them.
+//
+// A herd is drawn only on ground within reach of a settlement, and a freshly
+// generated world has no settlements in it at all -- so every layer reports
+// zero cattle and that is the predicate working, not the drawing failing. The
+// distinction matters: one of those is a feature and the other would be a bug
+// that nothing in this harness could see.
+//
+// So the drawing path is called on its own, against the same stub canvas, and
+// held to the same standard as everything else: it must paint, and it must not
+// paint at coordinates that are not numbers.
+console.log('  the cattle, driven directly');
+{
+  const herdMod = await import('../sim/model/herd.ts');
+  const cattleMod = await import('../sim/model/cattle.ts');
+  const biomeMod = await import('../sim/model/biome.ts');
+  const before = { fills: context.fills, strokes: context.strokes, nans: context.nans };
+  context.fills = 0;
+  context.strokes = 0;
+  context.nans = 0;
+  const herd = herdMod.herdOn({
+    biome: biomeMod.Biome.TemperateGrassland, nppGm2: 700,
+    dirX: 0.3, dirY: 0.5, dirZ: Math.sqrt(1 - 0.09 - 0.25),
+    radiusM: 6371000, spacingM: 100,
+  }, cattleMod.CATTLE, 64);
+  const painted = assets.drawHerd(
+    context as never, herd.beasts, 800, 450, 20, 1, 0,
+  );
+  console.log(`    ${herd.beasts.length} beasts on the hectare, ${painted} drawn`);
+  console.log(`    ${context.fills} fills, ${context.strokes} strokes, ${context.nans} NaN`);
+  if (herd.beasts.length === 0 || painted === 0) {
+    console.log('  THE HERD DREW NOTHING. Either the pasture carries no cattle or');
+    console.log('  the drawing path is broken; verify_herd says which.');
+    process.exit(1);
+  }
+  if (context.nans > 0) {
+    console.log('  A BEAST WAS DRAWN AT COORDINATES THAT ARE NOT NUMBERS.');
+    process.exit(1);
+  }
+  // Fourteen shapes a beast: eight strokes and six blobs.
+  if (context.fills < painted * 6 || context.strokes < painted * 8) {
+    console.log('  A BEAST CAME OUT WITH PIECES MISSING.');
+    process.exit(1);
+  }
+  context.fills = before.fills;
+  context.strokes = before.strokes;
+  context.nans = before.nans;
+}
+console.log('');
+
 // THE CACHES ARE THE WHOLE ARGUMENT FOR BAKING. Twenty images a species and a
 // handful of sward tiles, or the bake was not worth doing and the numbers here
 // would say so by climbing after a session of walking about.
