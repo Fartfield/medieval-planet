@@ -2329,3 +2329,87 @@ layer 5, 8 at layer 6, 5 at layer 7.
 The general shape is worth keeping: a stub that returns a plausible failure
 value will report a fault in the code under test. The stub's job is to be the
 smallest browser that will do, and null is not what a browser does.
+
+
+## The rot model had the right order and the wrong magnitudes
+
+material.ts checked that oak heartwood outlasts oak sapwood outlasts leaf
+litter, and it did. Nothing checked BY HOW MUCH, because nothing turned the
+rates into a span of time. The first thing that did -- process.ts, asking how
+long a beam lasts -- found:
+
+    leaf litter half-life      3.0 years   against a measured 1
+    oak heartwood              3.5 years   against a measured 20
+    heartwood over sapwood      2.05x      against a measured 6 to 7
+
+A gatepost was worth no more than the sapwood it should have outlasted.
+
+### ~~Loosen the assertions~~ -- these are anchored quantities, not preferences
+
+Timber durability is classified, published and used to specify buildings. Oak
+sapwood is class 5 and oak heartwood is class 2, and the whole reason anyone
+cuts heartwood out of a log is the gap between them. A model that says the gap
+is twofold is wrong about the thing the material is for.
+
+### Solve the constants from three measured durabilities
+
+Oak leaf litter loses half its mass in its first year at 15 C. Oak sapwood in
+ground contact has a half-life near 3 years. Oak heartwood near 20. Three
+anchors, three constants.
+
+### ~~Two constants, lignin and tannin~~ -- the fit is unstable, 0.225 vs 0.273
+
+They CAN hit all three anchors, and only with constants so steep that a
+percentage point of lignin swings durability by half. The reason is visible in
+the numbers: a leaf and a plank have nearly the same lignin fraction of their
+dry matter -- 0.225 against 0.273 -- and rot twenty-four times differently, so
+lignin is being asked to explain a difference it does not cause.
+
+### Nitrogen as the fourth term
+
+The standard predictor of litter decay is the lignin-to-nitrogen ratio, and a
+leaf is thirty times richer in protein than heartwood. With protein in, the
+constants come out mild (3.08, 6.0, 4.59, 22.3) and the mechanism is the real
+one: lignin slows decay, nitrogen feeds it, tannin poisons it.
+
+    oak heartwood    19.99 years   (anchor 20)
+    oak sapwood       2.92 years   (anchor 3)
+    leaf litter       1.16 years   (anchor 1.15)
+
+### And the fractions were being read off the wet mass
+
+Found while fixing the above. rotResistance divided by the total INCLUDING
+water, so soaking a beam lowered its lignin and tannin fractions and made it
+chemically less durable -- while rotRate was separately multiplying by the same
+wetness. The water was counted twice, and not slightly: oak heartwood at 30%
+moisture came out at 8.9 years against 20 at 12%, purely from the arithmetic.
+
+A wet oak beam rots faster because it is wet, not because it has stopped being
+oak. There is now a check that soaking a beam changes nothing about its
+chemistry.
+
+## Four smaller faults in the verbs, all found by measurement
+
+**Burning was stepped rather than integrated.** An instantaneous rate times the
+span said a 10 kg log was gone in one hour; it takes 2.89. dm/dt = -k.m^(2/3),
+so m^(1/3) falls at a constant rate and the closed form is exact. The whole
+point of a rate-per-hour design is that a long step is the same answer as many
+short ones, and it was not.
+
+**Seasoning took nine years for a firewood round.** Two errors compounding. The
+drying distance is HALF the thickness, because water leaves by the nearest
+face. And "a year an inch" is the time to ARRIVE, not the time constant -- an
+exponential is 95% of the way there after three of those. With both corrected a
+24 cm round seasons in about a year, which is what a woodpile does.
+
+**Equilibrium moisture was a straight line.** 0.185h passes through air-dry
+correctly and then says saturated air leaves wood at 18.5% water, which is
+drier than a bog log has ever been. Replaced with a rational curve through
+(0.65, 0.12) -- the figure every timber table is quoted at -- and (1.0, 0.23),
+the fibre saturation point.
+
+**Threshing silently dropped what it had no bucket for.** The conservation
+check caught it: 4.65 kg accounted for out of a 5.82 kg sheaf. The missing
+kilogramme was ROOTS, which a scythe never lifts. Harvest now leaves them
+unless asked to dig, which is the difference between reaping wheat and pulling
+a carrot, and thresh has an "other" bucket so nothing can vanish again.

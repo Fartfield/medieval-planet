@@ -256,12 +256,63 @@ export function bendingMPa(m: Material): number {
  * The rate is per year at 25 C; `rotRate` applies the temperature.
  */
 export function rotResistance(c: Composition): number {
-  const total = sum(c);
-  if (total <= 0) return 1;
-  const lignin = c.lignin / total;
-  const tannin = c.tannin / total;
-  return dexp(-3.0 * lignin - 12.0 * tannin);
+  // OF THE DRY MATTER, not of the whole, and this was a real error rather than
+  // a refinement. Read against the wet total, soaking a beam lowered its lignin
+  // and tannin FRACTIONS and so made it chemically less durable -- while
+  // rotRate was separately multiplying by the same wetness. The water was being
+  // counted twice, and the size of it was not small: oak heartwood at 30%
+  // moisture came out with a half-life of 8.9 years against 20 at 12%, purely
+  // from the arithmetic. A wet oak beam rots faster because it is wet, not
+  // because it has stopped being oak.
+  const dry = sum(c) - c.water;
+  if (dry <= 0) return 1;
+  const lignin = c.lignin / dry;
+  const protein = c.protein / dry;
+  const tannin = c.tannin / dry;
+  return ROT_BASE * dexp(
+    -ROT_LIGNIN * lignin + ROT_NITROGEN * protein - ROT_TANNIN * tannin,
+  );
 }
+
+/**
+ * THE FOUR CONSTANTS ABOVE, SOLVED FROM THREE MEASURED DURABILITIES.
+ *
+ * They were 1.0, 3.0 and 12.0, and every one of those was a shape rather than a
+ * number: they got the ORDER right -- heartwood outlasts sapwood outlasts
+ * leaves -- and nothing anchored the absolute rate or the size of the gaps.
+ * Nothing noticed until process.ts turned the rates into years and asked how
+ * long a beam lasts. Leaf litter came out with a half-life of three years,
+ * against a measured one, and oak heartwood with three and a half against a
+ * measured twenty.
+ *
+ * Three unknowns, so three measurements, all of them standard:
+ *
+ *   Oak LEAF LITTER loses about half its mass in its first year on a temperate
+ *   forest floor: the decomposition constant k is near 0.6 a year at 15 C.
+ *
+ *   Oak SAPWOOD in ground contact is gone in a few years -- durability class 5,
+ *   "not durable", a half-life near 3 years at 20 C.
+ *
+ *   Oak HEARTWOOD in the same ground is class 2, "durable", and lasts a couple
+ *   of decades: a half-life near 20 years. This is the gap that makes an oak
+ *   gatepost worth cutting and an oak sapwood one worth nothing.
+ *
+ * NITROGEN IS THE FOURTH TERM AND IT HAD TO BE ADDED. With only lignin and
+ * tannin the three anchors could still be hit, but only by constants so steep
+ * that a percentage point of lignin swung durability by half -- because a leaf
+ * and a plank have nearly the same lignin fraction of their dry matter (0.225
+ * against 0.273) and rot twenty-four times differently. What actually separates
+ * them is nitrogen: the standard predictor of litter decay is the lignin to
+ * nitrogen ratio, and a leaf is thirty times richer in protein than heartwood.
+ * With protein in, the constants come out mild and the mechanism is the real
+ * one -- lignin slows decay, nitrogen feeds it, tannin poisons it.
+ *
+ * Solving the three anchors gives 3.08, 6.0, 4.59 and 22.3.
+ */
+const ROT_BASE = 3.078;
+const ROT_LIGNIN = 6.0;
+const ROT_NITROGEN = 4.594;
+const ROT_TANNIN = 22.26;
 
 /**
  * Mass lost to rot in a year at a given temperature, as a fraction.
