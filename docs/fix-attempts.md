@@ -2600,3 +2600,36 @@ Also of record: the pasture model's forage is DRY kg and the herd eats FRESH
 grass at 72% water; the first test fed dry to the herd as fresh and undervalued
 every hectare 3.6-fold. Same class of error as the 13 m tile: a number crossing
 a seam in the wrong unit.
+
+
+## The household missed the virgate by half
+
+The chain from Kleiber's law to the size of a family holding came out at 3.1
+hectares, and the standard holding of one villein family -- the virgate -- is 7
+to 9. The physics was right and the economy was missing: the first version fed
+only its own mouths.
+
+What the record says every harvest owed before the bread: seed corn (29% at the
+period's 3.5:1 yield -- already modelled), the tithe (a tenth, in the sheaf, by
+law), rent (near a quarter of output across manorial studies), and the
+brewhouse (a quarter again of the bread corn, with most of its calories lost in
+the making). With the obligations in, the holding is 7.66 ha. The
+subsistence-only figure is kept as its own measurement: a household with no
+lord needs 3.9 ha, and the difference is feudalism, measured.
+
+## Eight tonnes of firewood
+
+Holding a cottage at twelve degrees costs 8,400 kg of wood a year against a
+documented 1,500-3,000, and the factor of four is the finding: nobody lived at
+twelve degrees. A leaky one-room cottage (150 W/C) with an open hearth (a fifth
+of the heat into the room) sustains a lift of about THREE degrees over the
+street -- which is what reconstructions of open-hall buildings measure. Burn
+for the lift, not for comfort, and the year is 2,565 kg: the faggot a day of
+every estimate. The comfort assumption was the error; the physics was fine.
+
+## The household starved on a fencepost
+
+WEEKS_PER_YEAR is 52.18 (it is TURNS_PER_YEAR, an orbital fact), and a loop
+written `i < W` runs 53 times. A full year's larder was consumed over 53 weeks
+and the household went hungry in the last one. Anything iterating a year in
+weeks must floor it.
