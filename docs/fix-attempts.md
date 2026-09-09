@@ -2549,3 +2549,54 @@ have a standard deviation of three quarters of a per cent on an expected
 eleven, so a perfectly correct model reads anywhere between 0.75 and 1.25 of
 the truth. Four thousand trials read 1.17. The sample has to be large enough to
 see what is being asked about, and that is not a thing to discover twice.
+
+
+## The winter would not kill
+
+The husbandry loop exists to produce the medieval winter, and the first
+version's winter was survivable at any stocking rate. Three findings, each
+measured.
+
+### ~~Tissue at its calorie content~~ -- a scale does not trade at food value
+
+4,400 kcal/kg (the carcass's food energy) said a starving beast loses 4.3% of
+itself a week; the measured figure is 1 to 2. Live-weight change is
+fat-dominated on the way down and costs synthesis on the way up -- both ends
+land near 7,000 kcal/kg. And a starving beast spends near basal, not the 1.7x
+pasture-maintenance figure: it stands in the byre and its metabolism is
+depressed besides. Anchored: one week of total famine now costs 2.08% of body
+weight.
+
+### The dead-grass allowance was invented, and it fed the herd all winter
+
+`weeklyForageKg` handed out a quarter of a growing week's forage every dead
+week, free and for ever -- a number typed in on the spot, violating the one
+rule. Winter grazing is the STANDING CROP being eaten down, not new growth.
+Replaced with a standing-crop pool: growth adds in growing weeks; the herd
+destroys twice what it swallows (utilisation is a half, the rest goes under
+hoof); what stands unmown weathers at the measured 3% a week. February is now
+bare even where October stood thick.
+
+### A flat death-lift was a hidden immortality
+
+When the tail of the herd dies, the mean condition of the survivors rises. The
+lift was a flat +0.02 a week -- against a starvation fall of ~2% a week, so a
+dying herd hung exactly at the line for ever, losing 1.4% a week in a trickle.
+Removing the bottom share d of a distribution with spread s lifts the mean by
+about d.s, which for a trickle is nearly nothing. With the lift proportional,
+twenty weeks of famine kills 55 of 100, with the first deaths in week 11.
+
+### And the finding at the end: overstocking is an annual cull, not a collapse
+
+With everything anchored, a threefold-overstocked herd does NOT die in its
+first winter -- it goes in fat off ample summer grass, and months of starvation
+only bring it to 0.85. What overstocking produces is a herd that yo-yos between
+autumn fat and spring famine and pays a tithe of itself every February (2.6 of
+24 beasts a year, measured), while the fair-stocked herd pays nothing. That is
+the honest shape of the thing: summer never was the constraint, and a beast is
+very hard to starve to death in one season.
+
+Also of record: the pasture model's forage is DRY kg and the herd eats FRESH
+grass at 72% water; the first test fed dry to the herd as fresh and undervalued
+every hectare 3.6-fold. Same class of error as the 13 m tile: a number crossing
+a seam in the wrong unit.
