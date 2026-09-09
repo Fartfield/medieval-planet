@@ -1548,6 +1548,8 @@ export interface FloraDrawn {
   hidden: number;
   /** Lattice cells that got a sward laid under them. */
   ground: number;
+  /** Lattice cells inside some settlement's grazing reach. */
+  pastures: number;
   /** Cattle standing on somebody's pasture. */
   beasts: number;
   /** True when the zoom is too far out for individuals to be affordable. */
@@ -1590,7 +1592,7 @@ export function drawFlora(
   grazed: Grazed | null = null,
 ): FloraDrawn {
   const nothing: FloraDrawn = {
-    cells: 0, plants: 0, hidden: 0, ground: 0, beasts: 0, texture: true,
+    cells: 0, plants: 0, hidden: 0, ground: 0, pastures: 0, beasts: 0, texture: true,
   };
   const { cx, cy, size } = view;
   if (maps.length === 0 || radiusM <= 0) return nothing;
@@ -1813,14 +1815,20 @@ export function drawFlora(
   }
 
   // PASS THREE: the cattle, over the grass and over the plants, because a beast
-  // stands on the ground rather than under it.
+  // stands on the ground rather than under it. The pasture count is reported
+  // apart from the beast count on purpose: a sparse wood-pasture cell holds a
+  // fraction of a cow and honestly rolls zero, so "the predicate found grazed
+  // ground" and "a beast happened to stand in view" are different facts and a
+  // harness must be able to tell them apart.
   let beasts = 0;
+  let pastures = 0;
   for (const r of ready) {
     if (r.herd === null) continue;
+    pastures++;
     beasts += drawHerd(ctx, r.herd.beasts, r.x, r.y, pxPerM, r.tc, r.ts);
   }
 
-  return { cells, plants, hidden, ground, beasts, texture: false };
+  return { cells, plants, hidden, ground, pastures, beasts, texture: false };
 }
 
 /**

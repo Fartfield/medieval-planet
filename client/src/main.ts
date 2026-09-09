@@ -22,7 +22,7 @@ import { BIOME_NAMES, BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import { LANDFORM_NAMES } from '../../sim/model/tile.ts';
 import { MINERAL_NAMES } from '../../sim/model/resources.ts';
 import { ROCK_NAMES } from '../../sim/model/rock.ts';
-import { workedCells } from '../../sim/model/settlement.ts';
+import { workedCells, radiusForPopulation } from '../../sim/model/settlement.ts';
 import { Mineral } from '../../sim/model/resources.ts';
 import { ironOutputKgPerYear, IRON_LABOUR_SAVING } from '../../sim/model/labour.ts';
 import { GRAIN_PER_PERSON_YEAR } from '../../sim/economy.ts';
@@ -334,11 +334,54 @@ function focusOn(w: World, next: readonly number[]): void {
  * are rather than a person having to look.
  */
 let lastFlora: FloraDrawn = {
-  cells: 0, plants: 0, hidden: 0, ground: 0, beasts: 0, texture: true,
+  cells: 0, plants: 0, hidden: 0, ground: 0, pastures: 0, beasts: 0, texture: true,
 };
 
 export function floraLastFrame(): FloraDrawn {
   return lastFlora;
+}
+
+/**
+ * The address of the selected tile, for the harness that must settle what it
+ * is actually looking at rather than a tile it hopes is on screen.
+ */
+export function selectedAddress(): number[] | null {
+  return selected >= 0 ? [...path, selected] : null;
+}
+
+/**
+ * Every settlement in the world, with the grazing reach its own labour model
+ * gives it, as unit vectors and a squared chord for the cheap distance test.
+ *
+ * Rebuilt when the delta count changes rather than every frame: the list is a
+ * handful of settlements, but each one costs a tile descent to find its
+ * direction, and a drag redraws sixty times a second against a list that
+ * changes only when somebody founds or abandons.
+ */
+let grazerCache: { x: number; y: number; z: number; chord2: number }[] = [];
+let grazerCacheStamp = -1;
+
+function grazersOf(w: World): { x: number; y: number; z: number; chord2: number }[] {
+  const stamp = w.deltaCount * 100000 + (w.turn % 100000);
+  if (stamp === grazerCacheStamp) return grazerCache;
+  grazerCacheStamp = stamp;
+  const planetR = w.subMap([0]).spacingM
+    / (Math.sqrt(3) * w.subMap([0]).cellRadiusRad);
+  // A ground tile's area, from the planet itself: its surface over how many
+  // ground tiles tile it.
+  const groundArea = (4 * Math.PI * planetR * planetR)
+    / (CELL_COUNT * Math.pow(SUBCELL_COUNT, GROUND_DEPTH - 1));
+  const out: { x: number; y: number; z: number; chord2: number }[] = [];
+  for (const d of w.allDeltas()) {
+    const people = d.population ?? 0;
+    if (people <= 0) continue;
+    const dir = w.tile(fromKey(d.key)).dir;
+    const reachM = radiusForPopulation(people, groundArea);
+    const chord = reachM / planetR;
+    out.push({ x: dir[0], y: dir[1], z: dir[2], chord2: chord * chord });
+  }
+  grazerCache = out;
+  return out;
 }
 
 function frameFor(w: World): Frame {
@@ -751,25 +794,34 @@ function draw(): void {
     // scattering beasts over every meadow on the planet -- which would be a
     // picture making a claim the simulation cannot back.
     //
-    // A settled tile and the ring around it: a village grazes its own land and
-    // the commons next to it, and beyond that the beasts would have to be
-    // driven, which is a thing nothing does yet.
-    const grazedByMap: Set<number>[] = nearby.map((m, i) => {
-      const set = new Set<number>();
-      const people = i === 0 ? populated : (index.get(toKey(mapAddresses[i])) ?? empty).populated;
-      for (const [cell, n] of people) {
-        if (n <= 0 || cell < 0 || cell >= m.patch.count) continue;
-        set.add(cell);
-        for (let k = 0; k < 6; k++) {
-          const nb = m.patch.neighbours[cell * 6 + k];
-          if (nb >= 0) set.add(nb);
-        }
-      }
-      return set;
-    });
+    // WITHIN THE SETTLEMENT'S OWN WORKING RADIUS, from the labour model -- not
+    // the settled tile plus one ring, which is what this first was. One ring of
+    // ground tiles is an eighth of a hectare, the pasture model carries a tenth
+    // of a cow on that, and a freshly settled village showed no cattle at all
+    // with even odds. A hamlet of twenty reaches several hundred metres, and
+    // its beasts graze the commons that far out.
+    //
+    // Built from the world's own deltas rather than the per-layer overlay,
+    // because the overlay index skips settlements ABOVE the current depth: read
+    // through it, the cows existed at the plot layer and vanished two layers
+    // deeper, exactly where a cow is finally bigger than a tile.
+    const grazers = grazersOf(world);
     const grew = drawFlora(ctx, nearby, frame, view, region.basis, radiusM, 30,
       String(path[0]),
-      (mapIndex, cell) => grazedByMap[mapIndex]?.has(cell) ?? false);
+      (mapIndex, cell) => {
+        const m = nearby[mapIndex];
+        if (m === undefined || cell < 0 || cell >= m.patch.count) return false;
+        const x = m.dirs[cell * 3];
+        const y = m.dirs[cell * 3 + 1];
+        const z = m.dirs[cell * 3 + 2];
+        for (const g of grazers) {
+          const dx = x - g.x;
+          const dy = y - g.y;
+          const dz = z - g.z;
+          if (dx * dx + dy * dy + dz * dz <= g.chord2) return true;
+        }
+        return false;
+      });
     lastFlora = grew;
   }
 

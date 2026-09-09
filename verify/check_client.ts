@@ -395,6 +395,111 @@ console.log('  the cattle, driven directly');
 }
 console.log('');
 
+// A VILLAGE, SETTLED THROUGH THE FRONT DOOR, AND ITS PASTURE FOUND.
+//
+// The direct drawHerd test above proves the drawing. This proves the CHAIN:
+// walk down to the ground layer as a player does, select the tile under the
+// cursor, and deliver a turn message settling twenty people on it -- the same
+// message the server sends. If the grazing predicate, the delta plumbing, the
+// herd model and the renderer hold hands, the lattice cells around the village
+// come up as pasture. The BEAST count is reported but not asserted: on sparse
+// ground a cell holds a fraction of a cow and honestly rolls zero, and the
+// pasture count is the fact that separates a broken predicate from an empty
+// field.
+console.log('  a village settled through the socket');
+{
+  // From the world view, where the climb above ended, down to the ground
+  // layer -- LOOKING WHERE IT CLICKS. The first version clicked dead centre
+  // five times and founded a village at elevation minus forty-four metres: the
+  // climb leaves the globe centred wherever it happens to be, which was open
+  // sea. A player picks land by looking; the harness picks it by asking the
+  // world about each candidate before committing, exactly the information the
+  // player's eyes have.
+  const clickAt = (px: number, py: number): void => {
+    fire('canvas:mousedown', { clientX: px, clientY: py, button: 0 });
+    fire('canvas:mouseup', { clientX: px, clientY: py, button: 0 });
+    fire('canvas:click', { clientX: px, clientY: py, button: 0 });
+  };
+  const SPOTS: [number, number][] = [
+    [800, 450], [700, 400], [900, 500], [600, 350], [1000, 550],
+    [500, 300], [1100, 600], [800, 300], [600, 500], [1000, 350],
+  ];
+  const selectLand = (): boolean => {
+    for (const [px, py] of SPOTS) {
+      clickAt(px, py);
+      const a = client.selectedAddress();
+      if (a === null) continue;
+      // A region has no tile -- tiles start one layer down -- so at the top
+      // the planet's own elevation field answers for it.
+      const high = a.length < 2
+        ? probe.planet.elevationM[a[0]] > 20
+        : probe.tile(a).elevationM > 20;
+      if (high) return true;
+    }
+    return false;
+  };
+  for (let d = 0; d < 5; d++) {
+    if (!selectLand()) {
+      console.log(`  no land under any candidate click at depth ${d}`);
+      process.exit(1);
+    }
+    fire('keydown', { key: 'Enter' });
+    frames(2);
+  }
+  if (!selectLand()) {
+    console.log('  no land tile to settle in the final map');
+    process.exit(1);
+  }
+  frames(2);
+  const addr = client.selectedAddress();
+  if (addr === null || addr.length !== 6) {
+    console.log(`  could not select a ground tile (got ${JSON.stringify(addr)})`);
+    process.exit(1);
+  }
+  // Keys are base-36 and dot-joined -- toKey's own format, not join alone.
+  const key = addr.map((n: number) => n.toString(36)).join('.');
+  socketHandlers.message({
+    data: JSON.stringify({
+      t: 'turn',
+      turn: 9000,
+      players: [{ id: 1, name: 'checker' }],
+      nextIn: 120,
+      changed: [{ key, turn: 9000, owner: 0, population: 20, populationHealth: 1 }],
+    }),
+  });
+  fire('resize', {});
+  frames(3);
+  // Zoom in until individuals become affordable, as a player would: the
+  // affordability line is derived from screen area and plant density, and at
+  // the default zoom a sparse biome can sit just outside it.
+  let zoomed = 0;
+  while (client.floraLastFrame().texture && zoomed < 8) {
+    fire('canvas:wheel', { deltaY: -120, preventDefault: () => {} });
+    fire('resize', {});
+    frames(2);
+    zoomed++;
+  }
+  if (zoomed > 0) console.log(`    zoomed in ${zoomed} step(s) to resolve individuals`);
+  const grew = client.floraLastFrame();
+  const ground = probe.tile(addr);
+  console.log(`    settled 20 people at [${key}]`);
+  console.log(`    the ground there: biome ${ground.biome}, `
+    + `elevation ${Math.round(ground.elevationM)} m`);
+  console.log(`    lattice cells ${grew.cells}, pasture cells ${grew.pastures},`
+    + ` plants ${grew.plants}, cattle ${grew.beasts}`);
+  console.log(`    texture fallback: ${grew.texture}`);
+  const failures = logLines.filter((l) => l.startsWith('frame failed'));
+  if (failures.length > 0) console.log(`    FRAME FAILED: ${failures[failures.length - 1]}`);
+  const recent = logLines.slice(-4).join(' | ');
+  console.log(`    client log tail: ${recent}`);
+  if (grew.pastures === 0) {
+    console.log('  THE VILLAGE HAS NO PASTURE IN SIGHT. The drawing is proven');
+    console.log('  above, so the grazing predicate or the delta plumbing broke.');
+    process.exit(1);
+  }
+}
+console.log('');
+
 // THE CACHES ARE THE WHOLE ARGUMENT FOR BAKING. Twenty images a species and a
 // handful of sward tiles, or the bake was not worth doing and the numbers here
 // would say so by climbing after a session of walking about.
