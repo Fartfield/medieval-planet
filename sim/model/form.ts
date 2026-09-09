@@ -115,6 +115,15 @@ const FORK_ANGLE_DEG = 35;
 /** Branches per fork. Dichotomous, which is what Leonardo's rule is stated on. */
 const BIFURCATION = 2;
 
+/**
+ * Scaffold limbs a lone-stemmed tree throws around the compass.
+ *
+ * Measured: an open-grown broadleaf carries four to six primary limbs. What
+ * this buys the picture is radial symmetry from above -- the difference
+ * between a crown and a fan.
+ */
+const SCAFFOLD_LIMBS = 5;
+
 // --- the four derivations ----------------------------------------------------
 
 /** The parts that make up the load-bearing stem, which differs by habit. */
@@ -380,36 +389,55 @@ export function formOf(s: Species, o: FormOptions): Form {
     const widthRatio = 1 / Math.sqrt(BIFURCATION);
     const lengthRatio = Math.cbrt(widthRatio * widthRatio);
 
-    // The absolute SCALE is set so the outermost tip lands on the measured
-    // spread. Ratios derived; size the species' own number, as the header says.
-    let reach = 0;
-    let term = 1;
-    for (let i = 0; i <= orders; i++) { reach += term; term *= lengthRatio; }
-    const first = reach > 0 ? radius / reach : radius;
-
     const grow = (
       x: number, y: number, angle: number, len: number, width: number,
-      depth: number,
+      depth: number, maxDepth: number,
     ): void => {
       const x1 = x + len * dcos(angle);
       const y1 = y + len * dsin(angle);
       strokes.push({
-        part: depth >= orders ? Part.Twig : Part.Branch,
+        part: depth >= maxDepth ? Part.Twig : Part.Branch,
         x0: x, y0: y, x1, y1, widthM: width, rgb: woodColour,
       });
-      if (depth >= orders) { tips.push({ x: x1, y: y1 }); return; }
+      if (depth >= maxDepth) { tips.push({ x: x1, y: y1 }); return; }
       for (let k = 0; k < BIFURCATION; k++) {
         const turn = (k === 0 ? 1 : -1) * FORK_ANGLE_DEG * DEG * (0.7 + 0.5 * jitter(rng));
-        grow(x1, y1, angle + turn, len * lengthRatio, width * widthRatio, depth + 1);
+        grow(x1, y1, angle + turn, len * lengthRatio, width * widthRatio, depth + 1, maxDepth);
       }
     };
 
-    // A stool's poles start apart. A tree's single bole does not.
+    // FROM ABOVE, A TREE RADIATES. A single bole does not grow one way and
+    // fork -- it throws SCAFFOLD LIMBS around the compass, five or so on an
+    // open-grown broadleaf, and each limb forks from there. The first version
+    // gave a lone stem one starting direction, and every oak on the map leant
+    // hard to one side of its own trunk: a crown drawn as a fan reads, from
+    // straight above, as a tree growing along the ground. Shawn saw it in the
+    // first minute of looking.
+    //
+    // Leonardo pays for the limbs the same way he pays for everything: five
+    // limbs of d/sqrt(5) carry the trunk's section, and they spend about two of
+    // the fork orders (2^2.3 = 5), so each limb branches that much less deep.
     const poles = Math.max(1, Math.min(12, s.stems));
     const stoolR = poles > 1 ? radius * 0.08 : 0;
+    const limbs = poles > 1 ? 1 : SCAFFOLD_LIMBS;
+    const limbWidth = trunk / Math.sqrt(limbs);
+    const limbOrders = Math.max(0, orders - (limbs > 1 ? 2 : 0));
+
+    // The absolute SCALE is set so the outermost tip lands on the measured
+    // spread. Ratios derived; size the species' own number, as the header says.
+    let reach = 0;
+    let term = 1;
+    for (let i = 0; i <= limbOrders; i++) { reach += term; term *= lengthRatio; }
+    const first = reach > 0 ? radius / reach : radius;
+
     for (let stem = 0; stem < poles; stem++) {
       const a0 = (2 * PI * stem) / poles + jitter(rng) * 0.4;
-      grow(stoolR * dcos(a0), stoolR * dsin(a0), a0, first, trunk, 0);
+      const sx = stoolR * dcos(a0);
+      const sy = stoolR * dsin(a0);
+      for (let limb = 0; limb < limbs; limb++) {
+        const la = limbs === 1 ? a0 : (2 * PI * limb) / limbs + jitter(rng) * 0.5;
+        grow(sx, sy, la, first, limbWidth, 0, limbOrders);
+      }
     }
   } else if (s.habit === Habit.Climber) {
     // A cane goes out, kinks where it caught on something, and tips over. No

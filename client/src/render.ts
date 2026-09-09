@@ -1659,18 +1659,46 @@ export function drawFlora(
   // the loop reached last, and a wood would be bare down one side. Sorted by
   // distance from the centre of the view, the ones that go are the ones
   // furthest from what the player is looking at.
-  const visible: { i: number; j: number; x: number; y: number; d2: number }[] = [];
+  // Each cell is projected ONCE and its direction kept: the resolve loop below
+  // used to project every cell a second time, which on a drag was the largest
+  // single cost of the whole flora pass.
+  const visible: {
+    i: number; j: number; x: number; y: number; d2: number;
+    dx: number; dy: number; dz: number;
+  }[] = [];
   for (let i = i0; i <= i1; i++) {
     for (let j = j0; j <= j1; j++) {
       toDirection(regionBasis, i * S, j * S, probe, 0);
-      const o = toLocal(frame.basis, probe[0], probe[1], probe[2]);
+      const dx = probe[0];
+      const dy = probe[1];
+      const dz = probe[2];
+      const o = toLocal(frame.basis, dx, dy, dz);
       const x = cx + (o.x * vc - o.y * vs) * perUnit;
       const y = cy + (o.x * vs + o.y * vc) * perUnit;
       if (x < -margin || y < -margin || x > w + margin || y > h + margin) continue;
-      visible.push({ i, j, x, y, d2: (x - w / 2) ** 2 + (y - h / 2) ** 2 });
+      visible.push({ i, j, x, y, d2: (x - w / 2) ** 2 + (y - h / 2) ** 2, dx, dy, dz });
     }
   }
   visible.sort((a, b) => a.d2 - b.d2);
+
+  // ONE AXIS PROBE FOR THE WHOLE SCREEN, not one per cell. The lattice's turn
+  // on screen varies with position, but across the couple of hundred metres a
+  // deep view spans the variation is far under a degree -- and the probe was a
+  // projection pair per cell per frame for a difference no eye can see.
+  let axisTc = 1;
+  let axisTs = 0;
+  if (visible.length > 0) {
+    const c0 = visible[0];
+    toDirection(regionBasis, c0.i * S + S * 0.01, c0.j * S, step, 0);
+    const o0 = toLocal(frame.basis, c0.dx, c0.dy, c0.dz);
+    const t0 = toLocal(frame.basis, step[0], step[1], step[2]);
+    const ex = t0.x - o0.x;
+    const ey = t0.y - o0.y;
+    const ax = ex * vc - ey * vs;
+    const ay = ex * vs + ey * vc;
+    const alen = Math.hypot(ax, ay);
+    if (alen > 1e-12) { axisTc = ax / alen; axisTs = ay / alen; }
+  }
 
   let cells = 0;
   let plants = 0;
@@ -1693,12 +1721,7 @@ export function drawFlora(
   }[] = [];
 
   for (const cell of visible) {
-    const { i, j, x, y } = cell;
-    toDirection(regionBasis, i * S, j * S, probe, 0);
-    const dx = probe[0];
-    const dy = probe[1];
-    const dz = probe[2];
-    const o = toLocal(frame.basis, dx, dy, dz);
+    const { i, j, x, y, dx, dy, dz } = cell;
     cells++;
 
     const key = i + '|' + j;
@@ -1740,20 +1763,11 @@ export function drawFlora(
     }
     if (stand === null) continue;
 
-    // The cell's own turn on screen, found the way placeCells finds a tile's:
-    // project a short step along the lattice's x-axis and see where it went.
-    toDirection(regionBasis, i * S + S * 0.01, j * S, step, 0);
-    const t = toLocal(frame.basis, step[0], step[1], step[2]);
-    const ex = t.x - o.x;
-    const ey = t.y - o.y;
-    const ax = ex * vc - ey * vs;
-    const ay = ex * vs + ey * vc;
-    const alen = Math.hypot(ax, ay);
     ready.push({
       x,
       y,
-      tc: alen > 1e-12 ? ax / alen : 1,
-      ts: alen > 1e-12 ? ay / alen : 0,
+      tc: axisTc,
+      ts: axisTs,
       stand,
       herd: grazedHere && pasture !== null
         ? herdOn({

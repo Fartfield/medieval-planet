@@ -480,6 +480,51 @@ export interface StandDrawn {
  * offsets have to go through it or a wood would slide across its own ground
  * whenever the map turned.
  */
+/**
+ * What never changes about a plant between frames, worked out once.
+ *
+ * A stand is cached in the lattice, so its plants are the same objects every
+ * frame -- and spreadAt, the size class, the class ratio and the turn were
+ * being recomputed for three thousand of them sixty times a second, all from
+ * inputs that cannot change. Keyed weakly by the plants array itself.
+ */
+interface PlantDraw {
+  spreadM: number;
+  cls: number;
+  scale: number;
+  turn: number;
+}
+
+const standDrawCache = new WeakMap<readonly Individual[], PlantDraw[]>();
+
+function drawDataFor(plants: readonly Individual[]): PlantDraw[] {
+  const hit = standDrawCache.get(plants);
+  if (hit !== undefined) return hit;
+  const out: PlantDraw[] = plants.map((p) => {
+    const spreadM = spreadAt(p.species, p.ageYears, 1);
+    const cls = sizeClassOf(p.species, p.ageYears, 1);
+    const classSpread = spreadAt(p.species, ageOfClass(p.species, cls), 1);
+    return {
+      spreadM,
+      cls,
+      scale: classSpread > 0 ? spreadM / classSpread : 1,
+      turn: ((p.seed % 360) * Math.PI) / 180,
+    };
+  });
+  standDrawCache.set(plants, out);
+  return out;
+}
+
+/**
+ * Below this many pixels across, a stamp is drawn unrotated.
+ *
+ * Rotating a twelve-pixel blob changes nothing an eye can find, and the
+ * save-translate-rotate-restore it cost was most of the price of a dense
+ * layer: measured, the plot layer stamps ~2,900 plants a frame and nearly all
+ * of them are under this size.
+ */
+const ROTATE_MIN_PX = 12;
+
 export function drawStand(
   ctx: CanvasRenderingContext2D,
   plants: readonly Individual[],
@@ -497,8 +542,11 @@ export function drawStand(
 
   const season = seasonOf(week, 52);
   const baseTurn = Math.atan2(ts, tc);
+  const data = drawDataFor(plants);
 
-  for (const p of plants) {
+  for (let idx = 0; idx < plants.length; idx++) {
+    const p = plants[idx];
+    const d = data[idx];
     // ONCE THE CANOPY IS OPAQUE, THE REST OF IT IS NOT VISIBLE. At the pace
     // layer a two-metre view sits under a hundred and fifty crowns, every one
     // of them eighteen metres wide and covering the whole screen, and drawing
@@ -508,36 +556,26 @@ export function drawStand(
 
     // Its own true size, not its class's -- the shape is quantised and the
     // scale never is.
-    const spreadM = spreadAt(p.species, p.ageYears, 1);
-    if (!worthDrawing(spreadM, pxPerM)) { tooSmall++; continue; }
-
-    const cls = sizeClassOf(p.species, p.ageYears, 1);
-    const wantPx = spreadM * pxPerM;
+    if (!worthDrawing(d.spreadM, pxPerM)) { tooSmall++; continue; }
+    const wantPx = d.spreadM * pxPerM;
 
     // BRANCH BY BRANCH, once a stamp would be an upscale rather than a picture.
     if (wantPx > MAX_STAMP_PX) {
-      const turn = ((p.seed % 360) * Math.PI) / 180 + baseTurn;
       const dx0 = p.x * tc - p.y * ts;
       const dy0 = p.x * ts + p.y * tc;
       traceForm(
         ctx, p.species, p.ageYears, SEASON_WEEKS[season],
-        cx + dx0 * pxPerM, cy + dy0 * pxPerM, pxPerM, turn, p.seed,
+        cx + dx0 * pxPerM, cy + dy0 * pxPerM, pxPerM, d.turn + baseTurn, p.seed,
       );
       drawn++;
       coverPx2 += (Math.PI * wantPx * wantPx) / 4;
       continue;
     }
 
-    const stamp = stampFor(p.species, cls, season, quantise(wantPx));
+    const stamp = stampFor(p.species, d.cls, season, quantise(wantPx));
     if (stamp === null) { tooSmall++; continue; }
 
-    // The stamp covers `extentM` metres either side of the stem; the plant is
-    // `spreadM` across at its class's reference age. Scaling by the ratio of
-    // this individual's spread to its class's keeps a young plant small and an
-    // old one large within the same image.
-    const classSpread = spreadAt(p.species, ageOfClass(p.species, cls), 1);
-    const scale = classSpread > 0 ? spreadM / classSpread : 1;
-    const halfPx = stamp.extentM * scale * pxPerM;
+    const halfPx = stamp.extentM * d.scale * pxPerM;
     if (halfPx < 1) { tooSmall++; continue; }
 
     const dx = p.x * tc - p.y * ts;
@@ -545,14 +583,17 @@ export function drawStand(
     const x = cx + dx * pxPerM;
     const y = cy + dy * pxPerM;
 
-    // Its own turn, which is where the variety comes from once the shape is
-    // one of twenty. Derived from the plant's seed so it never changes.
-    const turn = ((p.seed % 360) * Math.PI) / 180 + baseTurn;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(turn);
-    ctx.drawImage(stamp.image, -halfPx, -halfPx, halfPx * 2, halfPx * 2);
-    ctx.restore();
+    if (halfPx * 2 < ROTATE_MIN_PX) {
+      ctx.drawImage(stamp.image, x - halfPx, y - halfPx, halfPx * 2, halfPx * 2);
+    } else {
+      // Its own turn, which is where the variety comes from once the shape is
+      // one of twenty. Derived from the plant's seed so it never changes.
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(d.turn + baseTurn);
+      ctx.drawImage(stamp.image, -halfPx, -halfPx, halfPx * 2, halfPx * 2);
+      ctx.restore();
+    }
     drawn++;
     coverPx2 += Math.PI * halfPx * halfPx;
   }

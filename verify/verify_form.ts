@@ -143,6 +143,23 @@ suite('the shape of a plant', () => {
 });
 
 suite('the picture', () => {
+  // FROM ABOVE, A TREE RADIATES. The first drawn oak grew one way from its
+  // trunk and forked around that heading, and from straight above a fanned
+  // crown reads as a tree lying on the ground -- reported from the game in the
+  // first minute of looking at it. A lone stem now throws five scaffold limbs
+  // around the compass, and the check is the crown's balance: the mean of the
+  // tips cannot sit far from the trunk that grew them.
+  const balanced = formOf(OAK, {
+    ageYears: OLD_OAK, site: GOOD, week: 26, weeksPerYear: W, seed: 21, detail: 5,
+  });
+  const twigs = balanced.strokes.filter((s) => s.part === Part.Twig);
+  const mx = twigs.reduce((a, s) => a + s.x1, 0) / Math.max(1, twigs.length);
+  const my = twigs.reduce((a, s) => a + s.y1, 0) / Math.max(1, twigs.length);
+  measure('the crown centre sits off the trunk by, m', Math.hypot(mx, my));
+  measure('against a spread of, m', balanced.spreadM);
+  assert('the crown is balanced about its own trunk',
+    Math.hypot(mx, my) < balanced.spreadM * 0.2);
+
   // A form is a ground plan in metres, and what is in it is decided by the
   // week. These are the checks that the picture and the plant agree.
   const summerOak = formOf(OAK, {
