@@ -37,6 +37,9 @@ import { Mineral } from './model/resources.ts';
 import { ironOutputKgPerYear, ironLimit, hectareDays } from './model/labour.ts';
 import { clear, stockTarget, spoil, type Trader, type Flow } from './model/trade.ts';
 import { navigable } from './gen/hydrology.ts';
+import {
+  weekOfYear, harvestWindow, inWindow, HARVEST_SPAN_WEEKS,
+} from './model/season.ts';
 import { idleShare } from './expansion.ts';
 import type { Harvest, Competitor } from './model/settlement.ts';
 import type { World } from './world.ts';
@@ -158,7 +161,12 @@ export function runEconomy(world: World): EconomyResult {
     const grainNeed = population * GRAIN_PER_PERSON_YEAR;
     const ironNeed = population * A.IRON_PER_PERSON_KG_PER_YEAR;
 
-    const grainStock = delta.grainStock ?? 0;
+    // A FOUNDING ARRIVES PROVISIONED. Nobody walks into the wilderness in
+    // February without the wagons: a settlement whose granary has never been
+    // written starts with the stock target, and every later week reads what
+    // the weeks before it left. Without this, any village founded outside the
+    // harvest window starved before its first crop could possibly exist.
+    const grainStock = delta.grainStock ?? stockTarget(grainNeed);
     const ironStock = delta.ironStock ?? 0;
     const farmShare = clamp(delta.farmShare ?? 1, MIN_FARM_SHARE, 1);
 
@@ -185,7 +193,20 @@ export function runEconomy(world: World): EconomyResult {
     const harvest = world.harvestFor(
       address, population, ironSupply, farmShare, neighbours, target);
     const alone = neighbours.length === 0;
-    const grainGrown = harvest.netKgPerYear * perTurn;
+
+    // THE GRAIN ARRIVES WHEN IT RIPENS, not by fifty-second every week. The
+    // harvest window is derived from the growing season's own end -- late
+    // summer at 52 north, the other half of the year south of the line -- and
+    // the whole year's crop lands inside it. Between harvests the village
+    // lives on the granary, which is what a granary is; a place warm enough to
+    // grow all year has no window, crops continuously, and never invented one.
+    const ripening = harvestWindow(tile.temperatureC, tile.dir[1]);
+    const week = weekOfYear(world.turn);
+    const grainGrown = ripening === null
+      ? harvest.netKgPerYear * perTurn
+      : inWindow(ripening, week)
+        ? harvest.netKgPerYear / HARVEST_SPAN_WEEKS
+        : 0;
 
     // Whatever hands are not farming go to the ore, if there is any.
     const ore = tile.deposits.find((d) => d.kind === Mineral.Iron);

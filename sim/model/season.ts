@@ -161,3 +161,60 @@ export function growingWeeks(annualMeanC: number, sinLat: number): number {
   }
   return n;
 }
+
+/**
+ * How many weeks the reaping takes.
+ *
+ * Measured from the manorial calendar: the grain harvest ran from Lammas to
+ * Michaelmas-ish, four to six weeks of the whole village in the fields. Four
+ * here, and the character of the number is a duration of work, not a switch.
+ */
+export const HARVEST_SPAN_WEEKS = 4;
+
+/**
+ * The weeks the year's grain actually arrives, for a place.
+ *
+ * DERIVED FROM THE GROWING SEASON'S OWN END: grain ripens when growth stops,
+ * so the harvest is the last weeks of the growing season -- which is late
+ * summer at 52 north, a different month at 40, and the opposite half of the
+ * year south of the line, none of it stated anywhere.
+ *
+ * Returns null where the ground grows all year round: a tropical place has no
+ * single harvest and no hungry gap -- it crops continuously, which is exactly
+ * the difference between the temperate granary economy and everywhere the
+ * granary never had to be invented.
+ */
+export function harvestWindow(
+  annualMeanC: number, sinLat: number,
+): { from: number; to: number } | null {
+  const W = Math.floor(WEEKS_PER_YEAR);
+  let growingCount = 0;
+  let lastGrowing = -1;
+  for (let w = 0; w < W; w++) {
+    if (!isGrowing(annualMeanC, sinLat, w)) continue;
+    growingCount++;
+    // The season's end: a growing week whose successor is dead.
+    if (!isGrowing(annualMeanC, sinLat, (w + 1) % W)) lastGrowing = w;
+  }
+  if (growingCount === 0) return null;
+  if (growingCount >= W) return null; // grows all year: continuous cropping
+  const to = lastGrowing;
+  const from = ((to - HARVEST_SPAN_WEEKS + 1) % W + W) % W;
+  return { from, to };
+}
+
+/**
+ * Whether this week of the year is inside the span, wrap and all.
+ *
+ * The parameter is not named window: the purity suite greps the simulation for
+ * browser globals, and a local called window is indistinguishable from a leak.
+ */
+export function inWindow(
+  span: { from: number; to: number }, week: number,
+): boolean {
+  const W = Math.floor(WEEKS_PER_YEAR);
+  const w = ((week % W) + W) % W;
+  return span.from <= span.to
+    ? w >= span.from && w <= span.to
+    : w >= span.from || w <= span.to;
+}

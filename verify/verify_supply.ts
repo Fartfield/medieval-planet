@@ -233,10 +233,28 @@ suite('a settlement over time', () => {
 
   w.setDelta(addr, { owner: 0, population: 5, populationHealth: 1 });
   const track: number[] = [];
+  // The granary through year three, once the village is past its founding
+  // stores: the seasonal economy has to show in it or it is not seasonal.
+  const granary: number[] = [];
   for (let t = 1; t <= 2600; t++) {
     resolveTurn(w, [], 1);
     if (t % 520 === 0) track.push(w.getDelta(addr)?.population ?? 0);
+    if (t > 104 && t <= 156) granary.push(w.getDelta(addr)?.grainStock ?? 0);
   }
+
+  // THE YEAR HAS A SHAPE NOW. The whole crop lands in the derived harvest
+  // window and the granary saws: full after the harvest, drawn down through
+  // winter and spring, lowest just before the next crop. A granary that never
+  // swings would mean the grain was arriving by fifty-seconds again.
+  const fullest = Math.max(...granary);
+  const leanest = Math.min(...granary);
+  measure('the granary at its year-round fullest, kg', fullest);
+  measure('and at its leanest', leanest);
+  measure('the lean weeks hold this share of the fat ones', leanest / Math.max(1, fullest));
+  assert('the granary saws through the year, as a granary does',
+    fullest > 0 && leanest < fullest * 0.8);
+  assert('and the hungry gap does not empty it at this stocking',
+    leanest > 0);
 
   measure('people after 10 years', track[0]);
   measure('people after 30 years', track[2]);
