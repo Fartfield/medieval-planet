@@ -2413,3 +2413,75 @@ check caught it: 4.65 kg accounted for out of a 5.82 kg sheaf. The missing
 kilogramme was ROOTS, which a scythe never lifts. Harvest now leaves them
 unless asked to dig, which is the difference between reaping wheat and pulling
 a carrot, and thresh has an "other" bucket so nothing can vanish again.
+
+
+## A cow wintered comfortably on straw
+
+She must not. That is the constraint the whole medieval agricultural year is
+built around -- the reason for hay meadows, for autumn slaughter, and for the
+February in which stock that survived came out of the byre unable to stand.
+
+The first model let her live on it with room to spare, and two things were
+missing rather than one.
+
+### Fibre digestibility is not a property of the gut alone
+
+`Digestion.fibre` was a flat number per gut: a rumen got half the cellulose out
+of anything. So young grass and cereal straw were equally good fibre, which
+makes straw a perfectly reasonable feed and it is not.
+
+What separates them is LIGNIN, physically wrapped around the cellulose where a
+rumen cannot reach -- the same fact that makes lignin-rich material rot slowly.
+Anchored at both ends: young grass fibre is about 75% available, cereal straw
+about 45%, and the lignin share of their fibre is 0.235 and 0.333. Two anchors,
+two constants.
+
+The curve then predicts a fallen oak leaf at 33%, which is why leaves are
+browse and not fodder. Nothing told it there is such a thing as browse.
+
+### An animal stops eating when it is full, not when it is fed
+
+The second miss, and the larger one. `canLiveOn` asked whether a day's ration
+fitted through the gut by VOLUME, which it always does. What actually limits a
+ruminant is the fibre that will not ferment sitting in the rumen taking up
+room, so the worse the forage the LESS of it can be eaten -- the opposite of
+what a hungry animal would choose, and exactly why poor forage starves stock
+that have plenty of it in front of them.
+
+### ~~Limit on indigestible dry matter~~ -- compresses the range, 1.5x not 2x
+
+Tried first, because it is the simpler statement. It counts ash and unabsorbed
+protein as filling the rumen, and they do not: they pass. Measured, it gave a
+grass-to-straw intake ratio of 1.49 where the real one is about 2.08, and the
+cow survived on straw by a margin of two per cent.
+
+### Limit on indigestible FIBRE
+
+Which is what nutrition actually predicts intake from. One anchor -- a cow eats
+2.5% of her body weight in dry matter of good grass, whose indigestible fibre
+is 26% of its dry matter -- and the same constant then predicts straw at 1.36%
+of body weight against a measured 1.2%.
+
+    kcal she can get from a full day of straw    9,570
+    kcal she needs                              11,627
+
+She starves in a full yard.
+
+## Three other cow figures, two of which were the check being wrong
+
+**Intake, 6 kg of dry matter against an expected 11.** The model was right. The
+11 kg everyone quotes is what a productive MODERN cow voluntarily eats; what
+the model computes is the maintenance REQUIREMENT of a landrace, which is what
+the published maintenance figures give. Need and appetite are different
+quantities and are now checked separately.
+
+**Water, 15 litres a day against a measured 40.** The model was wrong, and the
+error was conflating water needed with water drunk. Cattle turn over about 4.5
+litres per kilogramme of dry matter, and the feed supplies part of it: on
+spring grass at 72% water she drinks 9 litres, and on straw she drinks 32. That
+gap decides where stock can be kept.
+
+**Dressing percentage, 0.63 against a measured 0.55.** It counted everything a
+person will eat. Offal, blood and head are food and are not carcass; a butcher
+weighs the beast alive and again on the hook, and the gap is the hide, the gut
+fill and everything the hook does not hold.

@@ -33,42 +33,65 @@ import {
   type Species, type PartSpec, Part, PART_NAMES, isPresent, isBuried, massAt,
 } from './plant.ts';
 
-/** A quantity of one material. */
+/**
+ * A quantity of one material.
+ *
+ * IT CARRIES ITS OWN RECIPE rather than a pointer back to a species sheet, and
+ * that is what lets a barn hold oak beams, wheat grain, beef and tallow in one
+ * list. The first version held (species, part) and could only ever describe a
+ * plant; the moment an animal had products, half the verbs would have needed a
+ * second version of themselves. A pile is a recipe, a density, a mass and a
+ * moisture, and every verb reads those four.
+ *
+ * `from` and `what` are provenance and nothing else -- oak and ash timber are
+ * not the same plank even where their recipes nearly are, and a side of beef is
+ * worth knowing the animal of. `part` is set for plant material only, because
+ * threshing partitions by part and nothing else does.
+ */
 export interface Pile {
-  species: Species;
-  part: Part;
+  /** Which species it came from, by name. */
+  from: string;
+  /** Which part or tissue: heartwood, grain, chaff, beef, tallow, hide. */
+  what: string;
+  /** The recipe as its sheet gives it, before this pile's moisture is applied. */
+  composition: Composition;
+  /** Measured bulk density, kg/m3, from which porosity is forced. */
+  densityKgM3: number;
   massKg: number;
   /** Water as a mass fraction of the pile as it stands, 0 to 1. */
   moisture: number;
+  /** Set for plant material, so threshing can tell grain from straw. */
+  part?: Part;
 }
 
 const HOURS_PER_YEAR = 8766;
 
-/** The species' sheet for this pile's part. */
-export function specOf(p: Pile): PartSpec | undefined {
-  return p.species.parts.find((q) => q.part === p.part);
+/** A pile of one part of one plant. */
+export function pileOfPart(species: Species, spec: PartSpec, massKg: number): Pile {
+  const total = Object.values(spec.composition).reduce((a, b) => a + b, 0);
+  return {
+    from: species.name,
+    what: PART_NAMES[spec.part],
+    composition: spec.composition,
+    densityKgM3: spec.densityKgM3,
+    massKg,
+    moisture: total > 0 ? spec.composition.water / total : 0,
+    part: spec.part,
+  };
 }
 
 /** What the pile is made of, at the moisture it is actually at. */
 export function compositionOf(p: Pile): Composition {
-  const spec = specOf(p);
-  if (spec === undefined) {
-    return {
-      water: p.moisture, cellulose: 1 - p.moisture, lignin: 0, starch: 0,
-      sugar: 0, oil: 0, protein: 0, tannin: 0, ash: 0,
-    };
-  }
-  return atMoisture(spec.composition, p.moisture);
+  return atMoisture(p.composition, p.moisture);
 }
 
 /** The pile as a material, so anything that reads materials can read it. */
 export function materialOf(p: Pile): Material {
-  const spec = specOf(p);
   const c = compositionOf(p);
   return {
-    name: `${p.species.name} ${PART_NAMES[p.part]}`,
+    name: `${p.from} ${p.what}`,
     composition: c,
-    porosity: spec === undefined ? 0 : porosityFor(c, spec.densityKgM3),
+    porosity: porosityFor(c, p.densityKgM3),
   };
 }
 
@@ -326,13 +349,7 @@ export function harvest(
     if (!isPresent(spec.phenology, week, weeksPerYear)) continue;
     const kg = mass * spec.share;
     if (kg <= 0) continue;
-    const total = Object.values(spec.composition).reduce((a, b) => a + b, 0);
-    out.push({
-      species: s,
-      part: spec.part,
-      massKg: kg,
-      moisture: total > 0 ? spec.composition.water / total : 0,
-    });
+    out.push(pileOfPart(s, spec, kg));
   }
   return out;
 }
@@ -419,13 +436,42 @@ export function thresh(piles: readonly Pile[]): Threshed {
  * ruminant because a rumen spends some of the energy running itself.
  */
 export interface Digestion {
+  /** How good this gut is at fibre, relative to the best. A rumen is one. */
   fibre: number;
   efficiency: number;
 }
 
 export const HUMAN: Digestion = { fibre: 0.0, efficiency: 0.95 };
-export const PIG: Digestion = { fibre: 0.15, efficiency: 0.90 };
-export const RUMINANT: Digestion = { fibre: 0.50, efficiency: 0.75 };
+export const PIG: Digestion = { fibre: 0.30, efficiency: 0.90 };
+export const RUMINANT: Digestion = { fibre: 1.0, efficiency: 0.75 };
+
+/**
+ * HOW MUCH OF THE FIBRE IS ACTUALLY AVAILABLE, and it is not a property of the
+ * gut alone -- it depends on how LIGNIFIED the fibre is.
+ *
+ * This had to be added, and the thing that forced it was a cow living
+ * comfortably on straw. With one flat figure per gut, a rumen got half the
+ * cellulose out of young grass and half out of wheat straw, which makes straw
+ * a perfectly good feed and it is not. What separates them is lignin: it is
+ * physically wrapped around the cellulose and fungi in a rumen cannot reach
+ * past it, which is the same fact that makes lignin-rich material rot slowly.
+ *
+ * Measured at both ends. Fibre digestibility in young grass is about 0.75 and
+ * in cereal straw about 0.45, and the lignin share of their fibre is 0.235 and
+ * 0.333. Two anchors, two constants, and the curve between them then says a
+ * fallen oak leaf sits at 0.33 -- which is why leaf litter is browse and not
+ * fodder.
+ */
+const FIBRE_CEILING = 2.556;
+const FIBRE_LIGNIN_PENALTY = 5.212;
+
+export function fibreDigestibility(c: Composition, d: Digestion): number {
+  const fibre = c.cellulose + c.lignin;
+  if (fibre <= 0) return 0;
+  const lignified = c.lignin / fibre;
+  const ceiling = Math.min(0.95, FIBRE_CEILING * dexp(-FIBRE_LIGNIN_PENALTY * lignified));
+  return Math.max(0, Math.min(1, ceiling * Math.max(0, d.fibre)));
+}
 
 /** Lignin is indigestible to everything alive. Nothing eats a fence post. */
 export function digestibleKcalPerKg(c: Composition, d: Digestion): number {
@@ -434,8 +480,43 @@ export function digestibleKcalPerKg(c: Composition, d: Digestion): number {
   const f = (x: number): number => x / total;
   const sugars = (f(c.starch) + f(c.sugar) + f(c.protein)) * 4000;
   const fat = f(c.oil) * 9000;
-  const fibre = f(c.cellulose) * 4000 * Math.max(0, Math.min(1, d.fibre));
+  const fibre = f(c.cellulose) * 4000 * fibreDigestibility(c, d);
   return (sugars + fat) * d.efficiency + fibre;
+}
+
+/**
+ * The share of a feed's dry matter that is fibre this gut cannot break down.
+ *
+ * WHAT ACTUALLY FILLS A RUMEN, and it is not "everything indigestible". Ash
+ * passes; unabsorbed protein passes; what sits there taking up room is the
+ * fibre that will not ferment, which is why intake prediction in nutrition is
+ * built on fibre and not on digestibility. Using digestibility instead
+ * compressed the difference between grass and straw to a factor of 1.5 when it
+ * is nearer 2, and let a cow winter on straw by a margin of two per cent.
+ */
+export function indigestibleFibreShare(c: Composition, d: Digestion): number {
+  const total = Object.values(c).reduce((a, b) => a + b, 0);
+  if (total <= 0) return 1;
+  const dry = total - c.water;
+  if (dry <= 0) return 1;
+  const stuck = c.cellulose * (1 - fibreDigestibility(c, d)) + c.lignin;
+  return Math.max(0.02, Math.min(1, stuck / dry));
+}
+
+/**
+ * The share of a feed's DRY matter this gut can get anything out of.
+ *
+ * The figure a nutritionist calls digestibility, and the one that decides how
+ * much of a feed an animal can physically eat -- see maxIntake in animal.ts.
+ */
+export function digestibility(c: Composition, d: Digestion): number {
+  const total = Object.values(c).reduce((a, b) => a + b, 0);
+  if (total <= 0) return 0;
+  const dry = total - c.water;
+  if (dry <= 0) return 0;
+  const usable = c.starch + c.sugar + c.protein + c.oil
+    + c.cellulose * fibreDigestibility(c, d);
+  return Math.max(0, Math.min(1, usable / dry));
 }
 
 /** What a mouthful was worth. */

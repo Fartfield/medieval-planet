@@ -18,7 +18,8 @@
 import {
   type Pile, burn, burnsOutInHours, rot, halfLifeYears, dry, seasoningHours,
   equilibriumMoisture, harvest, thresh, eat, digestibleKcalPerKg, sustains,
-  compositionOf, materialOf, thicknessM, volumeM3,
+  compositionOf, materialOf, thicknessM, volumeM3, pileOfPart,
+  fibreDigestibility,
   HUMAN, PIG, RUMINANT,
 } from '../sim/model/process.ts';
 import { OAK, HAZEL, WHEAT, GRASS, CARROT } from '../sim/model/species.ts';
@@ -29,8 +30,10 @@ import { check, measure, assert, suite } from './harness.ts';
 
 const W = WEEKS_PER_YEAR;
 
+/** A pile of a named plant part, at whatever moisture the check wants. */
 function pile(species: typeof OAK, part: number, massKg: number, moisture: number): Pile {
-  return { species, part: part as never, massKg, moisture };
+  const spec = species.parts.find((q) => q.part === part)!;
+  return { ...pileOfPart(species, spec, massKg), moisture };
 }
 
 suite('what happens to stuff', () => {
@@ -215,7 +218,8 @@ suite('what happens to stuff', () => {
   // ONE NUMBER SEPARATES THEM, and this is the check that it is that number.
   assert('and the difference is the cellulose and nothing else',
     Math.abs((grassToCow - grassToMan * (0.75 / 0.95))
-      - compositionOf(grassLeaf).cellulose * 4000 * 0.5) < 1);
+      - compositionOf(grassLeaf).cellulose * 4000
+        * fibreDigestibility(compositionOf(grassLeaf), RUMINANT)) < 1);
 
   const strawToCow = digestibleKcalPerKg(compositionOf(strawPile), RUMINANT);
   measure('straw to a cow, kcal/kg', strawToCow);
