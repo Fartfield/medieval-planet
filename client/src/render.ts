@@ -24,8 +24,9 @@ import {
   standOn, siteFrom, individualsAffordable, CROWN_GRID_M, type Stand,
 } from '../../sim/model/stand.ts';
 import {
-  drawStand, groundTileFor, drawGround, seasonOf, drawHerd,
+  drawStand, groundTileFor, drawGround, seasonOf, drawHerd, drawStead,
 } from './flora_render.ts';
+import { steadOf, type Stead as SteadPlan } from '../../sim/model/stead.ts';
 import { herdOn, cattleCarryPerHa, type Herd } from '../../sim/model/herd.ts';
 import * as A from '../../sim/anchors.ts';
 import type { Patch } from '../../sim/geo/patch.ts';
@@ -1552,6 +1553,10 @@ export interface FloraDrawn {
   pastures: number;
   /** Cattle standing on somebody's pasture. */
   beasts: number;
+  /** Roofs drawn. */
+  houses: number;
+  /** People drawn. */
+  folk: number;
   /** True when the zoom is too far out for individuals to be affordable. */
   texture: boolean;
 }
@@ -1570,6 +1575,35 @@ export interface FloraDrawn {
  * fall -- the picture and the simulation are the same herd.
  */
 export type Grazed = (mapIndex: number, cell: number) => number;
+
+/** A settlement the renderer should build: where, who, and its own seed. */
+export interface SteadSite {
+  x: number;
+  y: number;
+  z: number;
+  population: number;
+  herdHead: number;
+  hayKg: number;
+  seed: number;
+}
+
+/**
+ * The plans, built once per settlement and kept: a layout is a pure function
+ * of its inputs and a village does not redraw its houses sixty times a second.
+ */
+const steadPlanCache = new Map<string, SteadPlan>();
+
+function steadPlanOf(site: SteadSite): SteadPlan {
+  const key = `${site.seed}|${Math.round(site.population)}|`
+    + `${Math.round(site.herdHead)}|${site.hayKg > 1000 ? 1 : 0}`;
+  let plan = steadPlanCache.get(key);
+  if (plan === undefined) {
+    if (steadPlanCache.size > 512) steadPlanCache.clear();
+    plan = steadOf(site.population, site.herdHead, site.hayKg, site.seed);
+    steadPlanCache.set(key, plan);
+  }
+  return plan;
+}
 
 /**
  * Draw every plant on the screen, once, after every map's ground is finished.
@@ -1592,9 +1626,11 @@ export function drawFlora(
   week: number,
   anchorKey: string,
   grazed: Grazed | null = null,
+  steads: readonly SteadSite[] | null = null,
 ): FloraDrawn {
   const nothing: FloraDrawn = {
-    cells: 0, plants: 0, hidden: 0, ground: 0, pastures: 0, beasts: 0, texture: true,
+    cells: 0, plants: 0, hidden: 0, ground: 0, pastures: 0, beasts: 0,
+    houses: 0, folk: 0, texture: true,
   };
   const { cx, cy, size } = view;
   if (maps.length === 0 || radiusM <= 0) return nothing;
@@ -1712,6 +1748,13 @@ export function drawFlora(
   const coverBudget = w * h * CANOPY_DEPTH;
   const season = seasonOf(week, 52);
 
+  // The stead sites with their yards as squared chords, computed once.
+  const steadSites = (steads ?? []).map((site) => {
+    const plan = steadPlanOf(site);
+    const chord = plan.radiusM / radiusM;
+    return { ...site, plan, yardChord2: chord * chord };
+  });
+
   // RESOLVE EVERY CELL FIRST, then draw in two passes over the resolved list.
   //
   // The two drawing passes are needed for the same reason the tile mosaic needs
@@ -1766,6 +1809,20 @@ export function drawFlora(
       standLattice.set(key, stand);
     }
     if (stand === null) continue;
+
+    // THE YARD IS NOT A WOOD. A settlement's own ground -- its tofts and its
+    // green -- was cleared by the people living on it, and the flora field
+    // does not know that yet. So the wood stops at the village's radius: turf
+    // and beasts stay, trees and scrub are not drawn on top of houses.
+    for (const site of steadSites) {
+      const ddx = dx - site.x;
+      const ddy = dy - site.y;
+      const ddz = dz - site.z;
+      if (ddx * ddx + ddy * ddy + ddz * ddz <= site.yardChord2) {
+        stand = { ...stand, plants: [] };
+        break;
+      }
+    }
 
     ready.push({
       x,
@@ -1835,7 +1892,25 @@ export function drawFlora(
     beasts += drawHerd(ctx, r.herd.beasts, r.x, r.y, pxPerM, r.tc, r.ts);
   }
 
-  return { cells, plants, hidden, ground, pastures, beasts, texture: false };
+  // PASS FOUR: the village, over everything -- roofs are the one thing here
+  // nothing stands on top of.
+  let houses = 0;
+  let folk = 0;
+  for (const site of steadSites) {
+    const o = toLocal(frame.basis, site.x, site.y, site.z);
+    const x = cx + (o.x * vc - o.y * vs) * perUnit;
+    const y = cy + (o.x * vs + o.y * vc) * perUnit;
+    const reachPx = site.plan.radiusM * pxPerM;
+    if (x < -reachPx || y < -reachPx || x > w + reachPx || y > h + reachPx) continue;
+    const did = drawStead(ctx, site.plan, x, y, pxPerM, axisTc, axisTs);
+    houses += did.houses;
+    folk += did.folk;
+  }
+
+  return {
+    cells, plants, hidden, ground, pastures, beasts, houses, folk,
+    texture: false,
+  };
 }
 
 /**

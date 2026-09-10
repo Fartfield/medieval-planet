@@ -34,6 +34,7 @@ import { type Individual, worthDrawing, VANISH_PX } from '../../sim/model/stand.
 import { GRASS } from '../../sim/model/species.ts';
 import { beastOf } from '../../sim/model/beastform.ts';
 import { type Beastie } from '../../sim/model/herd.ts';
+import { type Stead, personPlan } from '../../sim/model/stead.ts';
 import { seed, below } from '../../sim/rng.ts';
 
 /**
@@ -692,4 +693,89 @@ export function drawHerd(
     drawn++;
   }
   return drawn;
+}
+
+
+// --- the village -------------------------------------------------------------
+
+/** Weathered thatch, measured off nothing but every thatched roof there is. */
+const THATCH: [number, number, number] = [162, 136, 82];
+const RIDGE: [number, number, number] = [108, 90, 56];
+
+/** Undyed wool and russet: what everyone below a lord actually wore. */
+const CLOTH: [number, number, number][] = [
+  [122, 94, 66], [94, 84, 72], [140, 116, 84], [86, 70, 58],
+];
+
+/**
+ * Stamp one settlement: roofs first, people over them.
+ *
+ * A roof from above is a rectangle with a ridge down its length, which is two
+ * strokes -- the fat one is the thatch and the thin one the ridge line, butt-
+ * capped so a gable is a gable and not a bulge. A person is shoulders and a
+ * head: two marks that read because everything around them is at the same
+ * scale, not because they are detailed.
+ */
+export function drawStead(
+  ctx: CanvasRenderingContext2D,
+  stead: Stead,
+  cx: number, cy: number, pxPerM: number, tc: number, ts: number,
+): { houses: number; folk: number } {
+  let houses = 0;
+  let folk = 0;
+  if (pxPerM <= 0) return { houses, folk };
+  const baseTurn = Math.atan2(ts, tc);
+  const at = (x: number, y: number): [number, number] =>
+    [cx + (x * tc - y * ts) * pxPerM, cy + (x * ts + y * tc) * pxPerM];
+
+  ctx.lineCap = 'butt';
+  for (const b of stead.buildings) {
+    if (b.lM * pxPerM < VANISH_PX) continue;
+    const [x, y] = at(b.x, b.y);
+    const a = b.angle + baseTurn;
+    const dx = (Math.cos(a) * (b.lM / 2)) * pxPerM;
+    const dy = (Math.sin(a) * (b.lM / 2)) * pxPerM;
+    ctx.strokeStyle = rgb(THATCH);
+    ctx.lineWidth = Math.max(1, b.wM * pxPerM);
+    ctx.beginPath();
+    ctx.moveTo(x - dx, y - dy);
+    ctx.lineTo(x + dx, y + dy);
+    ctx.stroke();
+    if (b.wM * pxPerM >= 4) {
+      ctx.strokeStyle = rgb(RIDGE);
+      ctx.lineWidth = Math.max(0.8, b.wM * pxPerM * 0.12);
+      ctx.beginPath();
+      ctx.moveTo(x - dx * 0.92, y - dy * 0.92);
+      ctx.lineTo(x + dx * 0.92, y + dy * 0.92);
+      ctx.stroke();
+    }
+    houses++;
+  }
+
+  ctx.lineCap = 'round';
+  for (const f of stead.folk) {
+    const plan = personPlan(f.seed);
+    if (plan.shoulderWM * pxPerM < VANISH_PX) break;
+    const [x, y] = at(f.x, f.y);
+    const a = f.angle + baseTurn;
+    // Shoulders lie ACROSS the facing; the head sits forward of their middle.
+    const sx = (Math.cos(a + Math.PI / 2) * (plan.shoulderWM / 2)) * pxPerM;
+    const sy = (Math.sin(a + Math.PI / 2) * (plan.shoulderWM / 2)) * pxPerM;
+    ctx.strokeStyle = rgb(CLOTH[Math.abs(f.seed) % CLOTH.length]);
+    ctx.lineWidth = Math.max(1, plan.shoulderDM * pxPerM);
+    ctx.beginPath();
+    ctx.moveTo(x - sx, y - sy);
+    ctx.lineTo(x + sx, y + sy);
+    ctx.stroke();
+    ctx.fillStyle = 'rgb(84,64,48)';
+    ctx.beginPath();
+    ctx.arc(
+      x + Math.cos(a) * plan.headRM * 0.6 * pxPerM,
+      y + Math.sin(a) * plan.headRM * 0.6 * pxPerM,
+      Math.max(0.8, plan.headRM * pxPerM), 0, Math.PI * 2,
+    );
+    ctx.fill();
+    folk++;
+  }
+  return { houses, folk };
 }

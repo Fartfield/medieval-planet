@@ -40,7 +40,7 @@ import {
   type Frame,
   type ChildLookup,
   type Camera, type CellTint,
-  drawFlora, type FloraDrawn,
+  drawFlora, type FloraDrawn, type SteadSite,
 } from './render.ts';
 
 // --- state ------------------------------------------------------------------
@@ -336,7 +336,8 @@ function focusOn(w: World, next: readonly number[]): void {
  * are rather than a person having to look.
  */
 let lastFlora: FloraDrawn = {
-  cells: 0, plants: 0, hidden: 0, ground: 0, pastures: 0, beasts: 0, texture: true,
+  cells: 0, plants: 0, hidden: 0, ground: 0, pastures: 0, beasts: 0,
+  houses: 0, folk: 0, texture: true,
 };
 
 export function floraLastFrame(): FloraDrawn {
@@ -363,6 +364,14 @@ export function selectedAddress(): number[] | null {
 let grazerCache: { x: number; y: number; z: number; chord2: number; perHa: number }[] = [];
 let grazerCacheStamp = -1;
 
+/** The settlements as stead sites, refreshed beside the grazers. */
+let steadCache: SteadSite[] = [];
+
+function steadsOf(w: World): SteadSite[] {
+  grazersOf(w);
+  return steadCache;
+}
+
 function grazersOf(
   w: World,
 ): { x: number; y: number; z: number; chord2: number; perHa: number }[] {
@@ -376,10 +385,21 @@ function grazersOf(
   const groundArea = (4 * Math.PI * planetR * planetR)
     / (CELL_COUNT * Math.pow(SUBCELL_COUNT, GROUND_DEPTH - 1));
   const out: { x: number; y: number; z: number; chord2: number; perHa: number }[] = [];
+  const sites: SteadSite[] = [];
   for (const d of w.allDeltas()) {
     const people = d.population ?? 0;
     if (people <= 0) continue;
-    const dir = w.tile(fromKey(d.key)).dir;
+    const address = fromKey(d.key);
+    const dir = w.tile(address).dir;
+    // The stead's seed is the address itself, so a village rebuilt on the
+    // same tile stands the same way -- the ground remembers the plan.
+    sites.push({
+      x: dir[0], y: dir[1], z: dir[2],
+      population: people,
+      herdHead: d.herdHead ?? foundingHerd(people),
+      hayKg: d.hayKg ?? 0,
+      seed: address.reduce((a, v) => (Math.imul(a, 31) + v) | 0, 7),
+    });
     const reachM = radiusForPopulation(people, groundArea);
     const chord = reachM / planetR;
     // The herd the delta carries. Before the first economy tick there is no
@@ -394,7 +414,7 @@ function grazersOf(
     // actually stand on a paddock; so the drawn herd occupies the circle that
     // holds it at the ground's own carrying density, near the village, and
     // the circle grows with the herd until it fills the commons.
-    const tile = w.tile(fromKey(d.key));
+    const tile = w.tile(address);
     const carry = Math.max(0.05, cattleCarryPerHa(tile.biome, tile.nppGm2));
     const herdR = Math.sqrt(((head / carry) * 10000) / Math.PI);
     // Never tighter than a byre-yard, so a lone ox is still somewhere.
@@ -407,6 +427,7 @@ function grazersOf(
     });
   }
   grazerCache = out;
+  steadCache = sites;
   return out;
 }
 
@@ -832,6 +853,7 @@ function draw(): void {
     // through it, the cows existed at the plot layer and vanished two layers
     // deeper, exactly where a cow is finally bigger than a tile.
     const grazers = grazersOf(world);
+    const steads = steadsOf(world);
     const grew = drawFlora(ctx, nearby, frame, view, region.basis, radiusM, 30,
       String(path[0]),
       (mapIndex, cell) => {
@@ -853,7 +875,7 @@ function draw(): void {
           }
         }
         return perHa;
-      });
+      }, steads);
     lastFlora = grew;
   }
 

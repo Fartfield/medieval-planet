@@ -487,6 +487,11 @@ console.log('  a village settled through the socket');
     + `elevation ${Math.round(ground.elevationM)} m`);
   console.log(`    lattice cells ${grew.cells}, pasture cells ${grew.pastures},`
     + ` plants ${grew.plants}, cattle ${grew.beasts}`);
+  console.log(`    houses ${grew.houses}, folk ${grew.folk}`);
+  if (grew.houses === 0) {
+    console.log('  A VILLAGE OF TWENTY HAS NO ROOFS. The stead pass broke.');
+    process.exit(1);
+  }
   console.log(`    texture fallback: ${grew.texture}`);
   const failures = logLines.filter((l) => l.startsWith('frame failed'));
   if (failures.length > 0) console.log(`    FRAME FAILED: ${failures[failures.length - 1]}`);
