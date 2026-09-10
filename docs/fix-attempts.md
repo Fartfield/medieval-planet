@@ -2793,3 +2793,37 @@ the herd's need and the hay's worth (establishedBarnKg), because no real
 farm stands in January with a live herd and an empty barn. Foundings set
 hay and standing to zero explicitly and own their first winter's want --
 the same explicit-zero pattern as the assart.
+
+
+## No village could ever have surplus cloth
+
+The cloth trade's first run moved nothing: both test villages' wardrobes read
+zero, the wool town's included, with eighty sheep in its fold. The evening
+economy had been calibrated to the need with NO slack -- thirty-five
+evening-days a person spins 2.47 kg a year against 2.5 worn -- so every
+wardrobe on the planet drifted to zero and there was never a surplus to
+trade. A market in a good nobody can overproduce is a market in nothing.
+
+### ~~Trade cloth harder~~ -- the period didn't, either
+
+The historical answer is structural, not a bigger number: England exported
+FLEECE for three centuries, because fibre travels to spindles more easily
+than spinners travel to sheep. The traded good is the raw wool.
+
+Wool's trade target is the village's own SPINDLE-YEAR -- the fibre its
+evenings can spin -- so flock-heavy villages export what lies beyond their
+spindles and populous ones import up to theirs. Plus forty evening-days
+instead of thirty-five, the slack real evenings had when there was fibre in
+the house. Measured after: the flockless village's wardrobe reads 31.3
+square metres against the wool town's 31.7 -- it clothes itself on imported
+fleece -- and an ordinary village accumulates 12.5 where it held zero.
+
+### And field flax is not garden flax
+
+The same run recalibrated the flax plant: 2.5 g was a garden-spaced plant,
+and at the handbook's 1,800 a square metre it gave six times the straw any
+field has grown. A crowded fibre plant finishes at 0.6 g, the hectare comes
+out at the measured five-odd tonnes -- and the drawn stem thinned from 2.9
+mm to 1.4, which is what fibre flax measures. The picture got righter as a
+side effect of the economy getting honest, which is the whole bet of
+deriving both from one model.

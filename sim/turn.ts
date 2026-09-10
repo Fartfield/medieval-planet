@@ -319,7 +319,7 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
       herdHead: undefined, herdCondition: undefined,
       hayKg: undefined, standingKg: undefined, brokenHa: undefined,
       wildShare: undefined, flockHead: undefined, flockCondition: undefined,
-      woolKg: undefined, clothM2: undefined,
+      woolKg: undefined, clothM2: undefined, flaxKg: undefined,
     });
   } else {
     world.setDelta(r.address, {

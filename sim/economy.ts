@@ -49,8 +49,10 @@ import { SHEEP, FLEECE_KG_PER_YEAR } from './model/sheep.ts';
 import { herdMeanMassKg } from './model/husbandry.ts';
 import { needKcalPerDay } from './model/animal.ts';
 import {
-  SPIN_KG_PER_DAY, WEAVE_KG_PER_DAY, CLOTH_KG_PER_M2,
+  SPIN_KG_PER_DAY, WEAVE_KG_PER_DAY, CLOTH_KG_PER_M2, FIBRE_YIELD,
 } from './model/craft.ts';
+import { FLAX } from './model/species.ts';
+import { massAt as plantMassAt, Part as PlantPart } from './model/plant.ts';
 import { breakingDaysPerHa, HELD_HECTARE_DAYS_IRON } from './model/labour.ts';
 import { huntWeek, regrowWeek } from './model/wildfood.ts';
 import { WHEAT } from './model/species.ts';
@@ -107,6 +109,11 @@ export interface Report {
   flockEaten: number;
   /** The wool store, kg greasy. */
   woolKg: number;
+  /** The retted flax, kg of fibre. */
+  flaxKg: number;
+  /** Cloth that came in and went out by trade this week, m2. */
+  clothIn: number;
+  clothOut: number;
   /** The wardrobe: cloth in the village, m2. */
   clothM2: number;
   /** Hay in the barn, kg. */
@@ -350,6 +357,22 @@ export function runEconomy(world: World): EconomyResult {
       woolKg += flockAfter.head * FLEECE_KG_PER_YEAR;
     }
 
+    // THE FLAX PATCH. Every cottage grew its body linen: at field yields the
+    // village's whole need is met from a few dozen square metres a family,
+    // dug in the tofts rather than won from the assart, and the fibre
+    // arrives at the pond when the crop is pulled -- just before the corn.
+    let flaxKg = delta.flaxKg ?? 0;
+    const flaxStrawPerHa = A.FLAX_PLANTS_PER_M2 * 10000
+      * plantMassAt(FLAX, 1, 1)
+      * (FLAX.parts.find((q) => q.part === PlantPart.Branch)?.share ?? 0);
+    const flaxFibrePerHa = flaxStrawPerHa * FIBRE_YIELD;
+    const flaxHa = flaxFibrePerHa > 0
+      ? (population * A.LINEN_KG_PER_PERSON_YEAR) / flaxFibrePerHa
+      : 0;
+    if (ripening !== null && isWeek(week, ripening.from)) {
+      flaxKg += flaxHa * flaxFibrePerHa;
+    }
+
     // THE EVENING ECONOMY. Spinning and weaving were the work of hours the
     // 250-day labour year never counted -- every evening there was light --
     // and the capacity that implies is derived from the need it historically
@@ -357,10 +380,22 @@ export function runEconomy(world: World): EconomyResult {
     // spindle's and the loom's own day-rates that is some thirty-five
     // evening-day-equivalents a person. Cloth is made from the wool store at
     // that pace, spinning the bottleneck, exactly seven to the loom's one.
-    const eveningDaysWeek = (population * 35) / A.TURNS_PER_YEAR;
+    // Forty evening-day-equivalents a person a year, not the thirty-five
+    // that exactly met the wear rate: calibrated to the need with NO slack,
+    // every wardrobe in the world drifted to zero and the cloth trade had
+    // nothing to move. Evenings could stretch when there was fibre to spin,
+    // and the slack over the 2.5 kg wear is what a fibre-rich village
+    // accumulates and sells.
+    const eveningDaysWeek = (population * 40) / A.TURNS_PER_YEAR;
     const daysPerKg = 1 / SPIN_KG_PER_DAY + 1 / WEAVE_KG_PER_DAY;
-    const clothMadeKg = Math.min(woolKg, eveningDaysWeek / daysPerKg);
-    woolKg -= clothMadeKg;
+    // Both fibres feed the same spindle, drawn down in proportion: wool for
+    // the back, linen for the skin, one wardrobe between them.
+    const fibrePool = woolKg + flaxKg;
+    const clothMadeKg = Math.min(fibrePool, eveningDaysWeek / daysPerKg);
+    if (fibrePool > 0) {
+      woolKg -= clothMadeKg * (woolKg / fibrePool);
+      flaxKg = Math.max(0, flaxKg - clothMadeKg * (flaxKg / fibrePool));
+    }
     let clothM2 = (delta.clothM2 ?? 0) + clothMadeKg / CLOTH_KG_PER_M2;
 
     // AND CLOTH WEARS OUT, which is why the spinning never stopped: a
@@ -453,6 +488,9 @@ export function runEconomy(world: World): EconomyResult {
       flockCondition: flockAfter.condition,
       flockEaten,
       woolKg,
+      flaxKg,
+      clothIn: 0,
+      clothOut: 0,
       clothM2,
       hayKg: herdAfter.hayKg + flockAfter.hayKg,
       herdFoodKg,
@@ -494,6 +532,14 @@ export function runEconomy(world: World): EconomyResult {
 
   const grainFlows = tradeGood(world, settlements, reports, 'grain');
   const ironFlows = tradeGood(world, settlements, reports, 'iron');
+  const clothFlows = tradeGood(world, settlements, reports, 'cloth');
+  // THE WOOL TRADE, and it is the one that carries the volume: England
+  // exported FLEECE for three centuries, because fibre travels to spindles
+  // more easily than spinners travel to sheep. A village wants wool up to
+  // what its own evenings can spin in a year and offers what lies beyond
+  // that, so flock-heavy villages feed populous ones and the export economy
+  // of the period has its mechanism.
+  const woolFlows = tradeGood(world, settlements, reports, 'wool');
 
   // --- consume and decide ---------------------------------------------------
 
@@ -528,6 +574,7 @@ export function runEconomy(world: World): EconomyResult {
       flockHead: Math.round(report.flockHead * 1000) / 1000,
       flockCondition: Math.round(report.flockCondition * 1000) / 1000,
       woolKg: Math.round(report.woolKg * 10) / 10,
+      flaxKg: Math.round(report.flaxKg * 10) / 10,
       clothM2: Math.round(report.clothM2 * 10) / 10,
       hayKg: round(report.hayKg),
       standingKg: round(report.standingKg),
@@ -638,15 +685,29 @@ function tradeGood(
   world: World,
   settlements: { report: Report }[],
   reports: Map<string, Report>,
-  good: 'grain' | 'iron',
+  good: 'grain' | 'iron' | 'cloth' | 'wool',
 ): Flow[] {
   const traders: Trader[] = [];
 
   for (const { report } of settlements) {
     const tile = world.tile(report.address);
-    const stock = good === 'grain' ? report.grainStock : report.ironStock;
+    // Cloth trades in the wardrobe's own unit: the target is a year's wear
+    // on the villagers' backs, and the surplus over it is what the wool
+    // towns of the period had to sell.
+    const clothTargetM2 =
+      (report.population * 2.5) / CLOTH_KG_PER_M2;
+    // Wool's target is the village's own spindle-year: fibre beyond what
+    // the evenings can spin is export, fibre short of it is want.
+    const spindleYearKg = (report.population * 40)
+      / (1 / SPIN_KG_PER_DAY + 1 / WEAVE_KG_PER_DAY);
+    const stock = good === 'grain' ? report.grainStock
+      : good === 'iron' ? report.ironStock
+        : good === 'cloth' ? report.clothM2
+          : report.woolKg + report.flaxKg;
     const need = good === 'grain' ? report.grainNeed : report.ironNeed;
-    const target = stockTarget(need * A.TURNS_PER_YEAR);
+    const target = good === 'cloth' ? clothTargetM2
+      : good === 'wool' ? spindleYearKg
+        : stockTarget(need * A.TURNS_PER_YEAR);
 
     traders.push({
       key: report.key,
@@ -665,13 +726,17 @@ function tradeGood(
     const r = reports.get(key);
     if (r === undefined) continue;
     if (good === 'grain') { r.grainStock += amount; r.grainIn += amount; }
-    else { r.ironStock += amount; r.ironIn += amount; }
+    else if (good === 'iron') { r.ironStock += amount; r.ironIn += amount; }
+    else if (good === 'cloth') { r.clothM2 += amount; r.clothIn += amount; }
+    else { r.woolKg += amount; }
   }
   for (const [key, amount] of cleared.sent) {
     const r = reports.get(key);
     if (r === undefined) continue;
     if (good === 'grain') { r.grainStock -= amount; r.grainOut += amount; }
-    else { r.ironStock -= amount; r.ironOut += amount; }
+    else if (good === 'iron') { r.ironStock -= amount; r.ironOut += amount; }
+    else if (good === 'cloth') { r.clothM2 -= amount; r.clothOut += amount; }
+    else { r.woolKg = Math.max(0, r.woolKg - amount); }
   }
   return cleared.flows;
 }

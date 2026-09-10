@@ -212,6 +212,8 @@ export interface TileDelta {
   flockCondition?: number;
   /** The wool store, kg greasy, waiting for the evenings. */
   woolKg?: number;
+  /** The retted flax, kg of fibre, from the cottage patches. */
+  flaxKg?: number;
   /** The village's cloth, m2. What wears out and what the spinning replaces. */
   clothM2?: number;
   /** Iron in hand, kg. A year's wear is the target. */

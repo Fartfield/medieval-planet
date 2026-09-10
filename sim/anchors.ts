@@ -918,6 +918,25 @@ export const PARE_AND_BURN_DAYS_PER_ACRE = 10.0;
 export const CART_LOAD_KG = 500.0;
 
 /**
+ * Fibre flax's sowing density, plants per square metre.
+ *
+ * Sown thick on purpose: crowding draws the stem up unbranched, and an
+ * unbranched stem is the whole of the fibre's length. The handbooks have
+ * said 1,500 to 2,000 a square metre since there were handbooks.
+ */
+export const FLAX_PLANTS_PER_M2 = 1800.0;
+
+/**
+ * Body linen a person wears out in a year, kg of fibre.
+ *
+ * The shirts, shifts and sheets under the wool: about a third of the 2.5 kg
+ * wardrobe. It is why every cottage had its flax patch and why the patch
+ * was small -- at field yields this need is met from a few dozen square
+ * metres a family.
+ */
+export const LINEN_KG_PER_PERSON_YEAR = 0.8;
+
+/**
  * How many times harder the first ploughing of broken ground is than a pass
  * over old arable. Virgin sod stops a team that walks old furrows all day:
  * the treatises reckon half the daily acreage or worse, so two.

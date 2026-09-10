@@ -358,7 +358,12 @@ export const FLAX: Species = {
   name: 'flax',
   habit: Habit.Herb,
   lifespanYears: 1,
-  matureMassKg: 0.0025,
+  // A FIELD plant, not a garden one: fibre flax is sown at eighteen hundred
+  // to the square metre precisely so that crowding draws it up thin and
+  // unbranched, and a crowded plant finishes at six tenths of a gramme. The
+  // first figure here was 2.5 g -- a garden-spaced plant -- and it gave six
+  // times the straw a hectare any field has ever grown.
+  matureMassKg: 0.0006,
   // An annual in a hurry: half its mass in about ten weeks.
   growthRate: 5.2,
   matureSpreadM: 0.03,
