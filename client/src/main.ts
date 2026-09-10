@@ -23,6 +23,7 @@ import { LANDFORM_NAMES } from '../../sim/model/tile.ts';
 import { MINERAL_NAMES } from '../../sim/model/resources.ts';
 import { ROCK_NAMES } from '../../sim/model/rock.ts';
 import { workedCells, radiusForPopulation } from '../../sim/model/settlement.ts';
+import { harvestWindow, weekOfYear } from '../../sim/model/season.ts';
 import { foundingHerd } from '../../sim/model/village_herd.ts';
 import { cattleCarryPerHa } from '../../sim/model/herd.ts';
 import { Mineral } from '../../sim/model/resources.ts';
@@ -399,6 +400,7 @@ function grazersOf(
       herdHead: d.herdHead ?? foundingHerd(people),
       hayKg: d.hayKg ?? 0,
       farmShare: d.farmShare ?? 1,
+      brokenHa: d.brokenHa ?? null,
       seed: address.reduce((a, v) => (Math.imul(a, 31) + v) | 0, 7),
     });
     const reachM = radiusForPopulation(people, groundArea);
@@ -1246,6 +1248,19 @@ function supplyPanel(w: World, address: number[], population: number): string {
     ${row('condition', `<b style="color:${months >= 3 ? '#7ba05b' : '#d0563a'}">${state}</b>`)}
     ${row('granary', `${Math.round(grainStock).toLocaleString('en')} kg &mdash; ${months.toFixed(1)} months`)}
     ${row('herd', herdRow(w, address, population))}
+    ${row('next harvest', (() => {
+      const t = w.tile(address);
+      const win = harvestWindow(t.temperatureC, t.dir[1]);
+      if (win === null) return 'all year round';
+      const now = weekOfYear(w.turn);
+      const wait = ((win.from - now) % 52 + 52) % 52;
+      return wait <= (win.to - win.from + 52) % 52 + 1 && ((now - win.from) % 52 + 52) % 52 <= 4
+        ? '<b>ripening now</b>' : `in ${wait} week(s)`;
+    })())}
+    ${row('broken to the plough', (() => {
+      const b = w.getDelta(address)?.brokenHa;
+      return b === undefined ? 'long since' : `${b.toFixed(1)} ha`;
+    })())}
     ${row('trade', trade)}
     ${row('hands farming', `${(farmShare * 100).toFixed(0)}%`)}
     ${row('limited by', h.limitedBy === 'labour'

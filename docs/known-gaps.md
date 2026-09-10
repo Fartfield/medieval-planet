@@ -248,3 +248,16 @@ The fix is in the economy, not the renderer: ground newly under the plough
 should cost breaking labour before it yields, the way cleared woodland
 already costs its delay. When that lands, the drawn fields inherit it for
 free, because they read farmShare and population and nothing else.
+
+
+## Nothing eats from the wild
+
+An isolated founding in a windowed climate is about nineteen weeks short of
+its first harvest even after eating its herd to the last beast --
+verify_founding measures 2.3 survivors of twenty. Historically that gap was
+crossed on game, fish and gathering: the fauna model already computes
+gameHeadPerKm2 and the flora model knows the nuts and berries, but no
+mechanism turns hungry idle hands into wild food, or depletes the wild when
+they do. Until one exists, isolated cold foundings are Greenland; connected
+daughters and well-timed foundings are the viable paths, and the panel's
+"next harvest" row is the player's lever.

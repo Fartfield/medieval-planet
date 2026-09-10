@@ -72,6 +72,22 @@ export function sownAcreDays(iron: boolean): number {
   return plough + harrow + sow + weed + cut + bind + cart;
 }
 
+/**
+ * Man-days to BREAK one hectare of new ground for the plough.
+ *
+ * The assart price, from the same task rates as everything else: pare and
+ * burn the sod by hand, then the first ploughing at the broken-ground factor.
+ * It comes to about fourteen man-days an acre against fifteen to raise a
+ * crop on it -- so bringing land in costs nearly a year of that land's
+ * labour before it yields anything, which is why a founding's first winter
+ * was hungry everywhere the sources look.
+ */
+export function breakingDaysPerHa(iron: boolean): number {
+  const perAcre = A.PARE_AND_BURN_DAYS_PER_ACRE
+    + ploughDaysPerAcre(iron) * A.FIRST_PLOUGH_FACTOR;
+  return perAcre / A.ACRE_HECTARES;
+}
+
 /** Man-days to plough a fallow acre through the year, which is not free. */
 export function fallowAcreDays(iron: boolean): number {
   return ploughDaysPerAcre(iron) * A.PLOUGHINGS_PER_FALLOW_ACRE;

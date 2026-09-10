@@ -1590,6 +1590,11 @@ export interface SteadSite {
   hayKg: number;
   /** Share of the hands farming, which sizes the arable. */
   farmShare: number;
+  /**
+   * Hectares actually broken to the plough, when the delta records it.
+   * Null means established: the labour formula stands in.
+   */
+  brokenHa: number | null;
   seed: number;
 }
 
@@ -1759,7 +1764,14 @@ export function drawFlora(
   const steadSites = (steads ?? []).map((site) => {
     const plan = steadPlanOf(site);
     const chord = plan.radiusM / radiusM;
-    const fieldChord = fieldRadiusM(site.population, site.farmShare) / radiusM;
+    // The drawn township is the ground actually broken, where the record
+    // exists -- so a founding's fields GROW on screen, season by season, as
+    // the assart is paid. An established settlement without a record gets the
+    // labour formula, the same convention the economy uses.
+    const fieldM = site.brokenHa !== null
+      ? Math.sqrt((site.brokenHa * 10000) / Math.PI)
+      : fieldRadiusM(site.population, site.farmShare);
+    const fieldChord = fieldM / radiusM;
     return {
       ...site,
       plan,

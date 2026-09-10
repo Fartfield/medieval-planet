@@ -894,6 +894,35 @@ export const ACRE_HECTARES = 0.4046856;
  * The team is a ploughman and a driver, so an acre costs two man-days.
  */
 export const PLOUGH_ACRES_PER_TEAM_DAY_IRON = 1.0;
+
+/**
+ * Man-days to pare and burn one acre of rough ground by hand.
+ *
+ * Denshiring -- skinning the sod with a breast plough, drying and burning it
+ * -- is recorded in the husbandry literature at eight to twelve man-days the
+ * acre, and it was how ley and waste were brought under the plough before
+ * anything could be sown. The burning was not waste disposal: the ash was
+ * the first dressing the new field got.
+ */
+export const PARE_AND_BURN_DAYS_PER_ACRE = 10.0;
+
+/**
+ * What an ox-cart carries on a medieval road, kg.
+ *
+ * Measured off the carrying trade: about half a tonne behind a yoke, a
+ * quarter of it on bad ground. Half a tonne is the figure the toll schedules
+ * and the demesne accounts both settle on. A founding party that drives
+ * cattle gets carts, and a cart is why settlers could carry more than their
+ * backs -- PORTER_LOAD_KG is the man, this is the beast.
+ */
+export const CART_LOAD_KG = 500.0;
+
+/**
+ * How many times harder the first ploughing of broken ground is than a pass
+ * over old arable. Virgin sod stops a team that walks old furrows all day:
+ * the treatises reckon half the daily acreage or worse, so two.
+ */
+export const FIRST_PLOUGH_FACTOR = 2.0;
 export const PLOUGH_ACRES_PER_TEAM_DAY_WOOD = 0.5;
 export const PLOUGH_TEAM_MEN = 2;
 

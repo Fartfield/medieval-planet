@@ -189,6 +189,15 @@ export interface TileDelta {
   hayKg?: number;
   /** The pasture's standing crop, kg dry. What winter grazing eats down. */
   standingKg?: number;
+  /**
+   * Hectares actually broken to the plough.
+   *
+   * Undefined means ESTABLISHED -- a settlement seeded without a record has
+   * been there long enough that its land is broken, the same convention the
+   * granary uses. A founding sets it to zero explicitly and earns every
+   * hectare at the assart price.
+   */
+  brokenHa?: number;
   /** Iron in hand, kg. A year's wear is the target. */
   ironStock?: number;
   /**

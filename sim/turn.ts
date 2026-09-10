@@ -12,6 +12,7 @@
 // sim/model/settlement.ts for how far "can reach" goes and what it costs.
 
 import * as A from './anchors.ts';
+import { foundingHerd } from './model/village_herd.ts';
 import { SOLDIER_GRAIN_KG_PER_DAY } from './derive.ts';
 import { fromKey, toKey, GROUND_DEPTH, type Address } from './geo/address.ts';
 import { clamp } from './gen/mathx.ts';
@@ -191,13 +192,19 @@ function applyOrder(world: World, order: Order, playerCount: number): string | n
       // it is what a person can carry. A porter's load is 30 kg, which at
       // 0.87 kg a day is five weeks of food. Enough to get a roof up and a
       // first crop in, and not enough to be lazy with.
-      const provisions = amount * A.PORTER_LOAD_KG;
+      // A porter's load a person -- and a cartload behind each working yoke,
+      // because a founding that drives cattle drives carts. Four beasts to a
+      // cart: the yoke and its relief.
+      const carts = Math.floor(foundingHerd(amount) / 4);
+      const provisions = amount * A.PORTER_LOAD_KG + carts * A.CART_LOAD_KG;
       const existing = world.getDelta(address);
       world.setDelta(address, {
         population: tile.population + amount,
         populationHealth: tile.populationHealth,
         grainStock: (existing?.grainStock ?? 0) + provisions,
         farmShare: existing?.farmShare ?? 1,
+        // Not an acre is broken. The first year is the assart.
+        brokenHa: existing?.brokenHa ?? 0,
       });
       return null;
     }
@@ -307,7 +314,7 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
       population: undefined, populationHealth: undefined,
       grainStock: undefined, ironStock: undefined, farmShare: undefined,
       herdHead: undefined, herdCondition: undefined,
-      hayKg: undefined, standingKg: undefined,
+      hayKg: undefined, standingKg: undefined, brokenHa: undefined,
     });
   } else {
     world.setDelta(r.address, {

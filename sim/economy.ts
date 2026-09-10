@@ -41,8 +41,9 @@ import {
   weekOfYear, harvestWindow, inWindow, HARVEST_SPAN_WEEKS,
 } from './model/season.ts';
 import {
-  villageHerdWeek, foundingHerd, type VillageHerd,
+  villageHerdWeek, foundingHerd, distressSlaughter, type VillageHerd,
 } from './model/village_herd.ts';
+import { breakingDaysPerHa, HELD_HECTARE_DAYS_IRON } from './model/labour.ts';
 import { WHEAT } from './model/species.ts';
 import { Part } from './model/plant.ts';
 import { harvest as harvestPlant, compositionOf } from './model/process.ts';
@@ -88,12 +89,16 @@ export interface Report {
   herdDied: number;
   /** Beasts slaughtered at the autumn cull this week. */
   herdCulled: number;
+  /** Beasts eaten out of hunger this week, which is a different thing. */
+  herdEaten: number;
   /** Hay in the barn, kg. */
   hayKg: number;
   /** Milk and meat off the herd this week, as grain-equivalent kg. */
   herdFoodKg: number;
   /** The pasture's standing crop, kg dry. */
   standingKg: number;
+  /** Hectares broken to the plough. */
+  brokenHa: number;
 
   farmShare: number;
   /** How much of the iron it wants that it has, 0..1. Drives farm labour. */
@@ -227,6 +232,31 @@ export function runEconomy(world: World): EconomyResult {
       address, population, ironSupply, farmShare, neighbours, target);
     const alone = neighbours.length === 0;
 
+    // BREAKING GROUND. The land a settlement works has to have been broken to
+    // the plough first, at the assart price -- paring, burning and the first
+    // heavy ploughing -- and a founding starts with none of it done. Missing
+    // on the delta means established, the granary's own convention, so only
+    // foundings pay. Hands not needed to tend what is already broken spend
+    // their farm days breaking more, up to what they could ever tend, and
+    // until the ground is broken the harvest is scaled to the share of the
+    // worked land that exists. This is the gap the field-strip drawing
+    // surfaced: settle, and every tree in a half-mile vanished under a plough
+    // nobody had yet built.
+    const brokenBefore = delta.brokenHa ?? harvest.hectaresWorked;
+    const brokenShare = harvest.hectaresWorked > 0
+      ? Math.min(1, brokenBefore / harvest.hectaresWorked)
+      : 1;
+    const breakRate = breakingDaysPerHa(true) * ironSupply
+      + breakingDaysPerHa(false) * (1 - ironSupply);
+    const tendDays = Math.min(brokenBefore, harvest.hectaresWorked) * HELD_HECTARE_DAYS_IRON;
+    const farmDays = ((population * A.WORKERS_PER_FAMILY) / 5)
+      * A.WORKING_DAYS_PER_YEAR * farmShare;
+    const spareDays = Math.max(0, farmDays - tendDays);
+    const brokenHa = Math.min(
+      Math.max(brokenBefore, harvest.hectaresWorked),
+      brokenBefore + spareDays / Math.max(1, breakRate) / A.TURNS_PER_YEAR,
+    );
+
     // THE GRAIN ARRIVES WHEN IT RIPENS, not by fifty-second every week. The
     // harvest window is derived from the growing season's own end -- late
     // summer at 52 north, the other half of the year south of the line -- and
@@ -235,11 +265,11 @@ export function runEconomy(world: World): EconomyResult {
     // grow all year has no window, crops continuously, and never invented one.
     const ripening = harvestWindow(tile.temperatureC, tile.dir[1]);
     const week = weekOfYear(world.turn);
-    const grainGrown = ripening === null
+    const grainGrown = brokenShare * (ripening === null
       ? harvest.netKgPerYear * perTurn
       : inWindow(ripening, week)
         ? harvest.netKgPerYear / HARVEST_SPAN_WEEKS
-        : 0;
+        : 0);
 
     const catchment = world.catchmentFor(address, population);
 
@@ -256,7 +286,9 @@ export function runEconomy(world: World): EconomyResult {
     const herdWeekOut = villageHerdWeek(
       herdBefore, catchment.forageKgPerYear, tile.temperatureC, tile.dir[1], week,
     );
-    const herdFoodKg = herdWeekOut.foodKcal / GRAIN_KCAL_PER_KG;
+    let herdAfter = herdWeekOut.herd;
+    let herdFoodKg = herdWeekOut.foodKcal / GRAIN_KCAL_PER_KG;
+    let herdEaten = 0;
 
     // Whatever hands are not farming go to the ore, if there is any.
     const ore = tile.deposits.find((d) => d.kind === Mineral.Iron);
@@ -283,18 +315,34 @@ export function runEconomy(world: World): EconomyResult {
     const ironMade =
       ironOutputKgPerYear(idleDays, oreRichness, woodForIron) * perTurn;
 
+    // THE LARDER RULE. Nobody kills the plough ox while the bin holds a
+    // fortnight; when it is past that, they do -- down to the last beast,
+    // because the alternative is the churchyard. This is how a founding
+    // actually crosses its first winter: on the stock it drove in.
+    const weeklyNeed = grainNeed * perTurn;
+    const larder = grainStock + grainGrown + herdFoodKg;
+    if (larder < weeklyNeed * 2 && herdAfter.head > 0) {
+      const want = (weeklyNeed * 2 - larder) * GRAIN_KCAL_PER_KG;
+      const pot = distressSlaughter(herdAfter, want);
+      herdAfter = pot.herd;
+      herdEaten = pot.eaten;
+      herdFoodKg += pot.foodKcal / GRAIN_KCAL_PER_KG;
+    }
+
     reports.set(delta.key, {
       key: delta.key,
       address,
       population,
       health: delta.populationHealth ?? 1,
-      herdHead: herdWeekOut.herd.head,
-      herdCondition: herdWeekOut.herd.condition,
+      herdHead: herdAfter.head,
+      herdCondition: herdAfter.condition,
       herdDied: herdWeekOut.died,
       herdCulled: herdWeekOut.culled,
-      hayKg: herdWeekOut.herd.hayKg,
+      herdEaten,
+      hayKg: herdAfter.hayKg,
       herdFoodKg,
-      standingKg: herdWeekOut.herd.standingKg,
+      standingKg: herdAfter.standingKg,
+      brokenHa,
       farmShare,
       ironSupply,
       grainGrown,
@@ -361,6 +409,7 @@ export function runEconomy(world: World): EconomyResult {
       herdCondition: Math.round(report.herdCondition * 1000) / 1000,
       hayKg: round(report.hayKg),
       standingKg: round(report.standingKg),
+      brokenHa: Math.round(report.brokenHa * 100) / 100,
     });
     touched.add(delta.key);
   }

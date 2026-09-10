@@ -145,6 +145,46 @@ export interface VillageHerdWeek {
   hayMownKg: number;
 }
 
+/** What a hungry village took from its own byre. */
+export interface Distress {
+  herd: VillageHerd;
+  /** Beasts killed for the pot. */
+  eaten: number;
+  foodKcal: number;
+  hidesKg: number;
+}
+
+/**
+ * DISTRESS SLAUGHTER: a starving village eats its herd.
+ *
+ * The mechanism the first temperate founding probe showed was missing:
+ * eighteen of twenty people starved through a winter while eight cattle --
+ * five and a half million kilocalories -- walked past the window. Settlers
+ * everywhere in the sources ate into their stock in a bad year, and the herd
+ * is precisely the store that walks in with a founding, so this is the bridge
+ * a first winter was actually crossed on.
+ *
+ * It takes what covers the want and no more, down to the last beast if the
+ * want is that bad -- a starving family does not spare the plough ox, which
+ * is why a famine year echoes for a decade: the team and the breeding stock
+ * go into the pot, and condition gates the calves that would have replaced
+ * them.
+ */
+export function distressSlaughter(state: VillageHerd, kcalWanted: number): Distress {
+  const none: Distress = { herd: { ...state }, eaten: 0, foodKcal: 0, hidesKg: 0 };
+  if (kcalWanted <= 0 || state.head <= 0) return none;
+  const perBeastKg = herdMeanMassKg(CATTLE) * Math.max(0.3, state.condition);
+  const perBeastKcal = perBeastKg * EDIBLE_KCAL_PER_LIVE_KG;
+  if (perBeastKcal <= 0) return none;
+  const eaten = Math.min(state.head, kcalWanted / perBeastKcal);
+  return {
+    herd: { ...state, head: state.head - eaten },
+    eaten,
+    foodKcal: eaten * perBeastKcal,
+    hidesKg: eaten * perBeastKg * HIDE_SHARE,
+  };
+}
+
 /**
  * One week of the village's herd.
  *

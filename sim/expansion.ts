@@ -27,6 +27,7 @@
 // nobody else needs to.
 
 import * as A from './anchors.ts';
+import { foundingHerd } from './model/village_herd.ts';
 import { fromKey, toKey, type Address } from './geo/address.ts';
 import { SUBCELL_COUNT } from './geo/hexgrid.ts';
 import { yieldsFor } from './gen/submap.ts';
@@ -346,7 +347,10 @@ export function applyExpansion(world: World, result: ExpansionResult): Set<strin
     const parent = world.getDelta(parentAddress);
     if (parent === undefined) continue;
 
-    const provisions = f.settlers * A.PORTER_LOAD_KG;
+    // A porter's load a person plus a cartload per working yoke, exactly as a
+    // player founding gets: a daughter drives her stock too.
+    const provisions = f.settlers * A.PORTER_LOAD_KG
+      + Math.floor(foundingHerd(f.settlers) / 4) * A.CART_LOAD_KG;
     const remaining = (parent.population ?? 0) - f.settlers;
     if (remaining < 1) continue;
 
@@ -362,8 +366,10 @@ export function applyExpansion(world: World, result: ExpansionResult): Set<strin
       populationHealth: parent.populationHealth ?? 1,
       grainStock: provisions,
       // A daughter starts by farming. It will work out what it is for the
-      // same way its mother did.
+      // same way its mother did -- and like any founding, not an acre of her
+      // ground is broken yet.
       farmShare: 1,
+      brokenHa: 0,
     });
     touched.add(toKey(f.site));
   }

@@ -2665,3 +2665,53 @@ The drawn herd now occupies the circle that holds it at the ground's own
 carrying density, centred on the village, growing with the herd until it
 fills the commons. Same total, honest density, and the check reads 5 again --
 this time the village's own five.
+
+
+## The founding death march
+
+Probed before pricing the assart, because breaking ground would make a first
+year harder and the first year had never been measured. It was worse than
+unmeasured: A TEMPERATE FOUNDING OF TWENTY WAS ALREADY COLLAPSING TO 1.2
+PEOPLE, in the committed code, every time.
+
+    porter provisions        612 kg = five weeks
+    first harvest window     ~44 weeks out on the probe site
+    the herd                 8 beasts = 5.6M kcal, walking past the window
+
+Porter loads were priced when grain arrived weekly, where five weeks bridges
+to self-sufficiency. The harvest window landed and nobody re-probed a
+founding: the provisions silently became a death sentence, and eighteen of
+twenty starved WHILE EIGHT CATTLE STOOD UNEATEN -- no mechanism let a
+starving village eat its own stock.
+
+### Distress slaughter and the carts
+
+The larder rule: nobody kills the plough ox while the bin holds a fortnight;
+past that they do, down to the last beast. And a founding that drives cattle
+drives carts -- two cartloads behind two yokes on top of twenty backs, 1,600
+kg where backs alone carried 612.
+
+Measured after: the herd is eaten by turn 18 with the village still at 20.0
+and healthy -- the stock now dies before the people, which is the right
+order and was the missing mechanism.
+
+### ~~Expect the broken fields to save them~~ -- identical survivors, 2.342 = 2.342
+
+A twin founding with its fields pre-broken but the same larder survives
+IDENTICALLY to three decimals, because on this site the assart finishes by
+turn 36 and the window is at 44: by harvest time both have full fields. The
+assart is a real cost -- the kingdom pays 6.9% of its forty-year population
+for it, one town fewer -- but it is not what kills a founding.
+
+### What kills a founding is the larder against the calendar
+
+Total food, eating the herd to the last beast: 1,600 kg carried + ~1,430
+kg-equivalent of stock = about 25 weeks. Worst-case distance to the first
+window: 44. The gap is ~19 weeks and no mechanism closes it yet.
+
+What closes it in the sources: timing (settle in late winter, not after the
+harvest -- the panel now shows "next harvest in N weeks" so a player can),
+a mother settlement in trade reach (daughters get this; the kingdom suite
+proves it), and WILD FOOD -- a founding hunted and foraged, the fauna model
+already computes game density, and nothing eats from it. That is the open
+gap, recorded in known-gaps.
