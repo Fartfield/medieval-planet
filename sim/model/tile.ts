@@ -198,6 +198,15 @@ export interface TileDelta {
    * hectare at the assart price.
    */
   brokenHa?: number;
+  /**
+   * The hunting range's remaining stock of game, 0 to 1.
+   *
+   * One is an untouched range. A hard first winter halves it, which is why
+   * the second winter is thin where the first was fat. Undefined means
+   * untouched, and it clears with the settlement: the regrowth that happens
+   * with nobody there to see it is complete by the time anyone returns.
+   */
+  wildShare?: number;
   /** Iron in hand, kg. A year's wear is the target. */
   ironStock?: number;
   /**

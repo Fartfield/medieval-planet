@@ -8,13 +8,18 @@
 // so the founding year can never again drift unmeasured.
 //
 // What it holds: the assart is priced from the task rates; a founding drives
-// carts as well as backs; a hungry village eats its herd BEFORE its people
-// die, not after; the ground breaks season by season and the harvest scales
-// with it; an established settlement -- no record on the delta -- is
-// grandfathered whole; and an ISOLATED cold-climate founding is a disaster
-// that leaves survivors, which is colonisation as the sources describe it.
-// Greenland was real. A daughter with a mother in trade reach is the case
-// that thrives, and the kingdom suite measures that one.
+// carts as well as backs; a hungry village hunts before it kills the plough
+// ox and eats the ox before its people die; the ground breaks season by
+// season and the harvest scales with it; and an established settlement -- no
+// record on the delta -- is grandfathered whole.
+//
+// THE CLAIM CHANGED ONCE, and the history is the point. Before the wild
+// larder existed this suite held that an isolated cold founding collapses to
+// two or three survivors, and it did -- measured at 2.342 of twenty. With
+// the chase in, the same founding comes through its first winter whole on
+// venison, provisions and a couple of beasts, hammering its hunting range to
+// pay for it. Greenland is still in here: it is the founding on ground with
+// no game worth the name.
 
 import { World } from '../sim/world.ts';
 import { resolveTurn } from '../sim/turn.ts';
@@ -44,6 +49,8 @@ interface FoundingRun {
   popAtHerdGone: number;
   brokenAtYearEnd: number;
   firstHarvestKg: number;
+  herdLeft: number;
+  wildLeft: number;
 }
 
 type Mode = 'founding' | 'fields-only' | 'suite-seeded';
@@ -63,7 +70,7 @@ function found(world: World, addr: number[], mode: Mode): FoundingRun {
   });
   const run: FoundingRun = {
     survivors: 0, lowestHealth: 1, herdGoneTurn: -1, popAtHerdGone: -1,
-    brokenAtYearEnd: 0, firstHarvestKg: 0,
+    brokenAtYearEnd: 0, firstHarvestKg: 0, herdLeft: 0, wildLeft: 1,
   };
   let lastGranary = world.getDelta(addr)?.grainStock ?? 0;
   for (let t = 0; t < 60; t++) {
@@ -83,6 +90,8 @@ function found(world: World, addr: number[], mode: Mode): FoundingRun {
     lastGranary = granary;
     if (t === 51) run.brokenAtYearEnd = d.brokenHa ?? -1;
     run.survivors = pop;
+    run.herdLeft = d.herdHead ?? 0;
+    run.wildLeft = d.wildShare ?? 1;
   }
   return run;
 }
@@ -119,17 +128,19 @@ suite('a founding year', () => {
 
   measure('survivors of an isolated cold founding, of twenty', cold.survivors);
   measure('their worst health on the way', cold.lowestHealth);
-  assert('an isolated cold founding is a disaster, not an extinction',
-    cold.survivors >= 1 && cold.survivors < 12);
+  assert('with the chase, an isolated founding comes through its winter',
+    cold.survivors > 15);
 
-  // THE HERD GOES FIRST. The larder rule eats the stock before the people
-  // fail: the byre must be empty while the village is still mostly alive,
-  // because a mechanism that lets beasts outlive their keepers is the exact
-  // bug this suite was built on.
-  measure('the byre is empty by turn', cold.herdGoneTurn);
-  measure('and the village still numbers', cold.popAtHerdGone);
-  assert('they ate the stock before they starved',
-    cold.herdGoneTurn >= 0 && cold.popAtHerdGone > 16);
+  // WHAT THE WINTER COST, in the right order: the hunting range is hammered,
+  // the byre is thinned but not emptied, and the people are whole. Before
+  // the wild larder this read the other way round -- byre empty by turn 18,
+  // eighteen people dead -- and that ordering is the thing this suite
+  // guards now.
+  measure('the hunting range after the first year', cold.wildLeft);
+  assert('the range remembers the winter', cold.wildLeft < 0.995);
+  measure('beasts still in the byre', cold.herdLeft);
+  assert('they hunted before they ate the plough teams',
+    cold.herdLeft > 3);
 
   // THE GROUND BREAKS while all this happens: the assart proceeds through
   // the hunger, and by the year's end most of the worked land exists.
@@ -137,21 +148,20 @@ suite('a founding year', () => {
   assert('a year of spare hands breaks a real township',
     cold.brokenAtYearEnd > 15);
   measure('the first window harvest, kg', cold.firstHarvestKg);
-  assert('and the first harvest is real but arrives too late to save them',
+  assert('and the first harvest arrives to a village still alive to reap it',
     cold.firstHarvestKg > 200);
 
-  // WHAT ACTUALLY KILLS THEM, separated. A twin with its fields already
-  // broken but the same thin larder dies IDENTICALLY -- the same survivors to
-  // three decimals -- because on this site the assart finishes months before
-  // the window and the larder was always the binding constraint. The first
-  // version of this check expected the broken fields to save them and learned
-  // otherwise: the founding problem is provisions against the distance to the
-  // window, and the assart only bites where the window comes early.
+  // THE ASSART IS NOT WHAT DECIDES A FOUNDING'S FATE. A twin with its
+  // fields pre-broken but the same larder fares the same, because on this
+  // site the assart finishes months before the window: the first winter is
+  // decided by food against the calendar, and the chase is what closes it.
   const world2 = new World({ seed: 20260826 });
   const fieldsOnly = found(world2, temperateSite(world2), 'fields-only');
   measure('the broken-fields twin\'s survivors', fieldsOnly.survivors);
-  check('the assart did not kill them; the larder did',
-    fieldsOnly.survivors, cold.survivors, 0.5);
+  // A person or two of drift between the twins is not the assart deciding
+  // anything; twenty people starving would be.
+  check('the assart does not decide the first winter',
+    fieldsOnly.survivors, cold.survivors, 2);
 
   // THE GRANDFATHER CONVENTION, as the suites actually use it: no records at
   // all reads as established -- full larder, broken ground -- and such a
@@ -162,7 +172,33 @@ suite('a founding year', () => {
   assert('an established village does not relive the founding',
     grand.survivors > 15);
 
-  // DETERMINISM: the same founding fails identically forever.
+  // GREENLAND IS STILL GREENLAND: found the same twenty where the game is
+  // not worth the walk -- tundra-margin ground at a tenth the productivity
+  // -- and the winter is what it always was. The chase is a mechanism, not
+  // a pardon.
+  const worldBleak = new World({ seed: 20260826 });
+  const bleak = (() => {
+    for (let r = 0; r < 480; r += 3) {
+      if (worldBleak.tile([r, 45]).elevationM < 20) continue;
+      for (let c = 40; c < 50; c++) {
+        const a = [r, 45, 45, 45, 45, c];
+        const t = worldBleak.tile(a);
+        if (t.elevationM > 10 && t.nppGm2 > 50 && t.nppGm2 < 220
+          && t.temperatureC > -2 && t.temperatureC < 8) return a;
+      }
+    }
+    return null;
+  })();
+  if (bleak !== null) {
+    const greenland = found(worldBleak, bleak, 'founding');
+    measure('the bleak site: npp', worldBleak.tile(bleak).nppGm2);
+    measure('survivors on ground with no game worth the name',
+      greenland.survivors);
+    assert('where the wild is thin, the first winter still reaps',
+      greenland.survivors < 15);
+  }
+
+  // DETERMINISM: the same founding runs identically forever.
   const world3 = new World({ seed: 20260826 });
   const again = found(world3, temperateSite(world3), 'founding');
   check('the same hard year, to the soul',

@@ -44,6 +44,7 @@ import {
   villageHerdWeek, foundingHerd, distressSlaughter, type VillageHerd,
 } from './model/village_herd.ts';
 import { breakingDaysPerHa, HELD_HECTARE_DAYS_IRON } from './model/labour.ts';
+import { huntWeek, regrowWeek } from './model/wildfood.ts';
 import { WHEAT } from './model/species.ts';
 import { Part } from './model/plant.ts';
 import { harvest as harvestPlant, compositionOf } from './model/process.ts';
@@ -99,6 +100,12 @@ export interface Report {
   standingKg: number;
   /** Hectares broken to the plough. */
   brokenHa: number;
+  /** The hunting range's remaining game, 0 to 1. */
+  wildShare: number;
+  /** Carcasses brought home this week. */
+  wildKills: number;
+  /** Venison in the pot this week, grain-equivalent kg. */
+  wildFoodKg: number;
 
   farmShare: number;
   /** How much of the iron it wants that it has, 0..1. Drives farm labour. */
@@ -315,12 +322,34 @@ export function runEconomy(world: World): EconomyResult {
     const ironMade =
       ironOutputKgPerYear(idleDays, oreRichness, woodForIron) * perTurn;
 
+    // THE WILD LARDER FIRST. A hungry village sends hands to the woods
+    // before it kills the plough ox: when the bin runs short of a month,
+    // up to half the workers hunt, and the take is the fauna model's own
+    // encounter arithmetic -- rich on an untouched range, thin on a cropped
+    // one, and the range remembers. This is the mechanism verify_founding
+    // was missing when eighteen of twenty starved in a wood full of deer.
+    const weeklyNeed = grainNeed * perTurn;
+    let wildShare = delta.wildShare ?? 1;
+    let wildKills = 0;
+    let wildFoodKg = 0;
+    {
+      const larderNow = grainStock + grainGrown + herdFoodKg;
+      if (larderNow < weeklyNeed * 4) {
+        const hunterDays = ((population * A.WORKERS_PER_FAMILY) / 5) * 0.5 * 7;
+        const hunt = huntWeek(tile.biome, tile.nppGm2, wildShare, hunterDays);
+        wildShare = hunt.wildShare;
+        wildKills = hunt.kills;
+        wildFoodKg = hunt.foodKcal / GRAIN_KCAL_PER_KG;
+      } else {
+        wildShare = regrowWeek(wildShare);
+      }
+    }
+
     // THE LARDER RULE. Nobody kills the plough ox while the bin holds a
     // fortnight; when it is past that, they do -- down to the last beast,
-    // because the alternative is the churchyard. This is how a founding
-    // actually crosses its first winter: on the stock it drove in.
-    const weeklyNeed = grainNeed * perTurn;
-    const larder = grainStock + grainGrown + herdFoodKg;
+    // because the alternative is the churchyard. The hunt has already
+    // brought home what it could; the byre covers what the woods did not.
+    const larder = grainStock + grainGrown + herdFoodKg + wildFoodKg;
     if (larder < weeklyNeed * 2 && herdAfter.head > 0) {
       const want = (weeklyNeed * 2 - larder) * GRAIN_KCAL_PER_KG;
       const pot = distressSlaughter(herdAfter, want);
@@ -343,13 +372,16 @@ export function runEconomy(world: World): EconomyResult {
       herdFoodKg,
       standingKg: herdAfter.standingKg,
       brokenHa,
+      wildShare,
+      wildKills,
+      wildFoodKg,
       farmShare,
       ironSupply,
       grainGrown,
       grainNeed: grainNeed * perTurn,
-      // The dairy and the shambles arrive with the harvest: herd food goes
-      // into the same stock the ration is eaten from.
-      grainStock: grainStock + grainGrown + herdFoodKg,
+      // The dairy, the shambles and the chase arrive with the harvest: herd
+      // food and venison go into the same stock the ration is eaten from.
+      grainStock: grainStock + grainGrown + herdFoodKg + wildFoodKg,
       grainIn: 0,
       grainOut: 0,
       ironMade,
@@ -410,6 +442,9 @@ export function runEconomy(world: World): EconomyResult {
       hayKg: round(report.hayKg),
       standingKg: round(report.standingKg),
       brokenHa: Math.round(report.brokenHa * 100) / 100,
+      // Rounded fine, because a week's regrowth on a full range is a
+      // ten-thousandth and rounding it away would freeze the wild forever.
+      wildShare: Math.round(report.wildShare * 10000) / 10000,
     });
     touched.add(delta.key);
   }

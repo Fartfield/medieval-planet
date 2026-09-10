@@ -1257,6 +1257,13 @@ function supplyPanel(w: World, address: number[], population: number): string {
       return wait <= (win.to - win.from + 52) % 52 + 1 && ((now - win.from) % 52 + 52) % 52 <= 4
         ? '<b>ripening now</b>' : `in ${wait} week(s)`;
     })())}
+    ${row('the wild', (() => {
+      const ws = w.getDelta(address)?.wildShare;
+      if (ws === undefined) return 'untouched';
+      return ws > 0.85 ? `rich (${(ws * 100).toFixed(0)}%)`
+        : ws > 0.5 ? `hunted (${(ws * 100).toFixed(0)}%)`
+          : `<b style="color:#d0563a">stripped (${(ws * 100).toFixed(0)}%)</b>`;
+    })())}
     ${row('broken to the plough', (() => {
       const b = w.getDelta(address)?.brokenHa;
       return b === undefined ? 'long since' : `${b.toFixed(1)} ha`;

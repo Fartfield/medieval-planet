@@ -315,6 +315,7 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
       grainStock: undefined, ironStock: undefined, farmShare: undefined,
       herdHead: undefined, herdCondition: undefined,
       hayKg: undefined, standingKg: undefined, brokenHa: undefined,
+      wildShare: undefined,
     });
   } else {
     world.setDelta(r.address, {

@@ -250,7 +250,19 @@ already costs its delay. When that lands, the drawn fields inherit it for
 free, because they read farmShare and population and nothing else.
 
 
-## Nothing eats from the wild
+## ~~Nothing eats from the wild~~ -- the chase exists now
+
+Resolved: hungry villages hunt (encounter-derived, ethnographically
+calibrated, with logistic depletion and recovery on `wildShare`), and
+verify_founding's isolated cold founding now survives its first winter on
+venison, provisions and a couple of beasts. What remains open from this
+family: GATHERING -- mast, berries and roots from the flora phenology are
+still not eaten, though autumn hazelnuts and bramble fruit are sitting in
+the species sheets with their weeks and their calories; and game does not
+recover differently where wolves are absent, because there are no wolves.
+The original note follows.
+
+## Nothing eats from the wild (original note)
 
 An isolated founding in a windowed climate is about nineteen weeks short of
 its first harvest even after eating its herd to the last beast --

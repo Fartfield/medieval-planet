@@ -2715,3 +2715,38 @@ a mother settlement in trade reach (daughters get this; the kingdom suite
 proves it), and WILD FOOD -- a founding hunted and foraged, the fauna model
 already computes game density, and nothing eats from it. That is the open
 gap, recorded in known-gaps.
+
+
+## The hunt returned forty deer a week to one hamlet
+
+First calibration of the wild larder: sweep times density times success,
+with success at one stalk in five. The suite caught it immediately -- a
+carcass every 0.86 hunter-days, 1,043 grain-equivalent kilogrammes a week
+off thirty-five hunter-days, a return no ethnography has ever recorded.
+
+The error was what the encounter term counts. Sweep times density is
+SIGHTINGS, and game sees the hunter first: most sightings are a white tail
+vanishing at two hundred paces. Hadza bow hunters average a large kill per
+hunter-month; medieval snare-and-drive accounts work out to a deer per
+man-week at good density. Both back out to about one sighting in thirty
+becoming meat. At 0.03 the model gives a carcass per 5.7 hunter-days.
+
+### ~~Twenty people live near the wild's own increase~~ -- carrying capacity is r.K/4, not r.K
+
+The depletion check then failed the other way, and the failure taught the
+suite something. I had reckoned the sustainable crop as the herd's whole
+intrinsic increase, r times standing -- but a stock AT carrying capacity
+nets nothing, which is what carrying capacity means. The most a range yields
+forever is the logistic maximum, r.K/4, at half stock.
+
+Turned into people, the range's true carrying capacity for hunters is 7.5 --
+and the measured density of temperate-forest foragers, 0.1 a square
+kilometre over the same 78 km2, is about 8. Two chains sharing no inputs
+land within seven per cent of each other, which is the strongest kind of
+check this project gets.
+
+So twenty people CANNOT live wild for long: they are over the range's
+capacity by nearly three times, their hungry first year dents the range to
+0.74, and every further year of reliance grinds it lower. That pressure is
+the whole demographic reason settled people farm, and the model now says it
+without having been told.

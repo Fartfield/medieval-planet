@@ -140,7 +140,8 @@ function isTombstone(d: TileDelta): boolean {
     && d.herdCondition === undefined
     && d.hayKg === undefined
     && d.standingKg === undefined
-    && d.brokenHa === undefined;
+    && d.brokenHa === undefined
+    && d.wildShare === undefined;
 }
 
 export { dirname };
