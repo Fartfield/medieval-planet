@@ -254,6 +254,11 @@ function runTurn(): void {
       + (result.foundings.some((f) => f.broke)
         ? ` (${result.foundings.filter((f) => f.broke).length} beyond reach, now independent)` : '')
     : '';
+  const war = result.battles.length > 0
+    ? `, ${result.battles.length} raid(s)`
+      + (result.battles.some((b) => b.conqueredBy !== null)
+        ? ` (${result.battles.filter((b) => b.conqueredBy !== null).length} conquered)` : '')
+    : '';
   const trade = result.tradeRoutes > 0
     ? `, ${Math.round(result.grainShippedKg).toLocaleString('en')} kg grain and `
       + `${Math.round(result.ironShippedKg).toLocaleString('en')} kg iron over `
@@ -263,7 +268,7 @@ function runTurn(): void {
     `  turn ${world.turn}: ${orders.length} order(s), `
     + `${result.rejected.length} rejected, ${result.changed.length} tile(s) changed, `
     + `${world.deltaCount} live, ${Math.round(people).toLocaleString('en')} people`
-    + `, ${world.polities.size} kingdom(s)${grew}${trade}`,
+    + `, ${world.polities.size} kingdom(s)${grew}${war}${trade}`,
   );
   for (const r of result.rejected.slice(0, 5)) {
     console.log(`      rejected ${r.order.action} ${r.order.target}: ${r.reason}`);

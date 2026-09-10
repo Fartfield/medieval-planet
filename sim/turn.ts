@@ -23,6 +23,7 @@ import { clamp } from './gen/mathx.ts';
 import { Hasher } from './hash.ts';
 import { runEconomy, GRAIN_PER_PERSON_YEAR, type Report } from './economy.ts';
 import { planExpansion, applyExpansion, type Founding } from './expansion.ts';
+import { resolveRaids, type Combatant, type Battle } from './model/war.ts';
 import type { World } from './world.ts';
 import type { TileDelta } from './model/tile.ts';
 
@@ -50,6 +51,8 @@ export interface TurnResult {
   foundings: Founding[];
   /** Settlements that wanted to spread and had nowhere left. A frontier. */
   blocked: string[];
+  /** Raids fought this week, for the chronicle. */
+  battles: Battle[];
 }
 
 /**
@@ -122,6 +125,14 @@ export function resolveTurn(world: World, orders: Order[], playerCount: number):
   for (const key of applyExpansion(world, expansion)) touched.add(key);
   const blocked = new Set(expansion.blocked);
 
+  // WHERE TWO HOUSES MEET, they fight. Adjacent settlements of rival polities
+  // raid each other from the muster the economy already affords; the loser is
+  // plundered and, on a rout it cannot hold against, conquered. This runs
+  // after the economy so the warchest is this week's stores, and before the
+  // population step so the men who fell are gone from the pyramid it steps.
+  const battles = resolveConflict(world);
+  for (const b of battles) { touched.add(b.attacker); touched.add(b.defender); }
+
   // Then people are born, die, arrive or leave, on the ration they got.
   for (const [key, report] of economy.reports) {
     if (stepPopulation(world, report, blocked.has(key))) touched.add(key);
@@ -147,6 +158,7 @@ export function resolveTurn(world: World, orders: Order[], playerCount: number):
     tradeRoutes: economy.grainFlows.length + economy.ironFlows.length,
     foundings: expansion.foundings,
     blocked: expansion.blocked,
+    battles,
   };
 }
 
@@ -375,6 +387,102 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
  * that cries wolf gets switched off. A metre of elevation is far below
  * anything a player can act on and far above any rounding.
  */
+/**
+ * Muster every owned settlement, resolve the raids between rivals, and apply
+ * the casualties, the plunder and the conquests to the deltas.
+ *
+ * The men who die are taken from the hands of the pyramid, so a border war
+ * bleeds the working generation and echoes the way a famine does. Plunder
+ * moves grain and iron from the beaten to the victor. A conquest flips the
+ * ground's owner, and a settlement emptied of its fighting strength is not
+ * emptied of its people -- war kills the young men, not the village.
+ */
+function resolveConflict(world: World): Battle[] {
+  const combatants: Combatant[] = [];
+  for (const d of world.allDeltas()) {
+    const owner = d.owner;
+    const people = d.population ?? 0;
+    if (owner === undefined || owner < 0 || people <= 0) continue;
+    const address = fromKey(d.key);
+    const dir = world.tile(address).dir;
+    const polity = world.polities.get(owner);
+    let fromCapitalM = 0;
+    if (polity !== undefined) {
+      const cap = world.tile(fromKey(polity.capital)).dir;
+      const dot = Math.max(-1, Math.min(1,
+        dir[0] * cap[0] + dir[1] * cap[1] + dir[2] * cap[2]));
+      fromCapitalM = Math.acos(dot) * world.radiusM;
+    }
+    combatants.push({
+      key: d.key, polity: owner,
+      x: dir[0], y: dir[1], z: dir[2],
+      population: people,
+      ironKg: d.ironStock ?? 0,
+      grainKg: d.grainStock ?? 0,
+      fromCapitalM,
+    });
+  }
+  if (combatants.length < 2) return [];
+
+  const battles = resolveRaids(combatants, world.radiusM);
+
+  for (const b of battles) {
+    applyCasualties(world, b.attacker, b.attackerDead);
+    applyCasualties(world, b.defender, b.defenderDead);
+    // Plunder moves from the beaten to the victor.
+    const victor = b.attackerWon ? b.attacker : b.defender;
+    const beaten = b.attackerWon ? b.defender : b.attacker;
+    if (b.grainTaken > 0 || b.ironTaken > 0) {
+      const bd = world.getDelta(fromKey(beaten));
+      const vd = world.getDelta(fromKey(victor));
+      if (bd !== undefined) {
+        world.setDelta(fromKey(beaten), {
+          grainStock: Math.max(0, (bd.grainStock ?? 0) - b.grainTaken),
+          ironStock: Math.max(0, (bd.ironStock ?? 0) - b.ironTaken),
+        });
+      }
+      if (vd !== undefined) {
+        world.setDelta(fromKey(victor), {
+          grainStock: (vd.grainStock ?? 0) + b.grainTaken,
+          ironStock: (vd.ironStock ?? 0) + b.ironTaken,
+        });
+      }
+    }
+    // Conquest moves the border.
+    if (b.conqueredBy !== null) {
+      world.setDelta(fromKey(b.defender), { owner: b.conqueredBy });
+    }
+  }
+  return battles;
+}
+
+/** Take fallen men from a settlement's hands, and its head count. */
+function applyCasualties(world: World, key: string, dead: number): void {
+  if (dead <= 0) return;
+  const address = fromKey(key);
+  const d = world.getDelta(address);
+  if (d === undefined) return;
+  const pop = d.population ?? 0;
+  const lost = Math.min(pop, dead);
+  const hearths = d.hearths;
+  let nextHearths = hearths;
+  if (hearths !== undefined && hearths.length > 0) {
+    // The dead are fighting men: take them from the hands, spread across the
+    // hearths, and never more than the hands a hearth holds.
+    const totalHands = hearths.reduce((a, h) => a + h.h, 0);
+    if (totalHands > 0) {
+      const take = Math.min(lost, totalHands);
+      nextHearths = hearths.map((h) => ({
+        c: h.c, h: Math.max(0, h.h - take * (h.h / totalHands)), e: h.e,
+      }));
+    }
+  }
+  world.setDelta(address, {
+    population: Math.round((pop - lost) * 1000) / 1000,
+    hearths: nextHearths,
+  });
+}
+
 export function regionFingerprint(world: World, region: number): number {
   const map = world.subMap([region]);
   const h = new Hasher();
