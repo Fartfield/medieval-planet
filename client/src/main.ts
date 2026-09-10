@@ -337,7 +337,7 @@ function focusOn(w: World, next: readonly number[]): void {
  */
 let lastFlora: FloraDrawn = {
   cells: 0, plants: 0, hidden: 0, ground: 0, pastures: 0, beasts: 0,
-  houses: 0, folk: 0, texture: true,
+  houses: 0, folk: 0, fields: 0, texture: true,
 };
 
 export function floraLastFrame(): FloraDrawn {
@@ -398,6 +398,7 @@ function grazersOf(
       population: people,
       herdHead: d.herdHead ?? foundingHerd(people),
       hayKg: d.hayKg ?? 0,
+      farmShare: d.farmShare ?? 1,
       seed: address.reduce((a, v) => (Math.imul(a, 31) + v) | 0, 7),
     });
     const reachM = radiusForPopulation(people, groundArea);

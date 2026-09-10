@@ -35,6 +35,10 @@ import { GRASS } from '../../sim/model/species.ts';
 import { beastOf } from '../../sim/model/beastform.ts';
 import { type Beastie } from '../../sim/model/herd.ts';
 import { type Stead, personPlan } from '../../sim/model/stead.ts';
+import { ridgesAcross, RIDGE_WAVELENGTH_M } from '../../sim/model/fields.ts';
+import { WHEAT } from '../../sim/model/species.ts';
+import { partColour, Part as PlantPart } from '../../sim/model/plant.ts';
+import { CROWN_GRID_M } from '../../sim/model/stand.ts';
 import { seed, below } from '../../sim/rng.ts';
 
 /**
@@ -778,4 +782,60 @@ export function drawStead(
     folk++;
   }
   return { houses, folk };
+}
+
+
+// --- the arable --------------------------------------------------------------
+
+const WHEAT_LEAF = WHEAT.parts.find((p) => p.part === PlantPart.Leaf)!;
+
+/** The crop's colour this week, asked of the pigment model and remembered. */
+let cropWeek = -1;
+let cropRgb: [number, number, number] = [120, 120, 60];
+
+function cropColour(week: number): [number, number, number] {
+  if (week !== cropWeek) {
+    cropWeek = week;
+    // The wheat leaf, aged by the season: green in May, and by week thirty it
+    // is nine tenths senesced, so high summer paints the strips gold without
+    // anyone choosing gold. The same call that turns the oaks in October.
+    cropRgb = partColour(WHEAT_LEAF, week, 52);
+  }
+  return cropRgb;
+}
+
+/**
+ * One lattice cell of ridge-and-furrow.
+ *
+ * Ridges at their measured wavelength, all running the furlong's way -- a
+ * plough team turns badly, so every strip in a furlong runs the same
+ * bearing, and the bearing is the settlement's, not the cell's. The furrows
+ * between are simply the turf underneath showing through, which is what a
+ * furrow is.
+ */
+export function drawStrips(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, pxPerM: number, tc: number, ts: number,
+  furlongAngle: number, week: number,
+): boolean {
+  const wavePx = RIDGE_WAVELENGTH_M * pxPerM;
+  if (wavePx < 1.5) return false;
+  const n = ridgesAcross(CROWN_GRID_M);
+  const a = furlongAngle + Math.atan2(ts, tc);
+  const ca = Math.cos(a);
+  const sa = Math.sin(a);
+  const half = (CROWN_GRID_M * 0.48) * pxPerM;
+  ctx.strokeStyle = rgb(cropColour(week));
+  ctx.lineWidth = Math.max(1, wavePx * 0.6);
+  ctx.lineCap = 'butt';
+  for (let i = 0; i < n; i++) {
+    const o = (i - (n - 1) / 2) * wavePx;
+    const ox = -sa * o;
+    const oy = ca * o;
+    ctx.beginPath();
+    ctx.moveTo(cx + ox - ca * half, cy + oy - sa * half);
+    ctx.lineTo(cx + ox + ca * half, cy + oy + sa * half);
+    ctx.stroke();
+  }
+  return true;
 }

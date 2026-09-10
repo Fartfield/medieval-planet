@@ -25,7 +25,9 @@ import {
 } from '../../sim/model/stand.ts';
 import {
   drawStand, groundTileFor, drawGround, seasonOf, drawHerd, drawStead,
+  drawStrips,
 } from './flora_render.ts';
+import { fieldRadiusM, PLOUGH_NPP_FLOOR } from '../../sim/model/fields.ts';
 import { steadOf, type Stead as SteadPlan } from '../../sim/model/stead.ts';
 import { herdOn, cattleCarryPerHa, type Herd } from '../../sim/model/herd.ts';
 import * as A from '../../sim/anchors.ts';
@@ -1557,6 +1559,8 @@ export interface FloraDrawn {
   houses: number;
   /** People drawn. */
   folk: number;
+  /** Lattice cells under the plough. */
+  fields: number;
   /** True when the zoom is too far out for individuals to be affordable. */
   texture: boolean;
 }
@@ -1584,6 +1588,8 @@ export interface SteadSite {
   population: number;
   herdHead: number;
   hayKg: number;
+  /** Share of the hands farming, which sizes the arable. */
+  farmShare: number;
   seed: number;
 }
 
@@ -1630,7 +1636,7 @@ export function drawFlora(
 ): FloraDrawn {
   const nothing: FloraDrawn = {
     cells: 0, plants: 0, hidden: 0, ground: 0, pastures: 0, beasts: 0,
-    houses: 0, folk: 0, texture: true,
+    houses: 0, folk: 0, fields: 0, texture: true,
   };
   const { cx, cy, size } = view;
   if (maps.length === 0 || radiusM <= 0) return nothing;
@@ -1748,11 +1754,19 @@ export function drawFlora(
   const coverBudget = w * h * CANOPY_DEPTH;
   const season = seasonOf(week, 52);
 
-  // The stead sites with their yards as squared chords, computed once.
+  // The stead sites with their yards and their arable as squared chords, and
+  // the furlong bearing every strip of theirs will run.
   const steadSites = (steads ?? []).map((site) => {
     const plan = steadPlanOf(site);
     const chord = plan.radiusM / radiusM;
-    return { ...site, plan, yardChord2: chord * chord };
+    const fieldChord = fieldRadiusM(site.population, site.farmShare) / radiusM;
+    return {
+      ...site,
+      plan,
+      yardChord2: chord * chord,
+      fieldChord2: fieldChord * fieldChord,
+      furlongAngle: ((site.seed % 628) / 628) * Math.PI,
+    };
   });
 
   // RESOLVE EVERY CELL FIRST, then draw in two passes over the resolved list.
@@ -1765,6 +1779,8 @@ export function drawFlora(
   // this file.
   const ready: {
     x: number; y: number; tc: number; ts: number; stand: Stand; herd: Herd | null;
+    /** The furlong bearing, when this cell is under the plough. */
+    field: number | null;
   }[] = [];
 
   for (const cell of visible) {
@@ -1810,21 +1826,33 @@ export function drawFlora(
     }
     if (stand === null) continue;
 
-    // THE YARD IS NOT A WOOD. A settlement's own ground -- its tofts and its
-    // green -- was cleared by the people living on it, and the flora field
-    // does not know that yet. So the wood stops at the village's radius: turf
-    // and beasts stay, trees and scrub are not drawn on top of houses.
+    // THE YARD IS NOT A WOOD, AND NEITHER IS THE ARABLE. A settlement's own
+    // ground was cleared by the people living on it, and the flora field does
+    // not know that yet: so within the yard the trees go and the green stays,
+    // and within the field disc -- where the ground is worth ploughing at all
+    // -- the trees go and the strips are drawn instead. The cattle stay among
+    // the strips, which is not a compromise: the herd grazed the fallow and
+    // the stubble, and a beast in the corn was the manor court's oldest case.
+    let field: number | null = null;
     for (const site of steadSites) {
       const ddx = dx - site.x;
       const ddy = dy - site.y;
       const ddz = dz - site.z;
-      if (ddx * ddx + ddy * ddy + ddz * ddz <= site.yardChord2) {
+      const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+      if (d2 <= site.yardChord2) {
         stand = { ...stand, plants: [] };
+        field = null;
         break;
+      }
+      if (d2 <= site.fieldChord2 && pasture !== null
+        && pasture.npp >= PLOUGH_NPP_FLOOR) {
+        stand = { ...stand, plants: [] };
+        field = site.furlongAngle;
       }
     }
 
     ready.push({
+      field,
       x,
       y,
       tc: axisTc,
@@ -1864,6 +1892,14 @@ export function drawFlora(
     const tile = groundTileFor(season, r.stand.flora.grassPerM2, pxPerM);
     if (tile === null) continue;
     if (drawGround(ctx, tile, r.x, r.y, pxPerM, r.tc, r.ts, halfM)) ground++;
+  }
+
+  // PASS ONE AND A HALF: the arable, over the turf and under everything that
+  // stands. A field is ground, not a thing on the ground.
+  let fields = 0;
+  for (const r of ready) {
+    if (r.field === null) continue;
+    if (drawStrips(ctx, r.x, r.y, pxPerM, r.tc, r.ts, r.field, week)) fields++;
   }
 
   // PASS TWO: everything standing on it.
@@ -1908,7 +1944,7 @@ export function drawFlora(
   }
 
   return {
-    cells, plants, hidden, ground, pastures, beasts, houses, folk,
+    cells, plants, hidden, ground, pastures, beasts, houses, folk, fields,
     texture: false,
   };
 }

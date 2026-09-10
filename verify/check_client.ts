@@ -487,7 +487,11 @@ console.log('  a village settled through the socket');
     + `elevation ${Math.round(ground.elevationM)} m`);
   console.log(`    lattice cells ${grew.cells}, pasture cells ${grew.pastures},`
     + ` plants ${grew.plants}, cattle ${grew.beasts}`);
-  console.log(`    houses ${grew.houses}, folk ${grew.folk}`);
+  console.log(`    houses ${grew.houses}, folk ${grew.folk}, field cells ${grew.fields}`);
+  if (grew.fields === 0) {
+    console.log('  A FARMING VILLAGE HAS NO FIELDS IN SIGHT. The arable pass broke.');
+    process.exit(1);
+  }
   if (grew.houses === 0) {
     console.log('  A VILLAGE OF TWENTY HAS NO ROOFS. The stead pass broke.');
     process.exit(1);

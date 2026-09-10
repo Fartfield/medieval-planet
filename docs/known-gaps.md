@@ -227,3 +227,24 @@ way down. Measured, before and after:
 
 See docs/fix-attempts.md for the two further faults this uncovered -- 89
 full-screen crowns, and a fiftyfold upscale of the biggest tree on screen.
+
+
+## A founding village ploughs a hundred hectares in its first week
+
+Surfaced by drawing the fields, which is what drawing things is for. The
+arable pass paints the disc the economy claims is worked -- labour times
+farmShare at the iron task rate -- and a fresh settlement of twenty, founding
+at farmShare 1, claims 108 hectares from its first turn. On screen that is
+every tree within 590 metres gone the moment the settle order lands, and the
+headless harness read it plainly: plants 0, field cells 88.
+
+The picture is honest; the claim is not. Breaking ground is real work the
+economy does not yet price for arable the way it prices woodland clearing
+(which has its own suite and its own delay). Until it does, the drawn
+township shrinks to truth only as the decide step trims farmShare toward
+need over the first turns.
+
+The fix is in the economy, not the renderer: ground newly under the plough
+should cost breaking labour before it yields, the way cleared woodland
+already costs its delay. When that lands, the drawn fields inherit it for
+free, because they read farmShare and population and nothing else.
