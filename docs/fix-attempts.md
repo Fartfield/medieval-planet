@@ -2863,3 +2863,17 @@ again.
 The habit, restated: an assertion with only a one-sided bound (`x < limit`)
 passes for free when the quantity collapses to zero. Pair it with a floor, or
 measure the thing and read the number.
+
+## A sheep on every ox
+
+Drawing the fold beside the byre, both flocks graze the same commons and
+`herdOn` hashed each beast's position from the same salt sequence -- so beast i
+of the flock landed on exactly the same square as beast i of the herd, a sheep
+standing on every ox. Caught by eye in the design, before it shipped, because
+the two herds share a cell and a spacing and therefore a hash.
+
+The fix is a per-species salt, from the mature mass rounded to a stable
+integer, folded into the position hash. Cattle and sheep now scatter into
+different places on the same patch -- a mixed common, which is what a medieval
+village grazed. It moved no baseline (nothing asserts a beast's absolute
+position) and the layer-5 drag held at 13 ms median with both flocks drawn.

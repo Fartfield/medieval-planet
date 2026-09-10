@@ -29,7 +29,10 @@ import {
 } from './flora_render.ts';
 import { fieldRadiusM, PLOUGH_NPP_FLOOR } from '../../sim/model/fields.ts';
 import { steadOf, type Stead as SteadPlan } from '../../sim/model/stead.ts';
-import { herdOn, cattleCarryPerHa, type Herd } from '../../sim/model/herd.ts';
+import {
+  herdOn, cattleCarryPerHa, sheepCarryPerHa, type Herd,
+} from '../../sim/model/herd.ts';
+import { SHEEP } from '../../sim/model/sheep.ts';
 import * as A from '../../sim/anchors.ts';
 import type { Patch } from '../../sim/geo/patch.ts';
 import {
@@ -1578,7 +1581,15 @@ export interface FloraDrawn {
  * the cattle on screen through a hard winter and you watch the delta's number
  * fall -- the picture and the simulation are the same herd.
  */
-export type Grazed = (mapIndex: number, cell: number) => number;
+/**
+ * How thickly a cell is grazed, per hectare, by each kind of stock.
+ *
+ * Two channels because a village keeps both, on one sward: the byre and the
+ * fold are drawn as separate flocks so a sheep reads as a sheep and an ox as
+ * an ox. Zero where nobody grazes.
+ */
+export interface Grazing { cattle: number; sheep: number; }
+export type Grazed = (mapIndex: number, cell: number) => Grazing;
 
 /** A settlement the renderer should build: where, who, and its own seed. */
 export interface SteadSite {
@@ -1790,7 +1801,8 @@ export function drawFlora(
   // the ground -- which is the third time that sentence has earned its place in
   // this file.
   const ready: {
-    x: number; y: number; tc: number; ts: number; stand: Stand; herd: Herd | null;
+    x: number; y: number; tc: number; ts: number; stand: Stand;
+    herd: Herd | null; flock: Herd | null;
     /** The furlong bearing, when this cell is under the plough. */
     field: number | null;
   }[] = [];
@@ -1800,7 +1812,7 @@ export function drawFlora(
     cells++;
 
     const key = i + '|' + j;
-    let grazedPerHa = 0;
+    let grazed3: Grazing = { cattle: 0, sheep: 0 };
     let pasture: { biome: number; npp: number } | null = null;
     let stand = standLattice.get(key) ?? null;
     {
@@ -1810,7 +1822,7 @@ export function drawFlora(
         standLattice.set(key, null);
         continue;
       }
-      grazedPerHa = grazed === null ? 0 : grazed(found.map, found.cell);
+      grazed3 = grazed === null ? { cattle: 0, sheep: 0 } : grazed(found.map, found.cell);
       pasture = { biome: m.biome[found.cell], npp: m.nppGm2[found.cell] };
     }
     if (!standLattice.has(key)) {
@@ -1870,21 +1882,22 @@ export function drawFlora(
       tc: axisTc,
       ts: axisTs,
       stand,
-      herd: grazedPerHa > 0 && pasture !== null
+      // The settlement's own herd and fold over its own commons, each never
+      // more than the ground itself could carry -- a starving village's beasts
+      // are in its yard being hand-fed, not thronging a moor.
+      herd: grazed3.cattle > 0 && pasture !== null
         ? herdOn({
-          biome: pasture.biome as never,
-          nppGm2: pasture.npp,
-          dirX: dx,
-          dirY: dy,
-          dirZ: dz,
-          radiusM,
-          spacingM: CROWN_GRID_M,
-          // The settlement's own herd over its own commons, never more than
-          // the ground itself could carry -- a starving village's beasts are
-          // in its yard being hand-fed, not thronging a moor that cannot
-          // feed them.
+          biome: pasture.biome as never, nppGm2: pasture.npp,
+          dirX: dx, dirY: dy, dirZ: dz, radiusM, spacingM: CROWN_GRID_M,
         }, undefined, undefined,
-        Math.min(grazedPerHa, cattleCarryPerHa(pasture.biome as never, pasture.npp)))
+        Math.min(grazed3.cattle, cattleCarryPerHa(pasture.biome as never, pasture.npp)))
+        : null,
+      flock: grazed3.sheep > 0 && pasture !== null
+        ? herdOn({
+          biome: pasture.biome as never, nppGm2: pasture.npp,
+          dirX: dx, dirY: dy, dirZ: dz, radiusM, spacingM: CROWN_GRID_M,
+        }, SHEEP, undefined,
+        Math.min(grazed3.sheep, sheepCarryPerHa(pasture.biome as never, pasture.npp)))
         : null,
     });
   }
@@ -1935,9 +1948,13 @@ export function drawFlora(
   let beasts = 0;
   let pastures = 0;
   for (const r of ready) {
-    if (r.herd === null) continue;
-    pastures++;
-    beasts += drawHerd(ctx, r.herd.beasts, r.x, r.y, pxPerM, r.tc, r.ts);
+    if (r.herd !== null) {
+      pastures++;
+      beasts += drawHerd(ctx, r.herd.beasts, r.x, r.y, pxPerM, r.tc, r.ts);
+    }
+    if (r.flock !== null) {
+      beasts += drawHerd(ctx, r.flock.beasts, r.x, r.y, pxPerM, r.tc, r.ts);
+    }
   }
 
   // PASS FOUR: the village, over everything -- roofs are the one thing here

@@ -24,8 +24,8 @@ import { MINERAL_NAMES } from '../../sim/model/resources.ts';
 import { ROCK_NAMES } from '../../sim/model/rock.ts';
 import { workedCells, radiusForPopulation } from '../../sim/model/settlement.ts';
 import { harvestWindow, weekOfYear } from '../../sim/model/season.ts';
-import { foundingHerd } from '../../sim/model/village_herd.ts';
-import { cattleCarryPerHa } from '../../sim/model/herd.ts';
+import { foundingHerd, foundingFlock } from '../../sim/model/village_herd.ts';
+import { cattleCarryPerHa, sheepCarryPerHa } from '../../sim/model/herd.ts';
 import { Mineral } from '../../sim/model/resources.ts';
 import { ironOutputKgPerYear, IRON_LABOUR_SAVING } from '../../sim/model/labour.ts';
 import { GRAIN_PER_PERSON_YEAR } from '../../sim/economy.ts';
@@ -362,7 +362,9 @@ export function selectedAddress(): number[] | null {
  * direction, and a drag redraws sixty times a second against a list that
  * changes only when somebody founds or abandons.
  */
-let grazerCache: { x: number; y: number; z: number; chord2: number; perHa: number }[] = [];
+let grazerCache: {
+  x: number; y: number; z: number; chord2: number; cattle: number; sheep: number;
+}[] = [];
 let grazerCacheStamp = -1;
 
 /** The settlements as stead sites, refreshed beside the grazers. */
@@ -373,9 +375,16 @@ function steadsOf(w: World): SteadSite[] {
   return steadCache;
 }
 
+/** The circle a herd of `head` occupies at the ground's carrying density, m. */
+function herdRadiusM(head: number, carryPerHa: number): number {
+  if (head <= 0) return 0;
+  const carry = Math.max(0.05, carryPerHa);
+  return Math.sqrt(((head / carry) * 10000) / Math.PI);
+}
+
 function grazersOf(
   w: World,
-): { x: number; y: number; z: number; chord2: number; perHa: number }[] {
+): { x: number; y: number; z: number; chord2: number; cattle: number; sheep: number }[] {
   const stamp = w.deltaCount * 100000 + (w.turn % 100000);
   if (stamp === grazerCacheStamp) return grazerCache;
   grazerCacheStamp = stamp;
@@ -385,7 +394,9 @@ function grazersOf(
   // ground tiles tile it.
   const groundArea = (4 * Math.PI * planetR * planetR)
     / (CELL_COUNT * Math.pow(SUBCELL_COUNT, GROUND_DEPTH - 1));
-  const out: { x: number; y: number; z: number; chord2: number; perHa: number }[] = [];
+  const out: {
+    x: number; y: number; z: number; chord2: number; cattle: number; sheep: number;
+  }[] = [];
   const sites: SteadSite[] = [];
   for (const d of w.allDeltas()) {
     const people = d.population ?? 0;
@@ -409,7 +420,6 @@ function grazersOf(
     // herd on the delta yet, so the founding herd -- the beasts that walked in
     // on the hoof -- stands in, and the first tick makes it real.
     const head = d.herdHead ?? foundingHerd(people);
-    if (head <= 0) continue;
     // A HERD IS A CLUMP, NOT A FIELD. Spread uniformly over a 270-hectare
     // commons, eight beasts are 0.03 a hectare and the village's own byre
     // shows not one cow -- which is how the first version drew it. A real
@@ -417,16 +427,20 @@ function grazersOf(
     // actually stand on a paddock; so the drawn herd occupies the circle that
     // holds it at the ground's own carrying density, near the village, and
     // the circle grows with the herd until it fills the commons.
+    const flock = d.flockHead ?? foundingFlock(people);
     const tile = w.tile(address);
-    const carry = Math.max(0.05, cattleCarryPerHa(tile.biome, tile.nppGm2));
-    const herdR = Math.sqrt(((head / carry) * 10000) / Math.PI);
-    // Never tighter than a byre-yard, so a lone ox is still somewhere.
-    const grazeM = Math.max(60, Math.min(reachM, herdR));
+    // Both flocks clump together at the byre, so one graze circle holds them
+    // -- sized by the beasts that need the most ground, so a lone ox is still
+    // somewhere and a big flock still spreads.
+    const cattleR = herdRadiusM(head, cattleCarryPerHa(tile.biome, tile.nppGm2));
+    const sheepR = herdRadiusM(flock, sheepCarryPerHa(tile.biome, tile.nppGm2));
+    const grazeM = Math.max(60, Math.min(reachM, Math.max(cattleR, sheepR)));
     const grazeChord = grazeM / planetR;
     const grazeHa = (Math.PI * grazeM * grazeM) / 10000;
     out.push({
       x: dir[0], y: dir[1], z: dir[2], chord2: grazeChord * grazeChord,
-      perHa: grazeHa > 0 ? head / grazeHa : 0,
+      cattle: grazeHa > 0 ? head / grazeHa : 0,
+      sheep: grazeHa > 0 ? flock / grazeHa : 0,
     });
   }
   grazerCache = out;
@@ -861,23 +875,25 @@ function draw(): void {
       String(path[0]),
       (mapIndex, cell) => {
         const m = nearby[mapIndex];
-        if (m === undefined || cell < 0 || cell >= m.patch.count) return 0;
+        if (m === undefined || cell < 0 || cell >= m.patch.count) return { cattle: 0, sheep: 0 };
         const x = m.dirs[cell * 3];
         const y = m.dirs[cell * 3 + 1];
         const z = m.dirs[cell * 3 + 2];
-        // Where two settlements' commons overlap the thicker herd answers,
-        // which is one herd standing where two could -- a mild lie in the
-        // rare overlap, against double-drawing both.
-        let perHa = 0;
+        // Where two settlements' commons overlap the thicker stock answers,
+        // one flock standing where two could -- a mild lie in the rare overlap
+        // against double-drawing both.
+        let cattle = 0;
+        let sheep = 0;
         for (const g of grazers) {
           const dx = x - g.x;
           const dy = y - g.y;
           const dz = z - g.z;
-          if (dx * dx + dy * dy + dz * dz <= g.chord2 && g.perHa > perHa) {
-            perHa = g.perHa;
+          if (dx * dx + dy * dy + dz * dz <= g.chord2) {
+            if (g.cattle > cattle) cattle = g.cattle;
+            if (g.sheep > sheep) sheep = g.sheep;
           }
         }
-        return perHa;
+        return { cattle, sheep };
       }, steads);
     lastFlora = grew;
   }
@@ -1249,14 +1265,30 @@ function supplyPanel(w: World, address: number[], population: number): string {
     if (head < 0.5) return '<span class="none">no beasts</span>';
     const condition = d?.herdCondition ?? 1;
     const hay = d?.hayKg ?? 0;
-    return `${head.toFixed(1)} head at ${condition.toFixed(2)} &mdash; `
+    return `${head.toFixed(1)} cattle at ${condition.toFixed(2)} &mdash; `
       + `${Math.round(hay).toLocaleString('en')} kg hay`;
+  };
+  const flockRow = (world: World, addr: number[], people: number): string => {
+    const d = world.getDelta(addr);
+    const flock = d?.flockHead ?? foundingFlock(people);
+    if (flock < 0.5) return '<span class="none">no sheep</span>';
+    const condition = d?.flockCondition ?? 1;
+    return `${flock.toFixed(0)} sheep at ${condition.toFixed(2)}`;
+  };
+  const clothRow = (world: World, addr: number[]): string => {
+    const d = world.getDelta(addr);
+    const wool = d?.woolKg ?? 0;
+    const cloth = d?.clothM2 ?? 0;
+    if (wool < 0.5 && cloth < 0.5) return '<span class="none">nothing woven yet</span>';
+    return `${Math.round(cloth)} m² cloth &middot; ${wool.toFixed(1)} kg wool in store`;
   };
 
   return `<div class="group">WHAT IT LIVES ON</div><table>
     ${row('condition', `<b style="color:${months >= 3 ? '#7ba05b' : '#d0563a'}">${state}</b>`)}
     ${row('granary', `${Math.round(grainStock).toLocaleString('en')} kg &mdash; ${months.toFixed(1)} months`)}
     ${row('herd', herdRow(w, address, population))}
+    ${row('fold', flockRow(w, address, population))}
+    ${row('cloth', clothRow(w, address))}
     ${row('next harvest', (() => {
       const t = w.tile(address);
       const win = harvestWindow(t.temperatureC, t.dir[1]);

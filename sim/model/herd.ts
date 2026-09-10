@@ -26,6 +26,7 @@ import { uniformAt } from '../gen/noise.ts';
 import { type BiomeId } from './biome.ts';
 import { type Animal, massAtAge } from './animal.ts';
 import { CATTLE } from './cattle.ts';
+import { SHEEP } from './sheep.ts';
 import { stockingUnitsPerHa } from './pasture.ts';
 
 /** One beast, standing somewhere. */
@@ -86,6 +87,11 @@ export function beastsPerHa(a: Animal, biome: BiomeId, npp: number): number {
 /** The default herd's carrying density on this ground, for the clamp above. */
 export function cattleCarryPerHa(biome: BiomeId, npp: number): number {
   return beastsPerHa(CATTLE, biome, npp);
+}
+
+/** The default flock's carrying density on this ground, for the clamp. */
+export function sheepCarryPerHa(biome: BiomeId, npp: number): number {
+  return beastsPerHa(SHEEP, biome, npp);
 }
 
 /** What a patch of ground is asked about. */
@@ -150,8 +156,12 @@ export function herdOn(
   if (n > limit) { omitted = n - limit; n = limit; }
 
   const meanAge = meanHerdAgeYears(animal);
+  // A per-species salt, so a fold and a byre grazing the same patch stand in
+  // different places rather than a sheep on every ox: the mass rounds to a
+  // stable integer that differs between the species.
+  const speciesSalt = Math.round(animal.matureMassKg) * 0x9E37;
   for (let i = 0; i < n; i++) {
-    const salt = 0xB1A5 + i * 7919;
+    const salt = 0xB1A5 + speciesSalt + i * 7919;
     const u = field(g.dirX, g.dirY, g.dirZ, scale, salt);
     const v = field(g.dirX, g.dirY, g.dirZ, scale, salt + 1);
     const w = field(g.dirX, g.dirY, g.dirZ, scale, salt + 2);
