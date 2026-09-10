@@ -337,4 +337,56 @@ export const GRASS: Species = {
   ],
 };
 
-export const SPECIES: readonly Species[] = [OAK, HAZEL, BRAMBLE, WHEAT, CARROT, GRASS];
+// --- flax --------------------------------------------------------------------
+
+/**
+ * The seventh, and the one a shirt comes from.
+ *
+ * Flax is two crops in one plant, which is why it was worth its fussy
+ * husbandry: the STEM carries the bast fibre that rets and spins into linen,
+ * and the SEED is linseed, a third of it oil -- the lamp, the paint and the
+ * strongest feed a plough ox got. The fibre is not a separate part: it is
+ * the stem's own cellulose, running in long bundles under the bark, and
+ * retting -- controlled rot in the village pond -- is what lets it go.
+ *
+ * A flax plant is a reed of a thing: sown thick at two thousand to the
+ * square metre so it grows a metre up and nothing out, because branching
+ * ruins the fibre. Mass and stature are the crop literature's: two to three
+ * grammes a plant, three to four tonnes of straw a hectare.
+ */
+export const FLAX: Species = {
+  name: 'flax',
+  habit: Habit.Herb,
+  lifespanYears: 1,
+  matureMassKg: 0.0025,
+  // An annual in a hurry: half its mass in about ten weeks.
+  growthRate: 5.2,
+  matureSpreadM: 0.03,
+  matureHeightM: 0.95,
+  stems: 1,
+  germination: { minTempC: 5, chillWeeks: 0, weeklyOdds: 0.8, seedlingSurvival: 0.85 },
+  parts: [
+    { part: Part.Root, share: 0.12, densityKgM3: 420, pigment: WOOD_PALE, phenology: { from: 12, to: 34 },
+      composition: mix({ water: 0.60, cellulose: 0.22, lignin: 0.08, protein: 0.03, sugar: 0.04, ash: 0.03 }) },
+    // THE STEM IS THE CROP: bast cellulose in long bundles around a woody
+    // core. High cellulose, low lignin -- which is exactly why it rets in
+    // days where a wheat straw would take a season, and why the fibre is
+    // worth the pond's stink.
+    { part: Part.Branch, share: 0.55, densityKgM3: 380, pigment: STRAW, phenology: { from: 14, to: 34 },
+      composition: mix({ water: 0.14, cellulose: 0.56, lignin: 0.09, sugar: 0.13, protein: 0.03, ash: 0.05 }) },
+    { part: Part.Leaf, share: 0.15, densityKgM3: 340, pigment: GREEN, phenology: { from: 13, to: 30 },
+      composition: mix({ water: 0.70, cellulose: 0.12, lignin: 0.04, protein: 0.06, sugar: 0.03, ash: 0.05 }) },
+    // The famous blue morning field. The pigment model has no true blue --
+    // anthocyanin is as near as a plant gets -- so the flower draws lilac,
+    // which a field of flax at forty paces honestly is.
+    { part: Part.Flower, share: 0.03, densityKgM3: 320, pigment: BLACK_FRUIT, phenology: { from: 24, to: 28 },
+      composition: mix({ water: 0.72, cellulose: 0.10, lignin: 0.03, sugar: 0.08, protein: 0.04, ash: 0.03 }) },
+    // Linseed: a third oil, which is the lamp and the paint and the linimen.
+    { part: Part.Seed, share: 0.12, densityKgM3: 1100, pigment: BARK_BROWN, phenology: { from: 28, to: 34 },
+      composition: mix({ water: 0.08, oil: 0.36, protein: 0.20, cellulose: 0.18, lignin: 0.04, starch: 0.06, sugar: 0.04, ash: 0.04 }) },
+    { part: Part.Husk, share: 0.03, densityKgM3: 300, pigment: STRAW, phenology: { from: 28, to: 34 },
+      composition: mix({ water: 0.10, cellulose: 0.40, lignin: 0.22, sugar: 0.18, protein: 0.03, ash: 0.07 }) },
+  ],
+};
+
+export const SPECIES: readonly Species[] = [OAK, HAZEL, BRAMBLE, WHEAT, CARROT, GRASS, FLAX];

@@ -204,3 +204,134 @@ export function frameTimberKg(floorM2: number, woodDensityKgM3: number): number 
 export function timberDensityKgM3(bole: Pile): number {
   return density(materialOf(bole));
 }
+
+// --- the textile trades -------------------------------------------------------
+//
+// Fleece to cloth is four verbs, and the famous fact about them is a RATIO:
+// it took seven spinners to keep one weaver in yarn, and whole counties
+// spun. That ratio is not written anywhere below -- the shears, the pond,
+// the spindle and the loom each get their own measured day-rate, and the
+// seven-to-one has to EMERGE from the spindle's rate against the loom's, or
+// one of the rates is wrong. verify_textile holds it to that.
+
+import { SHEEP, FLEECE_KG_PER_YEAR, GREASY_WOOL, FLEECE_BULK_KG_M3 } from './sheep.ts';
+
+/**
+ * What scouring takes out of a greasy fleece: the lanolin, the suint and
+ * the field. Measured at a quarter to two fifths of the weight; the grease
+ * was itself kept -- lanolin waterproofed everything a shepherd owned.
+ */
+export const SCOURING_YIELD = 0.7;
+
+/**
+ * A day at the drop spindle, kg of yarn.
+ *
+ * The slowest step in every textile economy before the wheel: eighty
+ * grammes of even yarn is a long day's spinning, and it is why spinning
+ * was every woman's second task every evening there was light.
+ */
+export const SPIN_KG_PER_DAY = 0.08;
+
+/**
+ * A day at the warp-weighted loom, kg of cloth woven from ready yarn.
+ *
+ * A narrow loom's weaver beat in a few metres of cloth a day; at the weight
+ * of ordinary weft that is a bit over half a kilogramme. Seven spindle-days
+ * to one loom-day falls out of this rate against the spindle's, which is
+ * the ratio the sources repeat for six centuries.
+ */
+export const WEAVE_KG_PER_DAY = 0.6;
+
+/** Ordinary cloth, kg the square metre. Broadcloth ran three to four fifths. */
+export const CLOTH_KG_PER_M2 = 0.35;
+
+/**
+ * Water retting, days in the pond.
+ *
+ * The pectin gumming the bast to the core ferments out in a week or two of
+ * warm water -- the stem's own low lignin is why flax rets in days while
+ * straw would take a season. The pond stank enough that retting was banned
+ * upstream of towns, which is as measured as a process gets.
+ */
+export const RETTING_DAYS = 10;
+
+/** Long fibre out of retted straw: an eighth to a fifth. The rest is shive. */
+export const FIBRE_YIELD = 0.15;
+
+/** A sheep's year of wool, as a pile ready for the sack. */
+export function shear(count: number): Pile {
+  return {
+    from: SHEEP.name,
+    what: 'greasy wool',
+    composition: GREASY_WOOL,
+    densityKgM3: FLEECE_BULK_KG_M3,
+    massKg: count * FLEECE_KG_PER_YEAR,
+    moisture: GREASY_WOOL.water,
+  };
+}
+
+/** Scoured wool: the fibre without its grease, ready for the spindle. */
+export function scour(greasy: Pile): { clean: Pile; greaseKg: number } {
+  const clean: Pile = {
+    ...greasy,
+    what: 'wool',
+    massKg: greasy.massKg * SCOURING_YIELD,
+    // Scouring takes the oil: what is left is nearly all keratin.
+    composition: {
+      ...greasy.composition,
+      oil: greasy.composition.oil * 0.15,
+      protein: greasy.composition.protein + greasy.composition.oil * 0.85,
+    },
+  };
+  return { clean, greaseKg: greasy.massKg * (1 - SCOURING_YIELD) };
+}
+
+/**
+ * Ret a pile of flax straw: the pond lets the bast go.
+ *
+ * Returns the fibre and the shive separately, because the shive is not
+ * waste -- it is kindling and litter -- and because nothing in this project
+ * is allowed to vanish.
+ */
+export function ret(straw: Pile): { fibre: Pile; shive: Pile } {
+  const fibre: Pile = {
+    ...straw,
+    what: 'flax fibre',
+    massKg: straw.massKg * FIBRE_YIELD,
+    // The fibre is the stem's cellulose with the gums fermented off.
+    composition: {
+      ...straw.composition,
+      cellulose: 0.80,
+      sugar: 0.02,
+      lignin: 0.02,
+      water: 0.12,
+      protein: 0.02,
+      ash: 0.02,
+      starch: 0,
+      oil: 0,
+      tannin: 0,
+    },
+    densityKgM3: 300,
+  };
+  const shive: Pile = {
+    ...straw,
+    what: 'shive',
+    massKg: straw.massKg * (1 - FIBRE_YIELD),
+  };
+  return { fibre, shive };
+}
+
+/** Days of spinning to turn this much fibre into yarn. */
+export function spinningDays(fibreKg: number): number {
+  return fibreKg / SPIN_KG_PER_DAY;
+}
+
+/** Days at the loom for this much yarn. */
+export function weavingDays(yarnKg: number): number {
+  return yarnKg / WEAVE_KG_PER_DAY;
+}
+
+/** Cloth from yarn, square metres. Weaving wastes little; spinning wasted less. */
+export function clothM2(yarnKg: number): number {
+  return yarnKg / CLOTH_KG_PER_M2;
+}
