@@ -66,7 +66,7 @@ function found(world: World, addr: number[], mode: Mode): FoundingRun {
     ...(mode === 'suite-seeded'
       ? {}
       : { grainStock: 20 * A.PORTER_LOAD_KG + carts * A.CART_LOAD_KG }),
-    ...(mode === 'founding' ? { brokenHa: 0 } : {}),
+    ...(mode === 'founding' ? { brokenHa: 0, hayKg: 0, standingKg: 0 } : {}),
   });
   const run: FoundingRun = {
     survivors: 0, lowestHealth: 1, herdGoneTurn: -1, popAtHerdGone: -1,

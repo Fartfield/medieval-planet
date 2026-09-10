@@ -207,6 +207,13 @@ export interface TileDelta {
    * with nobody there to see it is complete by the time anyone returns.
    */
   wildShare?: number;
+  /** The sheep flock, head. Fractional like the herd. */
+  flockHead?: number;
+  flockCondition?: number;
+  /** The wool store, kg greasy, waiting for the evenings. */
+  woolKg?: number;
+  /** The village's cloth, m2. What wears out and what the spinning replaces. */
+  clothM2?: number;
   /** Iron in hand, kg. A year's wear is the target. */
   ironStock?: number;
   /**

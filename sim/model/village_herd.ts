@@ -26,6 +26,8 @@ import * as A from '../anchors.ts';
 import { atMoisture, foodKcalPerKg } from './material.ts';
 import { needKcalPerDay, lifespanYears } from './animal.ts';
 import { CATTLE } from './cattle.ts';
+import { SHEEP } from './sheep.ts';
+import { type Animal } from './animal.ts';
 import { harvest, compositionOf, digestibleKcalPerKg } from './process.ts';
 import { GRASS } from './species.ts';
 import { Part } from './plant.ts';
@@ -34,7 +36,7 @@ import {
   STANDING_LOSS_PER_WEEK,
 } from './husbandry.ts';
 import {
-  growingWeeks, harvestWindow, inWindow, isGrowing, WEEKS_PER_YEAR,
+  growingWeeks, harvestWindow, inWindow, isGrowing, isWeek, WEEKS_PER_YEAR,
 } from './season.ts';
 
 /** The herd's feeds, from the plant models rather than written here. */
@@ -46,17 +48,29 @@ const HAY_KCAL_PER_KG = digestibleKcalPerKg(HAY_C, CATTLE.digestion);
 
 /**
  * What a kilogramme of live beast yields as food, kcal, across the edible
- * tissues at their sheet shares. About 1,560 for cattle -- the whole-carcass
- * figure the slaughter suite measures per beast, per kilogramme.
+ * tissues at their sheet shares -- about 1,560 for cattle, and asked of the
+ * sheet rather than remembered, so the sheep answers for herself.
  */
-const EDIBLE_KCAL_PER_LIVE_KG = CATTLE.tissues
-  .filter((t) => t.edible)
-  .reduce((a, t) => a + t.share * foodKcalPerKg(t.composition), 0);
+function ediblePerLiveKg(a: Animal): number {
+  return a.tissues
+    .filter((t) => t.edible)
+    .reduce((x, t) => x + t.share * foodKcalPerKg(t.composition), 0);
+}
 
-const HIDE_SHARE = CATTLE.tissues.find((t) => t.name === 'hide')?.share ?? 0;
-const MILK_KCAL_PER_KG = foodKcalPerKg(
-  CATTLE.tissues.find((t) => t.name === 'milk')!.composition,
-);
+/** The skin, whatever the species calls it: the tanner takes both. */
+function skinShare(a: Animal): number {
+  return a.tissues.find((t) => t.name === 'hide' || t.name === 'pelt')?.share ?? 0;
+}
+
+function milkKcalPerKg(a: Animal): number {
+  const spec = a.tissues.find((t) => t.name === 'milk');
+  return spec === undefined ? 0 : foodKcalPerKg(spec.composition);
+}
+
+/** Births per head per year at full condition, from the sheet's own shares. */
+function birthsPerHeadYear(a: Animal): number {
+  return 0.5 * 0.6 * a.littersPerYear * a.litterSize;
+}
 
 /**
  * The founding herd: a yoke per family, driven in on the hoof.
@@ -69,6 +83,17 @@ export const FOUNDING_BEASTS_PER_FAMILY = 2;
 
 export function foundingHerd(population: number): number {
   return Math.max(0, (population / 5) * FOUNDING_BEASTS_PER_FAMILY);
+}
+
+/**
+ * And the flock walks in beside them: five ewes a family, which is what a
+ * smallholder actually kept -- the Domesday cottar's handful, enough for
+ * the household's cloth with a fleece or two over.
+ */
+export const FOUNDING_EWES_PER_FAMILY = 5;
+
+export function foundingFlock(population: number): number {
+  return Math.max(0, (population / 5) * FOUNDING_EWES_PER_FAMILY);
 }
 
 /**
@@ -93,9 +118,6 @@ const MEADOW_SHARE = 0.5;
  */
 const FERTILE_CONDITION = 0.85;
 
-/** Births per head per year at full condition, from the herd model's shares. */
-const BIRTHS_PER_HEAD_YEAR = 0.5 * 0.6 * CATTLE.littersPerYear * CATTLE.litterSize;
-
 /**
  * Whether this week is in the mowing half of the growing season.
  *
@@ -103,21 +125,70 @@ const BIRTHS_PER_HEAD_YEAR = 0.5 * 0.6 * CATTLE.littersPerYear * CATTLE.litterSi
  * is dead -- because deriving it from the harvest window's end put the mowing
  * season in the first weeks of WINTER, which is a scythe in the snow.
  */
-function inMowingSeason(
-  annualMeanC: number, sinLat: number, week: number, growing: number,
-): boolean {
+export function seasonStartWeek(annualMeanC: number, sinLat: number): number {
   const W = Math.floor(WEEKS_PER_YEAR);
-  let seasonStart = -1;
   for (let w = 0; w < W; w++) {
     if (isGrowing(annualMeanC, sinLat, w)
       && !isGrowing(annualMeanC, sinLat, (w - 1 + W) % W)) {
-      seasonStart = w;
-      break;
+      return w;
     }
   }
+  return -1;
+}
+
+function inMowingSeason(
+  annualMeanC: number, sinLat: number, week: number, growing: number,
+): boolean {
+  const seasonStart = seasonStartWeek(annualMeanC, sinLat);
   if (seasonStart < 0) return false;
+  const W = Math.floor(WEEKS_PER_YEAR);
   const into = (((week - seasonStart) % W) + W) % W;
   return into < growing / 2;
+}
+
+/** Non-growing weeks between this week and the next green one. */
+export function winterWeeksLeft(
+  annualMeanC: number, sinLat: number, week: number,
+): number {
+  const W = Math.floor(WEEKS_PER_YEAR);
+  let n = 0;
+  for (let i = 0; i < W; i++) {
+    const w = (((week + i) % W) + W) % W;
+    if (isGrowing(annualMeanC, sinLat, w)) break;
+    n++;
+  }
+  return n;
+}
+
+/**
+ * The barn an established farm holds at this week of the year: the winter
+ * that remains, priced at the herd's need and the hay's worth.
+ *
+ * This is the established-settlement convention -- missing means the season
+ * left things as a farm would have them -- extended to fodder, and it was
+ * extended the hard way: a suite seeded an "established" village in
+ * mid-winter, the old default gave it an empty barn and a dead sward, and
+ * both its herds starved for fifteen weeks in front of a full granary. The
+ * sheep died fastest, being smallest, which is real and was still wrong.
+ */
+export function establishedBarnKg(
+  headNeedKcalPerDay: number, annualMeanC: number, sinLat: number, week: number,
+): number {
+  const left = winterWeeksLeft(annualMeanC, sinLat, week);
+  return (headNeedKcalPerDay * 7 * left) / Math.max(1, HAY_KCAL_PER_KG);
+}
+
+/**
+ * The shearing, a third of the way through the growing season: the flock
+ * was washed in the June stream and shorn when the weather could be trusted
+ * not to kill a naked ewe -- after the cold, before the harvest wanted
+ * every hand.
+ */
+export function shearingWeek(annualMeanC: number, sinLat: number): number {
+  const start = seasonStartWeek(annualMeanC, sinLat);
+  if (start < 0) return -1;
+  const growing = growingWeeks(annualMeanC, sinLat);
+  return (start + Math.round(growing / 3)) % Math.floor(WEEKS_PER_YEAR);
 }
 
 /** The herd's state as the delta carries it. */
@@ -170,18 +241,20 @@ export interface Distress {
  * go into the pot, and condition gates the calves that would have replaced
  * them.
  */
-export function distressSlaughter(state: VillageHerd, kcalWanted: number): Distress {
+export function distressSlaughter(
+  a: Animal, state: VillageHerd, kcalWanted: number,
+): Distress {
   const none: Distress = { herd: { ...state }, eaten: 0, foodKcal: 0, hidesKg: 0 };
   if (kcalWanted <= 0 || state.head <= 0) return none;
-  const perBeastKg = herdMeanMassKg(CATTLE) * Math.max(0.3, state.condition);
-  const perBeastKcal = perBeastKg * EDIBLE_KCAL_PER_LIVE_KG;
+  const perBeastKg = herdMeanMassKg(a) * Math.max(0.3, state.condition);
+  const perBeastKcal = perBeastKg * ediblePerLiveKg(a);
   if (perBeastKcal <= 0) return none;
   const eaten = Math.min(state.head, kcalWanted / perBeastKcal);
   return {
     herd: { ...state, head: state.head - eaten },
     eaten,
     foodKcal: eaten * perBeastKcal,
-    hidesKg: eaten * perBeastKg * HIDE_SHARE,
+    hidesKg: eaten * perBeastKg * skinShare(a),
   };
 }
 
@@ -194,6 +267,7 @@ export function distressSlaughter(state: VillageHerd, kcalWanted: number): Distr
  * that is a known gap, honest here rather than hidden.
  */
 export function villageHerdWeek(
+  a: Animal,
   state: VillageHerd,
   annualForageKg: number,
   annualMeanC: number,
@@ -207,7 +281,7 @@ export function villageHerdWeek(
 
   const growing = growingWeeks(annualMeanC, sinLat);
   const winterWeeks = Math.max(0, WEEKS_PER_YEAR - growing);
-  const meanMass = herdMeanMassKg(CATTLE) * state.condition;
+  const meanMass = herdMeanMassKg(a) * state.condition;
 
   // THE SWARD. Growth lands in growing weeks; the standing crop weathers.
   let standing = state.standingKg
@@ -247,7 +321,7 @@ export function villageHerdWeek(
   const offeredFresh = (Math.max(0, standing) * A.PASTURE_UTILISATION)
     / (1 - GRASS_C.water);
   const out = herdWeek(
-    CATTLE,
+    a,
     { head: state.head, condition: state.condition },
     GRASS_C,
     offeredFresh,
@@ -266,17 +340,17 @@ export function villageHerdWeek(
   // BIRTHS, gated on condition -- a thin cow does not cycle -- and OLD AGE,
   // at the lifespan's own hazard. Both weekly shares of annual rates.
   if (condition >= FERTILE_CONDITION) {
-    head += (head * BIRTHS_PER_HEAD_YEAR) / WEEKS_PER_YEAR;
+    head += (head * birthsPerHeadYear(a)) / WEEKS_PER_YEAR;
   }
-  head -= head / (lifespanYears(CATTLE.matureMassKg) * WEEKS_PER_YEAR);
+  head -= head / (lifespanYears(a.matureMassKg) * WEEKS_PER_YEAR);
 
   // MILK, through the growing season: calves come with the grass and the
   // cows dry off when it stops, which is what a landrace herd did.
   let foodKcal = 0;
   if (isGrowing(annualMeanC, sinLat, week) && growing > 0) {
     const inMilk = head * 0.5 * 0.6 * Math.min(1, condition);
-    const kgThisWeek = (inMilk * CATTLE.milkLitresPerYear * 1.03) / growing;
-    foodKcal += kgThisWeek * MILK_KCAL_PER_KG;
+    const kgThisWeek = (inMilk * a.milkLitresPerYear * 1.03) / growing;
+    foodKcal += kgThisWeek * milkKcalPerKg(a);
   }
 
   // THE CULL, in the last week of the harvest window: slaughter down to what
@@ -284,14 +358,14 @@ export function villageHerdWeek(
   // derived calendar puts it, and the reason autumn was the season of meat.
   let culled = 0;
   let hidesKg = 0;
-  if (ripening !== null && week === ripening.to && winterWeeks > 0) {
-    const perHeadWinterKcal = needKcalPerDay(herdMeanMassKg(CATTLE)) * 7 * winterWeeks;
+  if (ripening !== null && isWeek(week, ripening.to) && winterWeeks > 0) {
+    const perHeadWinterKcal = needKcalPerDay(herdMeanMassKg(a)) * 7 * winterWeeks;
     const winterable = (hayKg * HAY_KCAL_PER_KG) / Math.max(1, perHeadWinterKcal);
     culled = Math.max(0, head - winterable);
     if (culled > 0) {
-      const liveKg = culled * herdMeanMassKg(CATTLE) * condition;
-      foodKcal += liveKg * EDIBLE_KCAL_PER_LIVE_KG;
-      hidesKg = liveKg * HIDE_SHARE;
+      const liveKg = culled * herdMeanMassKg(a) * condition;
+      foodKcal += liveKg * ediblePerLiveKg(a);
+      hidesKg = liveKg * skinShare(a);
       head -= culled;
     }
   }

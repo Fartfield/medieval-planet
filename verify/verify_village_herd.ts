@@ -18,6 +18,7 @@
 import {
   villageHerdWeek, foundingHerd, type VillageHerd,
 } from '../sim/model/village_herd.ts';
+import { CATTLE as CATTLE_A } from '../sim/model/cattle.ts';
 import { CATTLE } from '../sim/model/cattle.ts';
 import { herdMeanMassKg } from '../sim/model/husbandry.ts';
 import { needKcalPerDay } from '../sim/model/animal.ts';
@@ -71,7 +72,7 @@ function farm(
       minCondition: Infinity, foodKcal: 0,
     };
     for (let w = 0; w < W; w++) {
-      const out = villageHerdWeek(herd, forageKg, meanC, sinLat, w);
+      const out = villageHerdWeek(CATTLE_A, herd, forageKg, meanC, sinLat, w);
       herd = out.herd;
       if (herd.hayKg < 0 || herd.standingKg < 0 || herd.head < 0) {
         throw new Error(`negative stock in year ${y} week ${w}`);
@@ -182,6 +183,7 @@ suite('the village herd', () => {
 
   // No herd is quietly conjured: a byre with nothing in it stays empty.
   const empty = villageHerdWeek(
+    CATTLE_A,
     { head: 0, condition: 1, hayKg: 0, standingKg: 0 },
     FORAGE_KG, MEAN_C, SIN_LAT, 20,
   );

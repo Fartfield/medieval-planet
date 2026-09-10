@@ -370,6 +370,8 @@ export function applyExpansion(world: World, result: ExpansionResult): Set<strin
       // ground is broken yet.
       farmShare: 1,
       brokenHa: 0,
+      hayKg: 0,
+      standingKg: 0,
     });
     touched.add(toKey(f.site));
   }

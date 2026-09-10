@@ -47,6 +47,26 @@ export function weekOfYear(turn: number): number {
 }
 
 /**
+ * Does this week LAND ON a target week of the calendar?
+ *
+ * Not equality, and the difference silenced the Michaelmas cull for every
+ * year but a world's first. The year is 52.18 weeks, so integer turns give
+ * fractional weeks -- 26.000 in the year the count happens to align, 26.821
+ * the next, 26.643 after that -- and `week === 26` fires exactly once in a
+ * world's life. Measured: one shearing in three years, and the autumn cull
+ * quietly absent from every established settlement while their herds
+ * equilibrated by starvation instead.
+ *
+ * A yearly event happens on the turn that CROSSES its week: the one whose
+ * week lies within one turn past the target. Exactly one such turn a year,
+ * whatever the fraction.
+ */
+export function isWeek(week: number, target: number): boolean {
+  const diff = (((week - target) % WEEKS_PER_YEAR) + WEEKS_PER_YEAR) % WEEKS_PER_YEAR;
+  return diff < 1;
+}
+
+/**
  * The sun's declination for a week, radians.
  *
  * How far north or south of the equator the sun stands overhead. Runs from

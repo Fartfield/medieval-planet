@@ -38,11 +38,19 @@ import { ironOutputKgPerYear, ironLimit, hectareDays } from './model/labour.ts';
 import { clear, stockTarget, spoil, type Trader, type Flow } from './model/trade.ts';
 import { navigable } from './gen/hydrology.ts';
 import {
-  weekOfYear, harvestWindow, inWindow, HARVEST_SPAN_WEEKS,
+  weekOfYear, harvestWindow, inWindow, isWeek, HARVEST_SPAN_WEEKS,
 } from './model/season.ts';
 import {
-  villageHerdWeek, foundingHerd, distressSlaughter, type VillageHerd,
+  villageHerdWeek, foundingHerd, foundingFlock, distressSlaughter,
+  shearingWeek, establishedBarnKg, type VillageHerd,
 } from './model/village_herd.ts';
+import { CATTLE } from './model/cattle.ts';
+import { SHEEP, FLEECE_KG_PER_YEAR } from './model/sheep.ts';
+import { herdMeanMassKg } from './model/husbandry.ts';
+import { needKcalPerDay } from './model/animal.ts';
+import {
+  SPIN_KG_PER_DAY, WEAVE_KG_PER_DAY, CLOTH_KG_PER_M2,
+} from './model/craft.ts';
 import { breakingDaysPerHa, HELD_HECTARE_DAYS_IRON } from './model/labour.ts';
 import { huntWeek, regrowWeek } from './model/wildfood.ts';
 import { WHEAT } from './model/species.ts';
@@ -92,6 +100,15 @@ export interface Report {
   herdCulled: number;
   /** Beasts eaten out of hunger this week, which is a different thing. */
   herdEaten: number;
+  /** The sheep flock, head, after this week. */
+  flockHead: number;
+  flockCondition: number;
+  /** Ewes eaten out of hunger this week -- they go to the pot first. */
+  flockEaten: number;
+  /** The wool store, kg greasy. */
+  woolKg: number;
+  /** The wardrobe: cloth in the village, m2. */
+  clothM2: number;
   /** Hay in the barn, kg. */
   hayKg: number;
   /** Milk and meat off the herd this week, as grain-equivalent kg. */
@@ -280,22 +297,76 @@ export function runEconomy(world: World): EconomyResult {
 
     const catchment = world.catchmentFor(address, population);
 
-    // THE HERD'S WEEK. It grazes the same catchment the fields are cut from,
-    // makes its hay in early summer, is culled to the barn at the close of the
-    // harvest window, and its milk and cull meat join the village's food as
-    // grain-equivalent kilogrammes. A founding's herd walked in on the hoof.
-    const herdBefore: VillageHerd = {
-      head: delta.herdHead ?? foundingHerd(population),
+    // THE BYRE AND THE FOLD SHARE ONE SWARD. The cattle and the sheep graze
+    // the same catchment and winter from the same barn, so the pasture and
+    // the hay are split by metabolic demand -- the sward does not care whose
+    // mouth it goes into -- each species runs its own week, and the pools
+    // recombine. A founding drove both in: a yoke of oxen and five ewes a
+    // family.
+    const cattleBefore = delta.herdHead ?? foundingHerd(population);
+    const flockBefore = delta.flockHead ?? foundingFlock(population);
+    const cattleNeed = cattleBefore
+      * needKcalPerDay(herdMeanMassKg(CATTLE) * (delta.herdCondition ?? 1));
+    const flockNeed = flockBefore
+      * needKcalPerDay(herdMeanMassKg(SHEEP) * (delta.flockCondition ?? 1));
+    const totalNeed = cattleNeed + flockNeed;
+    const cattleShare = totalNeed > 0 ? cattleNeed / totalNeed : 1;
+
+    // Missing means ESTABLISHED, for the barn as for the granary: a farm
+    // seeded without a record holds the hay its remaining winter needs,
+    // because no real farm stands in January with an empty barn and a live
+    // herd. Foundings set both to zero explicitly and own their first
+    // winter's want.
+    const hayPool = delta.hayKg
+      ?? establishedBarnKg(totalNeed, tile.temperatureC, tile.dir[1], week);
+    const standingPool = delta.standingKg ?? 0;
+
+    const herdWeekOut = villageHerdWeek(CATTLE, {
+      head: cattleBefore,
       condition: delta.herdCondition ?? 1,
-      hayKg: delta.hayKg ?? 0,
-      standingKg: delta.standingKg ?? 0,
-    };
-    const herdWeekOut = villageHerdWeek(
-      herdBefore, catchment.forageKgPerYear, tile.temperatureC, tile.dir[1], week,
-    );
+      hayKg: hayPool * cattleShare,
+      standingKg: standingPool * cattleShare,
+    }, catchment.forageKgPerYear * cattleShare,
+    tile.temperatureC, tile.dir[1], week);
+
+    const flockWeekOut = villageHerdWeek(SHEEP, {
+      head: flockBefore,
+      condition: delta.flockCondition ?? 1,
+      hayKg: hayPool * (1 - cattleShare),
+      standingKg: standingPool * (1 - cattleShare),
+    }, catchment.forageKgPerYear * (1 - cattleShare),
+    tile.temperatureC, tile.dir[1], week);
+
     let herdAfter = herdWeekOut.herd;
-    let herdFoodKg = herdWeekOut.foodKcal / GRAIN_KCAL_PER_KG;
+    let flockAfter = flockWeekOut.herd;
+    let herdFoodKg = (herdWeekOut.foodKcal + flockWeekOut.foodKcal) / GRAIN_KCAL_PER_KG;
     let herdEaten = 0;
+    let flockEaten = 0;
+
+    // THE SHEARING, once a year at the derived week: the flock's fleeces go
+    // to the wool store, and the winter evenings will have them.
+    let woolKg = delta.woolKg ?? 0;
+    if (isWeek(week, shearingWeek(tile.temperatureC, tile.dir[1]))) {
+      woolKg += flockAfter.head * FLEECE_KG_PER_YEAR;
+    }
+
+    // THE EVENING ECONOMY. Spinning and weaving were the work of hours the
+    // 250-day labour year never counted -- every evening there was light --
+    // and the capacity that implies is derived from the need it historically
+    // met: clothing a person takes about 2.5 kg of cloth a year, and at the
+    // spindle's and the loom's own day-rates that is some thirty-five
+    // evening-day-equivalents a person. Cloth is made from the wool store at
+    // that pace, spinning the bottleneck, exactly seven to the loom's one.
+    const eveningDaysWeek = (population * 35) / A.TURNS_PER_YEAR;
+    const daysPerKg = 1 / SPIN_KG_PER_DAY + 1 / WEAVE_KG_PER_DAY;
+    const clothMadeKg = Math.min(woolKg, eveningDaysWeek / daysPerKg);
+    woolKg -= clothMadeKg;
+    let clothM2 = (delta.clothM2 ?? 0) + clothMadeKg / CLOTH_KG_PER_M2;
+
+    // AND CLOTH WEARS OUT, which is why the spinning never stopped: a
+    // person's 2.5 kg a year is replacement, not accumulation.
+    const clothWearM2 = (population * 2.5) / CLOTH_KG_PER_M2 / A.TURNS_PER_YEAR;
+    clothM2 = Math.max(0, clothM2 - clothWearM2);
 
     // Whatever hands are not farming go to the ore, if there is any.
     const ore = tile.deposits.find((d) => d.kind === Mineral.Iron);
@@ -349,10 +420,20 @@ export function runEconomy(world: World): EconomyResult {
     // fortnight; when it is past that, they do -- down to the last beast,
     // because the alternative is the churchyard. The hunt has already
     // brought home what it could; the byre covers what the woods did not.
+    // Sheep first: a ewe is a meal and an ox is a plough, and the manor
+    // sold or ate the flock long before it touched the team.
     const larder = grainStock + grainGrown + herdFoodKg + wildFoodKg;
-    if (larder < weeklyNeed * 2 && herdAfter.head > 0) {
+    if (larder < weeklyNeed * 2 && flockAfter.head > 0) {
       const want = (weeklyNeed * 2 - larder) * GRAIN_KCAL_PER_KG;
-      const pot = distressSlaughter(herdAfter, want);
+      const pot = distressSlaughter(SHEEP, flockAfter, want);
+      flockAfter = pot.herd;
+      flockEaten = pot.eaten;
+      herdFoodKg += pot.foodKcal / GRAIN_KCAL_PER_KG;
+    }
+    const larder2 = grainStock + grainGrown + herdFoodKg + wildFoodKg;
+    if (larder2 < weeklyNeed * 2 && herdAfter.head > 0) {
+      const want = (weeklyNeed * 2 - larder2) * GRAIN_KCAL_PER_KG;
+      const pot = distressSlaughter(CATTLE, herdAfter, want);
       herdAfter = pot.herd;
       herdEaten = pot.eaten;
       herdFoodKg += pot.foodKcal / GRAIN_KCAL_PER_KG;
@@ -368,9 +449,14 @@ export function runEconomy(world: World): EconomyResult {
       herdDied: herdWeekOut.died,
       herdCulled: herdWeekOut.culled,
       herdEaten,
-      hayKg: herdAfter.hayKg,
+      flockHead: flockAfter.head,
+      flockCondition: flockAfter.condition,
+      flockEaten,
+      woolKg,
+      clothM2,
+      hayKg: herdAfter.hayKg + flockAfter.hayKg,
       herdFoodKg,
-      standingKg: herdAfter.standingKg,
+      standingKg: herdAfter.standingKg + flockAfter.standingKg,
       brokenHa,
       wildShare,
       wildKills,
@@ -439,6 +525,10 @@ export function runEconomy(world: World): EconomyResult {
       // growth at this scale, and a calf a fortnight is under a thousandth.
       herdHead: Math.round(report.herdHead * 1000) / 1000,
       herdCondition: Math.round(report.herdCondition * 1000) / 1000,
+      flockHead: Math.round(report.flockHead * 1000) / 1000,
+      flockCondition: Math.round(report.flockCondition * 1000) / 1000,
+      woolKg: Math.round(report.woolKg * 10) / 10,
+      clothM2: Math.round(report.clothM2 * 10) / 10,
       hayKg: round(report.hayKg),
       standingKg: round(report.standingKg),
       brokenHa: Math.round(report.brokenHa * 100) / 100,

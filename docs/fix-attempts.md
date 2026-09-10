@@ -2750,3 +2750,46 @@ capacity by nearly three times, their hungry first year dents the range to
 0.74, and every further year of reliance grinds it lower. That pressure is
 the whole demographic reason settled people farm, and the model now says it
 without having been told.
+
+
+## The Michaelmas cull fired once in a world's life
+
+Found by the fold suite counting shearings: one in three years, where three
+were due. The year is 52.1786 weeks, so integer turns give FRACTIONAL weeks
+-- and this world's turn count happened to align in its first year, giving
+week 26.000 exactly once before wrapping to 26.821, 26.643, 26.464, never
+integral again. Every yearly event guarded by `week === target` fired in
+the world's first year and then never:
+
+    the shearing            once, ever
+    the Michaelmas cull     once, ever -- every herd since has equilibrated
+                            by quiet starvation instead of the reeve's knife
+
+The probe that nailed it printed the weeks: 1.000, 2.000 ... 52.000, then
+0.821. The wool store showed one +30.7 jump and a long decline.
+
+A yearly event happens on the turn that CROSSES its week -- the one whose
+week lies within one turn past the target -- and `isWeek` in season.ts is
+that test. The settlement-over-time granary rose two per cent when the cull
+came back, which is the meat that was never being delivered.
+
+The general shape, for the ledger: NEVER compare a derived float calendar to
+an integer date with equality. The unit suites all passed because they feed
+integer weeks; only driving the real economy through real turns crossed the
+fraction.
+
+## The fold starved in front of a full granary
+
+Wiring sheep beside cattle, the fold suite's "established" village lost
+eighteen of twenty ewes in its first fifteen weeks -- founded by the suite
+in mid-winter, where the established convention gave it a full granary and
+broken fields but an EMPTY BARN and a dead sward. The herds starved while
+the people ate well; the sheep died fastest, being smallest, which is real
+and was still wrong.
+
+The established convention now extends to fodder: a settlement seeded
+without a barn record holds the hay its REMAINING winter needs, priced at
+the herd's need and the hay's worth (establishedBarnKg), because no real
+farm stands in January with a live herd and an empty barn. Foundings set
+hay and standing to zero explicitly and own their first winter's want --
+the same explicit-zero pattern as the assart.

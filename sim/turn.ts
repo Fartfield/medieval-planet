@@ -203,8 +203,11 @@ function applyOrder(world: World, order: Order, playerCount: number): string | n
         populationHealth: tile.populationHealth,
         grainStock: (existing?.grainStock ?? 0) + provisions,
         farmShare: existing?.farmShare ?? 1,
-        // Not an acre is broken. The first year is the assart.
+        // Not an acre is broken, and the barn and the sward start empty:
+        // the first year is the assart, and the first winter is the want.
         brokenHa: existing?.brokenHa ?? 0,
+        hayKg: existing?.hayKg ?? 0,
+        standingKg: existing?.standingKg ?? 0,
       });
       return null;
     }
@@ -315,7 +318,8 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
       grainStock: undefined, ironStock: undefined, farmShare: undefined,
       herdHead: undefined, herdCondition: undefined,
       hayKg: undefined, standingKg: undefined, brokenHa: undefined,
-      wildShare: undefined,
+      wildShare: undefined, flockHead: undefined, flockCondition: undefined,
+      woolKg: undefined, clothM2: undefined,
     });
   } else {
     world.setDelta(r.address, {
