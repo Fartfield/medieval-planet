@@ -181,6 +181,14 @@ export interface TileDelta {
   clearedTurn?: number;
   /** Grain in the granary, kg. A year's eating is the target. */
   grainStock?: number;
+  /** The village herd, head of cattle. Fractional, like population. */
+  herdHead?: number;
+  /** The herd's condition: weight over proper weight, 1 in full flesh. */
+  herdCondition?: number;
+  /** The barn, kg of hay. */
+  hayKg?: number;
+  /** The pasture's standing crop, kg dry. What winter grazing eats down. */
+  standingKg?: number;
   /** Iron in hand, kg. A year's wear is the target. */
   ironStock?: number;
   /**

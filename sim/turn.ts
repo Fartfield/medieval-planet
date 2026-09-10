@@ -306,6 +306,8 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
     world.setDelta(r.address, {
       population: undefined, populationHealth: undefined,
       grainStock: undefined, ironStock: undefined, farmShare: undefined,
+      herdHead: undefined, herdCondition: undefined,
+      hayKg: undefined, standingKg: undefined,
     });
   } else {
     world.setDelta(r.address, {

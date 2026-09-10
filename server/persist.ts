@@ -135,7 +135,11 @@ function isTombstone(d: TileDelta): boolean {
     && d.grainStock === undefined
     && d.ironStock === undefined
     && d.farmShare === undefined
-    && d.soldKg === undefined;
+    && d.soldKg === undefined
+    && d.herdHead === undefined
+    && d.herdCondition === undefined
+    && d.hayKg === undefined
+    && d.standingKg === undefined;
 }
 
 export { dirname };

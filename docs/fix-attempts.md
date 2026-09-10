@@ -2633,3 +2633,35 @@ WEEKS_PER_YEAR is 52.18 (it is TURNS_PER_YEAR, an orbital fact), and a loop
 written `i < W` runs 53 times. A full year's larder was consumed over 53 weeks
 and the household went hungry in the last one. Anything iterating a year in
 weeks must floor it.
+
+
+## The barn filled at the scythe's rate and drained at the herd's
+
+First shape of the village hay model: while the barn was short of its winter
+target, mowing took the WHOLE of each week's growth. The herd, grazing the
+same ground, found nothing standing -- so herdWeek drew the barn down to feed
+them in high summer, and the village wintered on the difference between the
+scythe and the appetite. Walked through by hand before the suite ever ran: a
+sixty-head herd's barn gained about 1.3 tonnes a week net where the mowing
+put in 3.8.
+
+The fix is the oldest arrangement in the manor: the meadow is SHUT UP. Half
+the growth is fenced from the beasts for hay and the herd summers on the
+other half -- MEADOW_SHARE = 0.5, a social fact labelled as one. With it the
+twelve-year farm settles at 36 head on 125 tonnes of forage, one cull a year
+at the close of the harvest window, and the barn at spring holds 1.5 of its
+24.7-tonne peak.
+
+## Eight beasts spread over 270 hectares is no beasts at all
+
+Wiring the drawn herd to the settlement's ACTUAL head count made the cattle
+vanish: the check that settles a village through the socket went from 5 drawn
+to 0. The density was true -- 8 beasts over a 20-person hamlet's 270-hectare
+labour reach is 0.03 a hectare -- and the spatial model was wrong. Uniform
+spread is right for trees and wrong for a herd: a herd is a CLUMP, one group
+grazing one patch together.
+
+The drawn herd now occupies the circle that holds it at the ground's own
+carrying density, centred on the village, growing with the herd until it
+fills the commons. Same total, honest density, and the check reads 5 again --
+this time the village's own five.

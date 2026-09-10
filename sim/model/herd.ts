@@ -83,6 +83,11 @@ export function beastsPerHa(a: Animal, biome: BiomeId, npp: number): number {
   return (stockingUnitsPerHa(biome, npp) * A.LIVESTOCK_UNIT_KG) / mean;
 }
 
+/** The default herd's carrying density on this ground, for the clamp above. */
+export function cattleCarryPerHa(biome: BiomeId, npp: number): number {
+  return beastsPerHa(CATTLE, biome, npp);
+}
+
 /** What a patch of ground is asked about. */
 export interface Pasture {
   biome: BiomeId;
@@ -123,8 +128,13 @@ function field(
  * metre square holds a twentieth of a cow, and rounding that down empties the
  * pasture while rounding it up fills it with a beast a square.
  */
-export function herdOn(g: Pasture, animal: Animal = CATTLE, limit = 32): Herd {
-  const perHa = beastsPerHa(animal, g.biome, g.nppGm2);
+export function herdOn(
+  g: Pasture, animal: Animal = CATTLE, limit = 32, perHaOverride?: number,
+): Herd {
+  // The override is the settlement's OWN herd spread over its own grazing --
+  // the drawn cattle are then the beasts the village actually keeps, thinning
+  // on screen through a bad winter, rather than what the ground could carry.
+  const perHa = perHaOverride ?? beastsPerHa(animal, g.biome, g.nppGm2);
   const beasts: Beastie[] = [];
   if (perHa <= 0 || g.spacingM <= 0) return { beasts, omitted: 0, beastsPerHa: perHa };
 

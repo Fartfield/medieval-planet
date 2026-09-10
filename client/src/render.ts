@@ -26,7 +26,7 @@ import {
 import {
   drawStand, groundTileFor, drawGround, seasonOf, drawHerd,
 } from './flora_render.ts';
-import { herdOn, type Herd } from '../../sim/model/herd.ts';
+import { herdOn, cattleCarryPerHa, type Herd } from '../../sim/model/herd.ts';
 import * as A from '../../sim/anchors.ts';
 import type { Patch } from '../../sim/geo/patch.ts';
 import {
@@ -1557,17 +1557,19 @@ export interface FloraDrawn {
 }
 
 /**
- * Which ground is grazed, asked of the caller.
+ * Which ground is grazed and how thickly, asked of the caller.
  *
  * CATTLE ARE NOT WILDLIFE. A herd belongs to somebody, and until a settlement
  * owns one there is no honest way to scatter cattle across every meadow on the
  * planet -- it would be a picture making a claim the simulation cannot back,
  * which is the exact trap the tree work spent three commits climbing out of.
  *
- * So the renderer asks. main.ts answers from the settlements it already knows
- * about, and where there is nobody, there are no cattle.
+ * The answer is BEASTS PER HECTARE, zero where nobody grazes, because the herd
+ * is state now: the settlement's own head count over its own commons. Count
+ * the cattle on screen through a hard winter and you watch the delta's number
+ * fall -- the picture and the simulation are the same herd.
  */
-export type Grazed = (mapIndex: number, cell: number) => boolean;
+export type Grazed = (mapIndex: number, cell: number) => number;
 
 /**
  * Draw every plant on the screen, once, after every map's ground is finished.
@@ -1727,7 +1729,7 @@ export function drawFlora(
     cells++;
 
     const key = i + '|' + j;
-    let grazedHere = false;
+    let grazedPerHa = 0;
     let pasture: { biome: number; npp: number } | null = null;
     let stand = standLattice.get(key) ?? null;
     {
@@ -1737,7 +1739,7 @@ export function drawFlora(
         standLattice.set(key, null);
         continue;
       }
-      grazedHere = grazed !== null && grazed(found.map, found.cell);
+      grazedPerHa = grazed === null ? 0 : grazed(found.map, found.cell);
       pasture = { biome: m.biome[found.cell], npp: m.nppGm2[found.cell] };
     }
     if (!standLattice.has(key)) {
@@ -1771,7 +1773,7 @@ export function drawFlora(
       tc: axisTc,
       ts: axisTs,
       stand,
-      herd: grazedHere && pasture !== null
+      herd: grazedPerHa > 0 && pasture !== null
         ? herdOn({
           biome: pasture.biome as never,
           nppGm2: pasture.npp,
@@ -1780,7 +1782,12 @@ export function drawFlora(
           dirZ: dz,
           radiusM,
           spacingM: CROWN_GRID_M,
-        })
+          // The settlement's own herd over its own commons, never more than
+          // the ground itself could carry -- a starving village's beasts are
+          // in its yard being hand-fed, not thronging a moor that cannot
+          // feed them.
+        }, undefined, undefined,
+        Math.min(grazedPerHa, cattleCarryPerHa(pasture.biome as never, pasture.npp)))
         : null,
     });
   }

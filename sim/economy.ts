@@ -40,6 +40,13 @@ import { navigable } from './gen/hydrology.ts';
 import {
   weekOfYear, harvestWindow, inWindow, HARVEST_SPAN_WEEKS,
 } from './model/season.ts';
+import {
+  villageHerdWeek, foundingHerd, type VillageHerd,
+} from './model/village_herd.ts';
+import { WHEAT } from './model/species.ts';
+import { Part } from './model/plant.ts';
+import { harvest as harvestPlant, compositionOf } from './model/process.ts';
+import { foodKcalPerKg } from './model/material.ts';
 import { idleShare } from './expansion.ts';
 import type { Harvest, Competitor } from './model/settlement.ts';
 import type { World } from './world.ts';
@@ -56,11 +63,37 @@ const SHARE_STEP = 0.1;
 /** A town never abandons its fields entirely -- there is always a croft. */
 const MIN_FARM_SHARE = 0.05;
 
+/**
+ * A kilogramme of bread grain, in kcal, for pricing the herd's food in the
+ * granary's own unit. Milk and meat are folded into the ration as
+ * grain-equivalent kilogrammes -- a bookkeeping convenience, labelled as one,
+ * until the stores carry more goods than grain.
+ */
+const GRAIN_KCAL_PER_KG = foodKcalPerKg(compositionOf(
+  harvestPlant(WHEAT, 0.8, 1, 30, A.TURNS_PER_YEAR, 1)
+    .find((p) => p.part === Part.Seed)!,
+));
+
 export interface Report {
   key: string;
   address: Address;
   population: number;
   health: number;
+
+  /** The village herd, head of cattle, after this week. */
+  herdHead: number;
+  /** Its condition, 1 in full flesh. */
+  herdCondition: number;
+  /** Beasts lost to want this week. */
+  herdDied: number;
+  /** Beasts slaughtered at the autumn cull this week. */
+  herdCulled: number;
+  /** Hay in the barn, kg. */
+  hayKg: number;
+  /** Milk and meat off the herd this week, as grain-equivalent kg. */
+  herdFoodKg: number;
+  /** The pasture's standing crop, kg dry. */
+  standingKg: number;
 
   farmShare: number;
   /** How much of the iron it wants that it has, 0..1. Drives farm labour. */
@@ -208,10 +241,26 @@ export function runEconomy(world: World): EconomyResult {
         ? harvest.netKgPerYear / HARVEST_SPAN_WEEKS
         : 0;
 
+    const catchment = world.catchmentFor(address, population);
+
+    // THE HERD'S WEEK. It grazes the same catchment the fields are cut from,
+    // makes its hay in early summer, is culled to the barn at the close of the
+    // harvest window, and its milk and cull meat join the village's food as
+    // grain-equivalent kilogrammes. A founding's herd walked in on the hoof.
+    const herdBefore: VillageHerd = {
+      head: delta.herdHead ?? foundingHerd(population),
+      condition: delta.herdCondition ?? 1,
+      hayKg: delta.hayKg ?? 0,
+      standingKg: delta.standingKg ?? 0,
+    };
+    const herdWeekOut = villageHerdWeek(
+      herdBefore, catchment.forageKgPerYear, tile.temperatureC, tile.dir[1], week,
+    );
+    const herdFoodKg = herdWeekOut.foodKcal / GRAIN_KCAL_PER_KG;
+
     // Whatever hands are not farming go to the ore, if there is any.
     const ore = tile.deposits.find((d) => d.kind === Mineral.Iron);
     const oreRichness = ore?.richness ?? 0;
-    const catchment = world.catchmentFor(address, population);
     const idleDays =
       (population * A.WORKERS_PER_FAMILY) / 5 * A.WORKING_DAYS_PER_YEAR * (1 - farmShare);
 
@@ -239,11 +288,20 @@ export function runEconomy(world: World): EconomyResult {
       address,
       population,
       health: delta.populationHealth ?? 1,
+      herdHead: herdWeekOut.herd.head,
+      herdCondition: herdWeekOut.herd.condition,
+      herdDied: herdWeekOut.died,
+      herdCulled: herdWeekOut.culled,
+      hayKg: herdWeekOut.herd.hayKg,
+      herdFoodKg,
+      standingKg: herdWeekOut.herd.standingKg,
       farmShare,
       ironSupply,
       grainGrown,
       grainNeed: grainNeed * perTurn,
-      grainStock: grainStock + grainGrown,
+      // The dairy and the shambles arrive with the harvest: herd food goes
+      // into the same stock the ration is eaten from.
+      grainStock: grainStock + grainGrown + herdFoodKg,
       grainIn: 0,
       grainOut: 0,
       ironMade,
@@ -297,6 +355,12 @@ export function runEconomy(world: World): EconomyResult {
       ironStock: round(report.ironStock),
       farmShare: Math.round(nextShare * 100) / 100,
       soldKg: report.grainOut > 0 ? round(report.grainOut) : undefined,
+      // The herd, rounded like the population: the fractional part IS the
+      // growth at this scale, and a calf a fortnight is under a thousandth.
+      herdHead: Math.round(report.herdHead * 1000) / 1000,
+      herdCondition: Math.round(report.herdCondition * 1000) / 1000,
+      hayKg: round(report.hayKg),
+      standingKg: round(report.standingKg),
     });
     touched.add(delta.key);
   }
