@@ -52,6 +52,7 @@ import {
   SPIN_KG_PER_DAY, WEAVE_KG_PER_DAY, CLOTH_KG_PER_M2, FIBRE_YIELD,
 } from './model/craft.ts';
 import { FLAX } from './model/species.ts';
+import { labourFactor } from './model/hearths.ts';
 import { massAt as plantMassAt, Part as PlantPart } from './model/plant.ts';
 import { breakingDaysPerHa, HELD_HECTARE_DAYS_IRON } from './model/labour.ts';
 import { huntWeek, regrowWeek } from './model/wildfood.ts';
@@ -230,6 +231,19 @@ export function runEconomy(world: World): EconomyResult {
     const grainNeed = population * GRAIN_PER_PERSON_YEAR;
     const ironNeed = population * A.IRON_PER_PERSON_KG_PER_YEAR;
 
+    // MOUTHS ABOVE ARE THE TRUE HEAD COUNT; HANDS BELOW ARE FEWER OR MORE.
+    // The dependency ratio enters here and only here: labour-bearing
+    // population is the head count scaled by how this village's age structure
+    // compares to a settled one's. At the stable pyramid the factor is one and
+    // nothing downstream moves -- which is why every established settlement and
+    // every bare-seeded suite is untouched -- but a founding thick with small
+    // children works the land with fewer hands than its number suggests, and
+    // grows into its full strength as its children do.
+    const hearthsHere = delta.hearths;
+    const labourPop = hearthsHere !== undefined
+      ? population * labourFactor(hearthsHere)
+      : population;
+
     // A FOUNDING ARRIVES PROVISIONED. Nobody walks into the wilderness in
     // February without the wagons: a settlement whose granary has never been
     // written starts with the stock target, and every later week reads what
@@ -260,7 +274,7 @@ export function runEconomy(world: World): EconomyResult {
       + Math.max(0, stockTarget(grainNeed) - grainStock)
       + sold;
     const harvest = world.harvestFor(
-      address, population, ironSupply, farmShare, neighbours, target);
+      address, labourPop, ironSupply, farmShare, neighbours, target);
     const alone = neighbours.length === 0;
 
     // BREAKING GROUND. The land a settlement works has to have been broken to
@@ -280,7 +294,7 @@ export function runEconomy(world: World): EconomyResult {
     const breakRate = breakingDaysPerHa(true) * ironSupply
       + breakingDaysPerHa(false) * (1 - ironSupply);
     const tendDays = Math.min(brokenBefore, harvest.hectaresWorked) * HELD_HECTARE_DAYS_IRON;
-    const farmDays = ((population * A.WORKERS_PER_FAMILY) / 5)
+    const farmDays = ((labourPop * A.WORKERS_PER_FAMILY) / 5)
       * A.WORKING_DAYS_PER_YEAR * farmShare;
     const spareDays = Math.max(0, farmDays - tendDays);
     const brokenHa = Math.min(
@@ -302,7 +316,7 @@ export function runEconomy(world: World): EconomyResult {
         ? harvest.netKgPerYear / HARVEST_SPAN_WEEKS
         : 0);
 
-    const catchment = world.catchmentFor(address, population);
+    const catchment = world.catchmentFor(address, labourPop);
 
     // THE BYRE AND THE FOLD SHARE ONE SWARD. The cattle and the sheep graze
     // the same catchment and winter from the same barn, so the pasture and
@@ -407,7 +421,7 @@ export function runEconomy(world: World): EconomyResult {
     const ore = tile.deposits.find((d) => d.kind === Mineral.Iron);
     const oreRichness = ore?.richness ?? 0;
     const idleDays =
-      (population * A.WORKERS_PER_FAMILY) / 5 * A.WORKING_DAYS_PER_YEAR * (1 - farmShare);
+      (labourPop * A.WORKERS_PER_FAMILY) / 5 * A.WORKING_DAYS_PER_YEAR * (1 - farmShare);
 
     // THE HEARTHS ARE SERVED BEFORE THE FURNACE, and until now they were not
     // served at all: ironworking had the whole of the woodland's increment to
@@ -441,7 +455,7 @@ export function runEconomy(world: World): EconomyResult {
     {
       const larderNow = grainStock + grainGrown + herdFoodKg;
       if (larderNow < weeklyNeed * 4) {
-        const hunterDays = ((population * A.WORKERS_PER_FAMILY) / 5) * 0.5 * 7;
+        const hunterDays = ((labourPop * A.WORKERS_PER_FAMILY) / 5) * 0.5 * 7;
         const hunt = huntWeek(tile.biome, tile.nppGm2, wildShare, hunterDays);
         wildShare = hunt.wildShare;
         wildKills = hunt.kills;

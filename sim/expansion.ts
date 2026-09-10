@@ -28,6 +28,7 @@
 
 import * as A from './anchors.ts';
 import { foundingHerd } from './model/village_herd.ts';
+import { synthesiseHearths, settleHearths } from './model/hearths.ts';
 import { fromKey, toKey, type Address } from './geo/address.ts';
 import { SUBCELL_COUNT } from './geo/hexgrid.ts';
 import { yieldsFor } from './gen/submap.ts';
@@ -372,6 +373,9 @@ export function applyExpansion(world: World, result: ExpansionResult): Set<strin
       brokenHa: 0,
       hayKg: 0,
       standingKg: 0,
+      // A daughter is young families too, the same selected pyramid a player
+      // founding gets.
+      hearths: settleHearths(synthesiseHearths(f.settlers, true)),
     });
     touched.add(toKey(f.site));
   }

@@ -90,6 +90,41 @@ export function effectiveHands(hh: readonly Hearth[]): number {
   return hands;
 }
 
+/**
+ * Effective hands per head at the stable pyramid -- the dependency ratio a
+ * settled village sits at, computed once from the fixed point.
+ *
+ * This is the REFERENCE the economy's labour was always implicitly calibrated
+ * to: every holding size, task rate and specialisation figure was fitted with
+ * a village assumed to be at its settled age structure. Dividing a village's
+ * own hands-per-head by this makes the labour factor exactly one for such a
+ * village -- so nothing an established settlement does changes -- and lets the
+ * ratio bite only where the pyramid is genuinely skewed: a founding thick with
+ * small children, a village hollowed of hands by an old famine.
+ */
+let stableHandsCache = 0;
+export function stableHandsPerPerson(): number {
+  if (stableHandsCache === 0) {
+    const sh = stableShares();
+    stableHandsCache = sh.h + CHILD_HANDS * sh.c + ELDER_HANDS * sh.e;
+  }
+  return stableHandsCache;
+}
+
+/**
+ * How this village's working strength compares to a settled one's, per head.
+ *
+ * One at the stable pyramid, above it for a labour-rich founding of young
+ * families, below it for a village heavy with children or elders. The economy
+ * multiplies its population-derived labour by this and nothing else changes
+ * for the settled case.
+ */
+export function labourFactor(hh: readonly Hearth[]): number {
+  const pop = populationOf(hh);
+  if (pop <= 0) return 1;
+  return (effectiveHands(hh) / pop) / stableHandsPerPerson();
+}
+
 export function populationOf(hh: readonly Hearth[]): number {
   let n = 0;
   for (const x of hh) n += x.c + x.h + x.e;

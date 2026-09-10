@@ -15,7 +15,7 @@ import {
   synthesiseHearths, hearthsWeek, stableShares, populationOf, effectiveHands,
   drawPeople, addPeople, settleHearths,
   CHILD_MORTALITY, HAND_MORTALITY, ELDER_MORTALITY, BIRTHS_PER_HAND_YEAR,
-  CHILD_HANDS, ELDER_HANDS, type Hearth,
+  CHILD_HANDS, ELDER_HANDS, labourFactor, type Hearth,
 } from '../sim/model/hearths.ts';
 import { WEEKS_PER_YEAR } from '../sim/model/season.ts';
 import { check, measure, assert, suite } from './harness.ts';
@@ -147,6 +147,23 @@ suite('the hearths', () => {
     populationOf(settled), before, 1);
   assert('and a dead hearth is pruned',
     settleHearths([{ c: 0, h: 0, e: 0 }]).length === 0);
+
+  // THE LABOUR FACTOR is one for a settled village by construction -- which is
+  // what keeps every calibrated holding-size and specialisation figure intact
+  // -- and above one for a founding of young families, who are selected
+  // working-age and so work more land per head than a cross-section would.
+  measure('labour factor of a settled village', labourFactor(village));
+  check('a settled village labours at exactly the calibrated rate',
+    labourFactor(village), 1, 0.02);
+  const founding = synthesiseHearths(20, true);
+  measure('labour factor of a fresh founding', labourFactor(founding));
+  assert('a young founding is labour-rich per head',
+    labourFactor(founding) > 1.02);
+  // The famine's echo is in the ABSOLUTE hands (103 against 122, above), not
+  // reliably in the per-head factor: fifteen years on the scarred village has
+  // rebuilt a near-normal pyramid around its smaller numbers, so its labour
+  // RATE per head recovers even while its COUNT of hands stays short. The
+  // count is the honest measure of the echo, and it is the one asserted.
 
   // DETERMINISM.
   const a = hearthsWeek(synthesiseHearths(300), 1, 0);

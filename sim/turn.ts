@@ -212,6 +212,12 @@ function applyOrder(world: World, order: Order, playerCount: number): string | n
         brokenHa: existing?.brokenHa ?? 0,
         hayKg: existing?.hayKg ?? 0,
         standingKg: existing?.standingKg ?? 0,
+        // Settlers are a SELECTED people: young families, heavy with children
+        // and hands and almost without elders, which is why a founding is
+        // labour-rich for its first years and feels its first old age two
+        // generations on. The young pyramid, not the settled one.
+        hearths: existing?.hearths
+          ?? settleHearths(synthesiseHearths(tile.population + amount, true)),
       });
       return null;
     }
