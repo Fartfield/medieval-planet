@@ -2827,3 +2827,39 @@ out at the measured five-odd tonnes -- and the drawn stem thinned from 2.9
 mm to 1.4, which is what fibre flax measures. The picture got righter as a
 side effect of the economy getting honest, which is the whole bet of
 deriving both from one model.
+
+## The population blob became a pyramid, and two checks turned out to be watching the wrong turn
+
+Replacing the single growth rate with age-bucketed hearths (children, hands,
+elders, on a measured life table) moved 26 baselines -- almost all of them the
+intended change, growth going S-shaped instead of linear because the age
+structure now matters. Two were not the change and are worth the ledger.
+
+### `alone on barren ground, it farms and makes no iron` read the wrong turn
+
+The check flipped to farm-share 0.05, iron 387 -- an isolated settlement
+apparently turning ironworks. Instrumented, the trajectory was honest: the
+barren settlement GREW (60 -> 152 over twelve years under the faster
+demography) and founded daughters ON THE LAST TURN, becoming non-alone and
+correctly specialising to trade with its own children. The test sampled that
+final turn and conflated "alone behaviour failed" with "paired behaviour
+arrived early". Under the old slow blob it had not yet founded by year 12, so
+the bug was latent. Fixed in the TEST: sample the last turn the town was still
+`alone`, which is what the claim is about. The code was right.
+
+### `the famine is felt a generation later` passed against a graveyard
+
+The new generational-echo check applied a 15%-of-population weekly death toll
+for a full year -- which is not a hard year, it is extermination, and the
+village went to 3e-13 hands. The assertion `scarred < control * 0.98` then
+passed trivially, because zero is less than anything. The MEASUREMENT caught
+it where the assertion could not: a survivor count of 3e-13 is not a village.
+Fixed to a survivable 15% EXCESS mortality spread across the year; the village
+now ends the famine at 168 of 200, and fifteen years on carries 103 hands
+against an unscarred 122 -- a real, partial, generation-long echo, and the
+assertion now has both a floor and a ceiling so extinction cannot pass it
+again.
+
+The habit, restated: an assertion with only a one-sided bound (`x < limit`)
+passes for free when the quantity collapses to zero. Pair it with a floor, or
+measure the thing and read the number.

@@ -216,6 +216,14 @@ export interface TileDelta {
   flaxKg?: number;
   /** The village's cloth, m2. What wears out and what the spinning replaces. */
   clothM2?: number;
+  /**
+   * The hearths: each with children, hands and elders as fractional counts.
+   *
+   * Undefined means established -- the stable pyramid at the population,
+   * synthesised on first touch -- by the same convention as everything else
+   * on this delta.
+   */
+  hearths?: { c: number; h: number; e: number }[];
   /** Iron in hand, kg. A year's wear is the target. */
   ironStock?: number;
   /**

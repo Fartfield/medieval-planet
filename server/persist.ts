@@ -146,7 +146,8 @@ function isTombstone(d: TileDelta): boolean {
     && d.flockCondition === undefined
     && d.woolKg === undefined
     && d.clothM2 === undefined
-    && d.flaxKg === undefined;
+    && d.flaxKg === undefined
+    && d.hearths === undefined;
 }
 
 export { dirname };

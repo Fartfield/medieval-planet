@@ -1167,6 +1167,15 @@ function drawInspector(): void {
     ${row('kingdom', owner)}
     ${row('people', tile.population > 0 ? Math.round(tile.population).toLocaleString('en') : '<span class="none">nobody</span>')}
     ${tile.population > 0 ? row('condition', tile.populationHealth.toFixed(2)) : ''}
+    ${tile.population > 0 ? row('ages', (() => {
+      const hh = world.getDelta(address)?.hearths;
+      if (hh === undefined) return '<span class="none">settled long since</span>';
+      let c = 0; let h = 0; let e = 0;
+      for (const x of hh) { c += x.c; h += x.h; e += x.e; }
+      const n = Math.max(1, c + h + e);
+      return `${Math.round(c)} young &middot; ${Math.round(h)} hands &middot; ${Math.round(e)} old`
+        + ` (${Math.round(100 * h / n)}% work)`;
+    })()) : ''}
     </table>
     ${tile.population > 0 ? supplyPanel(world, address, tile.population) : ''}`;
 

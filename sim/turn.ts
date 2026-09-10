@@ -13,6 +13,10 @@
 
 import * as A from './anchors.ts';
 import { foundingHerd } from './model/village_herd.ts';
+import {
+  synthesiseHearths, hearthsWeek, addPeople, drawPeople, populationOf,
+  settleHearths,
+} from './model/hearths.ts';
 import { SOLDIER_GRAIN_KG_PER_DAY } from './derive.ts';
 import { fromKey, toKey, GROUND_DEPTH, type Address } from './geo/address.ts';
 import { clamp } from './gen/mathx.ts';
@@ -267,12 +271,20 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
     (A.MAX_NATURAL_INCREASE_PER_YEAR * 1000 + A.DEATH_RATE_PER_1000_YR)
     / A.BIRTH_RATE_PER_1000_YR;
 
-  const births = (population * A.BIRTH_RATE_PER_1000_YR) / 1000 / A.TURNS_PER_YEAR
-    * nextHealth * (1 + (maxMultiplier - 1) * surplus);
-  // Death rises as health falls: at full health the baseline rate, at zero
-  // health the baseline plus everyone starving out over STARVATION_WEEKS.
-  const deaths = (population * A.DEATH_RATE_PER_1000_YR) / 1000 / A.TURNS_PER_YEAR
-    + population * (1 - nextHealth) * rate;
+  // THE HEARTHS REPLACE THE BLOB. Births come from the hands through the
+  // marriage-and-fertility factors, boosted by the same health-and-surplus
+  // dial the blob had -- surplus IS early marriage; deaths come from the
+  // measured life table, plus the starvation toll the ration implies,
+  // distributed child-heavy as the burial registers record. The old
+  // per-thousand rates are retired; their calibrated BEHAVIOUR -- the
+  // colonial ceiling, the starvation clock -- carries over as the dials.
+  const hearthsBefore = world.getDelta(r.address)?.hearths
+    ?? synthesiseHearths(population);
+  const birthBoost = nextHealth * (1 + (maxMultiplier - 1) * surplus);
+  const hungerDeathsWeek = population * (1 - nextHealth) * rate;
+  const week = hearthsWeek(hearthsBefore, birthBoost, hungerDeathsWeek);
+  const births = week.born;
+  const deaths = week.died;
 
   // And people move.
   //
@@ -306,7 +318,12 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
   // turn: five people with an ample surplus gain 0.003 a week, and rounding
   // that away left them at exactly five for a decade. The fractional part IS
   // the growth at this scale. Same reasoning as the movement remainder.
-  const next = Math.max(0, population + births - deaths + migrants - leavers);
+  // Movement passes through the hearths too: migrants arrive as the young
+  // families they were, leavers go proportionally from every bucket.
+  let hearthsNow = week.hearths;
+  if (migrants > 0) hearthsNow = addPeople(hearthsNow, migrants);
+  if (leavers > 0) hearthsNow = drawPeople(hearthsNow, leavers).hearths;
+  const next = Math.max(0, populationOf(hearthsNow));
   const nextPopulation = Math.round(next * 1000) / 1000;
 
   if (nextPopulation === population && Math.abs(nextHealth - health) < 0.001) return false;
@@ -320,11 +337,13 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
       hayKg: undefined, standingKg: undefined, brokenHa: undefined,
       wildShare: undefined, flockHead: undefined, flockCondition: undefined,
       woolKg: undefined, clothM2: undefined, flaxKg: undefined,
+      hearths: undefined,
     });
   } else {
     world.setDelta(r.address, {
       population: nextPopulation,
       populationHealth: Math.round(nextHealth * 1000) / 1000,
+      hearths: settleHearths(hearthsNow),
     });
   }
   return true;

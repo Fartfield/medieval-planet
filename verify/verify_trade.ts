@@ -248,16 +248,29 @@ suite('specialisation', () => {
       grainStock: 60 * 30, farmShare: 1,
     });
 
+    // Sample the LAST TURN THE TOWN WAS STILL ALONE, not simply the last turn.
+    // A settlement on decent ore grows, and once demography let it grow fast
+    // enough it founds daughters within the twelve years -- at which point it
+    // is no longer alone and correctly turns to iron, living on its
+    // children's grain. That is the paired behaviour arriving early, not the
+    // alone behaviour failing, and reading the final turn conflated the two.
+    // The claim is about a town WITH NO NEIGHBOUR, so it is read while it has
+    // none.
     let last = null;
+    let lastAlone = null;
     const turns = Math.round(years * A.TURNS_PER_YEAR);
     for (let t = 0; t < turns; t++) {
       const res = resolveTurn(w, [], 1);
       last = res.reports.get(toKey(mineSite)) ?? null;
       if (last === null) break;
+      if (last.alone) lastAlone = last;
     }
-    return last === null
+    // When the caller wants the isolated reading, give it the last isolated
+    // turn; the neighbour case is never alone and reads its final turn.
+    const sample = withNeighbour ? last : (lastAlone ?? last);
+    return sample === null
       ? { pop: 0, share: 1, iron: 0, grainIn: 0 }
-      : { pop: last.population, share: last.farmShare, iron: last.ironMade, grainIn: last.grainIn };
+      : { pop: sample.population, share: sample.farmShare, iron: sample.ironMade, grainIn: sample.grainIn };
   }
 
   const alone = play(false, 12);
