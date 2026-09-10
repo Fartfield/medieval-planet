@@ -15,7 +15,7 @@ import {
   synthesiseHearths, hearthsWeek, stableShares, populationOf, effectiveHands,
   drawPeople, addPeople, settleHearths,
   CHILD_MORTALITY, HAND_MORTALITY, ELDER_MORTALITY, BIRTHS_PER_HAND_YEAR,
-  CHILD_HANDS, ELDER_HANDS, labourFactor, type Hearth,
+  CHILD_HANDS, ELDER_HANDS, labourFactor, marriageFactor, rehouse, type Hearth,
 } from '../sim/model/hearths.ts';
 import { WEEKS_PER_YEAR } from '../sim/model/season.ts';
 import { check, measure, assert, suite } from './harness.ts';
@@ -164,6 +164,61 @@ suite('the hearths', () => {
   // rebuilt a near-normal pyramid around its smaller numbers, so its labour
   // RATE per head recovers even while its COUNT of hands stays short. The
   // count is the honest measure of the echo, and it is the one asserted.
+
+  // THE MARRIAGE CHECK. Land with room to spare lets everyone marry; a full
+  // land holds the factor down, and with it the births.
+  measure('marriage factor with land for twice the hearths',
+    marriageFactor(60, 30));
+  measure('and with land already full', marriageFactor(30, 30));
+  measure('and with land badly overfull', marriageFactor(15, 30));
+  check('room to spare means marriage is free', marriageFactor(60, 30), 1, 0);
+  assert('a full land begins to bite', marriageFactor(30, 30) <= 1
+    && marriageFactor(28, 30) < 1);
+  assert('an overfull land bites hard but never to nothing',
+    marriageFactor(15, 30) < 0.6 && marriageFactor(15, 30) >= 0.15);
+
+  // HOUSEHOLDS FORM WHERE THE LAND HAS ROOM. A crowded village given land for
+  // more hearths grows its count of them toward the ceiling.
+  const crowded = synthesiseHearths(50);
+  const roomy = rehouse(crowded, crowded.length + 5);
+  measure('hearths before, given land for more', crowded.length);
+  measure('and after a week of it', roomy.length);
+  assert('new couples split off when there is a holding for them',
+    roomy.length > crowded.length);
+  check('and nobody is lost in the forming',
+    populationOf(roomy), populationOf(crowded), 0.01);
+
+  // THE HANDS-LESS ARE TAKEN IN -- inheritance at the bucket's grain: a hearth
+  // worn down to orphans and elders is absorbed, its people carried over.
+  const withWidow: Hearth[] = [
+    { c: 1, h: 2, e: 0 }, { c: 1, h: 2, e: 0 }, { c: 1, h: 0, e: 1 },
+  ];
+  const merged = rehouse(withWidow, 2);
+  measure('hearths after the widowed one is taken in', merged.length);
+  assert('a hearth with no hands does not stand alone',
+    merged.length < withWidow.length);
+  check('and the orphans and elders are kept, not lost',
+    populationOf(merged), populationOf(withWidow), 0.01);
+
+  // THE PREVENTIVE CHECK, END TO END. A village pressed against its land holds
+  // its numbers down through FEWER BIRTHS, not more deaths -- which is the
+  // whole difference between Malthus's two checks, and the reason medieval
+  // Europe was not a bare sawtooth of famines.
+  const roomyVillage = synthesiseHearths(100);
+  const pressedVillage = synthesiseHearths(100);
+  const roomyBirths = hearthsWeek(roomyVillage, 1, 0,
+    marriageFactor(40, roomyVillage.length)).born;
+  const pressedBirths = hearthsWeek(pressedVillage, 1, 0,
+    marriageFactor(pressedVillage.length, pressedVillage.length * 1.5)).born;
+  measure('weekly births with land to spare', roomyBirths);
+  measure('and with the land full', pressedBirths);
+  assert('a full land is checked at the cradle, not the grave',
+    pressedBirths < roomyBirths * 0.8);
+  // And crucially the DEATHS are unchanged -- the check is preventive.
+  const roomyDeaths = hearthsWeek(roomyVillage, 1, 0, 1).died;
+  const pressedDeaths = hearthsWeek(pressedVillage, 1, 0, 0.5).died;
+  check('while the death rate is untouched by land pressure',
+    pressedDeaths, roomyDeaths, roomyDeaths * 0.01);
 
   // DETERMINISM.
   const a = hearthsWeek(synthesiseHearths(300), 1, 0);

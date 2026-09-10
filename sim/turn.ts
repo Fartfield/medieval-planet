@@ -15,7 +15,7 @@ import * as A from './anchors.ts';
 import { foundingHerd } from './model/village_herd.ts';
 import {
   synthesiseHearths, hearthsWeek, addPeople, drawPeople, populationOf,
-  settleHearths,
+  settleHearths, marriageFactor, rehouse,
 } from './model/hearths.ts';
 import { SOLDIER_GRAIN_KG_PER_DAY } from './derive.ts';
 import { fromKey, toKey, GROUND_DEPTH, type Address } from './geo/address.ts';
@@ -288,7 +288,15 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
     ?? synthesiseHearths(population);
   const birthBoost = nextHealth * (1 + (maxMultiplier - 1) * surplus);
   const hungerDeathsWeek = population * (1 - nextHealth) * rate;
-  const week = hearthsWeek(hearthsBefore, birthBoost, hungerDeathsWeek);
+  // THE MARRIAGE CHECK. The land supports so many holdings -- from the
+  // harvest's own potential, not its current output, so a founding with land
+  // to break still marries freely -- and where they are already all taken,
+  // marriage is delayed and fertility falls. This is the preventive check,
+  // and it is why a settled village levels off through fewer christenings
+  // rather than more burials.
+  const landHouseholds = r.harvest.potentialPopulation / 5;
+  const marriage = marriageFactor(landHouseholds, hearthsBefore.length);
+  const week = hearthsWeek(hearthsBefore, birthBoost, hungerDeathsWeek, marriage);
   const births = week.born;
   const deaths = week.died;
 
@@ -329,6 +337,8 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
   let hearthsNow = week.hearths;
   if (migrants > 0) hearthsNow = addPeople(hearthsNow, migrants);
   if (leavers > 0) hearthsNow = drawPeople(hearthsNow, leavers).hearths;
+  // New couples form where the land has room; the hands-less are taken in.
+  hearthsNow = rehouse(hearthsNow, landHouseholds);
   const next = Math.max(0, populationOf(hearthsNow));
   const nextPopulation = Math.round(next * 1000) / 1000;
 

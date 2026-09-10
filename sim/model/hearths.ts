@@ -211,6 +211,7 @@ export interface DemographyWeek {
  */
 export function hearthsWeek(
   hh: readonly Hearth[], birthBoost: number, hungerDeathsWeek: number,
+  marriage = 1,
 ): DemographyWeek {
   const W = WEEKS_PER_YEAR;
   const total = populationOf(hh);
@@ -222,7 +223,8 @@ export function hearthsWeek(
   let died = 0;
   const out: Hearth[] = [];
   for (const x of hh) {
-    const births = (x.h * BIRTHS_PER_HAND_YEAR * Math.max(0, birthBoost)) / W;
+    const births =
+      (x.h * BIRTHS_PER_HAND_YEAR * Math.max(0, birthBoost) * Math.max(0, marriage)) / W;
     const cDie = (x.c * CHILD_MORTALITY) / W
       + (weightSum > 0 ? (toll * 1.5 * x.c) / weightSum : 0);
     const hDie = (x.h * HAND_MORTALITY) / W
@@ -255,6 +257,88 @@ export function addPeople(hh: readonly Hearth[], count: number): Hearth[] {
     h: x.h + (count * shape.h) / n,
     e: x.e + (count * shape.e) / n,
   }));
+}
+
+/**
+ * MARRIAGE, AND WHY IT IS THE ENGINE OF THE WHOLE PERIOD.
+ *
+ * A medieval European did not marry when they came of age; they married when
+ * they could get a HOLDING, and a village had only so many. This is the
+ * preventive check Malthus named and the thing that made pre-industrial Europe
+ * something other than a boom-and-bust of famines: when land filled, marriage
+ * was delayed, unmarried adults stayed as servants and labourers in other
+ * hearths, and the birth rate FELL -- so the population levelled off without
+ * anybody having to starve to level it.
+ *
+ * The bucket model expresses this without naming a bride. Land supports a
+ * number of holdings; each holding is a hearth; and the share of a village's
+ * fertile hands that can actually marry is the holdings it has room for over
+ * the hearths it already has. When there is land for more households than
+ * exist, marriage is prompt and fertility is at its full biological rate; when
+ * the land is full, the factor falls and with it the births -- the smooth
+ * plateau the parish registers show, not the sawtooth of repeated collapse.
+ */
+export function marriageFactor(landHouseholds: number, hearths: number): number {
+  if (hearths <= 0) return 1;
+  // Room for new households lifts marriage; a full land suppresses it. The
+  // curve is gentle -- a village a little short of land does not stop marrying
+  // outright, it marries later and less -- so the approach to the ceiling is a
+  // glide, which is what "preventive" means.
+  return Math.max(0.15, Math.min(1, landHouseholds / hearths));
+}
+
+/**
+ * Form and dissolve households.
+ *
+ * FORMATION: where the land has room for more hearths than stand, new couples
+ * split off from the crowded old ones -- the toft next door, a new assart's
+ * cottage -- and the village's count of hearths climbs toward what the land
+ * will bear. DISSOLUTION: a hearth worn down to no working hands, only the old
+ * and the orphaned, cannot stand alone; it is taken in by another, which is
+ * inheritance at the bucket's grain -- the survivors and whatever they held
+ * pass to the hearth that absorbs them.
+ *
+ * The number of hearths is therefore not population over five; it is a state
+ * that lags the land, which is why a land-full village becomes one of larger,
+ * multi-generation households and a village with room becomes one of many
+ * small ones. Both are in the record, and which one a place is is the whole
+ * texture of its society.
+ */
+export function rehouse(hh: readonly Hearth[], landHouseholds: number): Hearth[] {
+  // Dissolve the hands-less: fold any hearth with almost no working hands into
+  // the fullest one that has them, carrying its people over.
+  let out = hh.map((x) => ({ ...x }));
+  const HANDLESS = 0.5;
+  const alive = out.filter((x) => x.h >= HANDLESS);
+  const dead = out.filter((x) => x.h < HANDLESS && (x.c + x.h + x.e) > 0.01);
+  if (alive.length > 0 && dead.length > 0) {
+    // Spread the absorbed across the standing hearths, eldest-heavy hearths
+    // taking the orphans as the record shows kin did.
+    let ac = 0; let ah = 0; let ae = 0;
+    for (const d of dead) { ac += d.c; ah += d.h; ae += d.e; }
+    const per = alive.length;
+    out = alive.map((x) => ({
+      c: x.c + ac / per, h: x.h + ah / per, e: x.e + ae / per,
+    }));
+  } else if (alive.length === 0) {
+    out = out.filter((x) => (x.c + x.h + x.e) > 0.01);
+  }
+
+  // Form: while the land has room and a standing hearth is crowded enough to
+  // spare a couple, split one off. Bounded per call so growth is a rate.
+  const target = Math.max(1, Math.round(landHouseholds));
+  let formed = 0;
+  const MAX_FORM = Math.max(1, Math.ceil(out.length * 0.02));
+  while (out.length < target && formed < MAX_FORM) {
+    // The most crowded hearth donates a couple and their first child.
+    out.sort((a, b) => (b.h + b.c + b.e) - (a.h + a.c + a.e));
+    const donor = out[0];
+    if (donor.h < 2.2) break; // needs two hands to spare and keep two
+    donor.h -= 2; donor.c -= Math.min(donor.c, 1);
+    out.push({ c: Math.min(1, Math.max(0, 1)), h: 2, e: 0 });
+    formed++;
+  }
+  return out;
 }
 
 /**
