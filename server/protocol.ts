@@ -94,6 +94,18 @@ export interface RaidReport {
   defenderDead: number;
 }
 
+/** One change of lord, as the chronicle needs it. */
+export interface SuccessionReport {
+  /** The realm whose seat changed hands. */
+  polity: number;
+  /** A succession within the line, or the line itself failing. */
+  kind: 'succeeded' | 'extinct';
+  /** The lord who died. */
+  priorName: string;
+  /** The heir, or the founder of the new house when a line failed. */
+  lordName: string;
+}
+
 /** End of turn. Carries only what changed. */
 export interface TurnMessage {
   t: 'turn';
@@ -105,6 +117,8 @@ export interface TurnMessage {
   polities: Polity[];
   /** Raids fought this turn, for the map and the chronicle. Absent if none. */
   raids?: RaidReport[];
+  /** Lords who died or lines that failed this turn, for the chronicle. */
+  successions?: SuccessionReport[];
 }
 
 export interface AckMessage {

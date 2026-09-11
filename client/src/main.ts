@@ -26,12 +26,13 @@ import { workedCells, radiusForPopulation } from '../../sim/model/settlement.ts'
 import { harvestWindow, weekOfYear } from '../../sim/model/season.ts';
 import { foundingHerd, foundingFlock } from '../../sim/model/village_herd.ts';
 import { muster } from '../../sim/model/muster.ts';
+import { lordName, lordAge, successionLine, personName } from '../../sim/model/house.ts';
 import { cattleCarryPerHa, sheepCarryPerHa } from '../../sim/model/herd.ts';
 import { Mineral } from '../../sim/model/resources.ts';
 import { ironOutputKgPerYear, IRON_LABOUR_SAVING } from '../../sim/model/labour.ts';
 import { GRAIN_PER_PERSON_YEAR } from '../../sim/economy.ts';
 import { NAVIGABLE_M3_PER_S } from '../../sim/derive.ts';
-import { IRON_PER_PERSON_KG_PER_YEAR } from '../../sim/anchors.ts';
+import { IRON_PER_PERSON_KG_PER_YEAR, TURNS_PER_YEAR } from '../../sim/anchors.ts';
 import type { TileDelta } from '../../sim/model/tile.ts';
 import type { ServerMessage, PlayerInfo } from '../../server/protocol.ts';
 import type { Polity } from '../../sim/model/polity.ts';
@@ -150,6 +151,16 @@ function handle(msg: ServerMessage): void {
           log(`turn ${turn}: ${r.defender} stormed and taken`, 'warn');
         } else if (r.defenderDead >= 1) {
           log(`turn ${turn}: ${r.defender} raided, ${Math.round(r.defenderDead)} slain`, 'warn');
+        }
+      }
+      // THE DYNASTIES. A lord dead and his heir raised, or a whole line failed
+      // and a new house risen in its place.
+      for (const s of msg.successions ?? []) {
+        const realm = polities.find((p) => p.id === s.polity)?.name ?? `realm ${s.polity}`;
+        if (s.kind === 'extinct') {
+          log(`turn ${turn}: the line of ${realm} fails — Lord ${s.lordName} founds a new house`, 'warn');
+        } else {
+          log(`turn ${turn}: Lord ${s.priorName} of ${realm} is dead — Lord ${s.lordName} succeeds`);
         }
       }
       refresh();
@@ -1222,6 +1233,17 @@ function drawInspector(): void {
     </table>
     <div class="group">WHO</div><table>
     ${row('kingdom', owner)}
+    ${crown?.lineage !== undefined ? row('ruled by', (() => {
+      const h = crown.lineage;
+      const name = lordName(h);
+      if (name === null) return '<span class="none">no lord</span>';
+      const age = lordAge(h, Math.floor(turn / TURNS_PER_YEAR));
+      const succ = successionLine(h);
+      const heir = succ.length > 1
+        ? `heir ${personName(h, succ[1])}`
+        : '<span style="color:#d0563a">no heir of the blood</span>';
+      return `Lord ${name}, aged ${age} &mdash; ${heir}`;
+    })()) : ''}
     ${row('people', tile.population > 0 ? Math.round(tile.population).toLocaleString('en') : '<span class="none">nobody</span>')}
     ${tile.population > 0 ? row('condition', tile.populationHealth.toFixed(2)) : ''}
     ${tile.population > 0 ? row('ages', (() => {

@@ -264,11 +264,16 @@ function runTurn(): void {
       + `${Math.round(result.ironShippedKg).toLocaleString('en')} kg iron over `
       + `${result.tradeRoutes} route(s)`
     : '';
+  const court = result.successions.length > 0
+    ? `, ${result.successions.length} succession(s)`
+      + (result.successions.some((s) => s.kind === 'extinct')
+        ? ` (${result.successions.filter((s) => s.kind === 'extinct').length} line(s) failed)` : '')
+    : '';
   console.log(
     `  turn ${world.turn}: ${orders.length} order(s), `
     + `${result.rejected.length} rejected, ${result.changed.length} tile(s) changed, `
     + `${world.deltaCount} live, ${Math.round(people).toLocaleString('en')} people`
-    + `, ${world.polities.size} kingdom(s)${grew}${war}${trade}`,
+    + `, ${world.polities.size} kingdom(s)${grew}${war}${trade}${court}`,
   );
   for (const r of result.rejected.slice(0, 5)) {
     console.log(`      rejected ${r.order.action} ${r.order.target}: ${r.reason}`);
@@ -286,6 +291,12 @@ function runTurn(): void {
         attacker: b.attacker, defender: b.defender,
         attackerWon: b.attackerWon, conquered: b.conqueredBy !== null,
         defenderDead: Math.round(b.defenderDead),
+      }))
+      : undefined,
+    successions: result.successions.length > 0
+      ? result.successions.map((s) => ({
+        polity: s.polity, kind: s.kind,
+        priorName: s.priorName, lordName: s.lordName,
       }))
       : undefined,
   });
