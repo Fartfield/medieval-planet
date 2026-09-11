@@ -23,10 +23,11 @@ import { clamp } from './gen/mathx.ts';
 import { Hasher } from './hash.ts';
 import { runEconomy, GRAIN_PER_PERSON_YEAR, type Report } from './economy.ts';
 import { planExpansion, applyExpansion, type Founding } from './expansion.ts';
-import { resolveRaids, type Combatant, type Battle } from './model/war.ts';
-import { houseYear, lordName, foundHouse } from './model/house.ts';
+import { resolveRaids, LORD_EXPOSURE, type Combatant, type Battle } from './model/war.ts';
+import { houseYear, lordFalls, lordName, foundHouse } from './model/house.ts';
 import { FOUNDER_AGE } from './model/polity.ts';
 import { weekOfYear, isWeek } from './model/season.ts';
+import { hash3 } from './gen/noise.ts';
 import type { World } from './world.ts';
 import type { TileDelta } from './model/tile.ts';
 
@@ -70,6 +71,8 @@ export interface Succession {
   priorName: string;
   /** The new lord: the heir, or the founder of the new house on extinction. */
   lordName: string;
+  /** True when the lord fell in battle rather than died in his bed. */
+  inWar: boolean;
 }
 
 /**
@@ -147,7 +150,8 @@ export function resolveTurn(world: World, orders: Order[], playerCount: number):
   // plundered and, on a rout it cannot hold against, conquered. This runs
   // after the economy so the warchest is this week's stores, and before the
   // population step so the men who fell are gone from the pyramid it steps.
-  const battles = resolveConflict(world);
+  const conflict = resolveConflict(world);
+  const battles = conflict.battles;
   for (const b of battles) { touched.add(b.attacker); touched.add(b.defender); }
 
   // THE COURT. Once a year, every ruling house lives a year: its lord ages,
@@ -155,7 +159,11 @@ export function resolveTurn(world: World, orders: Order[], playerCount: number):
   // survives, the line fails and a new house rises to hold the realm. This
   // touches nothing on the map; a realm outlives its dynasty, keeping its name
   // and its ground. See house.ts for why a line dies at the rate it does.
-  const successions = stepHouses(world);
+  //
+  // War-deaths of lords resolve the same turn the battle is fought (in
+  // resolveConflict), so the chronicle carries both: the lord who fell leading
+  // his levy and the one who died old in his hall.
+  const successions = [...conflict.successions, ...stepHouses(world)];
 
   // Then people are born, die, arrive or leave, on the ration they got.
   for (const [key, report] of economy.reports) {
@@ -210,9 +218,9 @@ function stepHouses(world: World): Succession[] {
     const ev = houseYear(p.lineage, year);
     if (ev.extinct) {
       p.lineage = foundHouse(p.id, world.seed, year, FOUNDER_AGE);
-      out.push({ polity: p.id, kind: 'extinct', priorName, lordName: lordName(p.lineage)! });
+      out.push({ polity: p.id, kind: 'extinct', priorName, lordName: lordName(p.lineage)!, inWar: false });
     } else if (ev.succeeded !== null) {
-      out.push({ polity: p.id, kind: 'succeeded', priorName, lordName: lordName(p.lineage)! });
+      out.push({ polity: p.id, kind: 'succeeded', priorName, lordName: lordName(p.lineage)!, inWar: false });
     }
   }
   return out;
@@ -453,7 +461,7 @@ function stepPopulation(world: World, r: Report, blocked: boolean): boolean {
  * ground's owner, and a settlement emptied of its fighting strength is not
  * emptied of its people -- war kills the young men, not the village.
  */
-function resolveConflict(world: World): Battle[] {
+function resolveConflict(world: World): { battles: Battle[]; successions: Succession[] } {
   const combatants: Combatant[] = [];
   for (const d of world.allDeltas()) {
     const owner = d.owner;
@@ -478,13 +486,21 @@ function resolveConflict(world: World): Battle[] {
       fromCapitalM,
     });
   }
-  if (combatants.length < 2) return [];
+  if (combatants.length < 2) return { battles: [], successions: [] };
 
   const battles = resolveRaids(combatants, world.radiusM);
+  const successions: Succession[] = [];
+  const lordResolved = new Set<number>();
+  const year = Math.floor(world.turn / A.TURNS_PER_YEAR);
 
   for (const b of battles) {
     applyCasualties(world, b.attacker, b.attackerDead);
     applyCasualties(world, b.defender, b.defenderDead);
+    // WAR REACHES THE THRONE. Before the border moves, the lords who led the
+    // fight face it: rolled against this battle's casualty fraction, using the
+    // defender's own lord while the ground is still his.
+    maybeKillLord(world, b.attacker, b.attackerDead, b.attackerEngaged, year, lordResolved, successions);
+    maybeKillLord(world, b.defender, b.defenderDead, b.defenderEngaged, year, lordResolved, successions);
     // Plunder moves from the beaten to the victor.
     const victor = b.attackerWon ? b.attacker : b.defender;
     const beaten = b.attackerWon ? b.defender : b.attacker;
@@ -509,7 +525,39 @@ function resolveConflict(world: World): Battle[] {
       world.setDelta(fromKey(b.defender), { owner: b.conqueredBy });
     }
   }
-  return battles;
+  return { battles, successions };
+}
+
+/**
+ * A lord leads his levy, so a lord can fall with it.
+ *
+ * Rolled once per realm per turn -- a man cannot die in two battles -- on the
+ * first battle the realm fought, against that battle's casualty fraction: a
+ * clean win scarcely risks him, a rout takes him with his men (times the
+ * labelled exposure in war.ts). A deterministic coin on (turn, realm, seed), so
+ * the same war buries the same kings. On his death the seat passes at once, and
+ * a line ended this way raises a new house just as one ended in bed does.
+ */
+function maybeKillLord(
+  world: World, key: string, dead: number, engaged: number, year: number,
+  resolved: Set<number>, out: Succession[],
+): void {
+  if (dead <= 0 || engaged <= 0) return;
+  const owner = world.getDelta(fromKey(key))?.owner;
+  if (owner === undefined || owner < 0 || resolved.has(owner)) return;
+  resolved.add(owner);
+  const polity = world.polities.get(owner);
+  if (polity?.lineage === undefined) return;
+  const pDeath = Math.min(1, (dead / engaged) * LORD_EXPOSURE);
+  if ((hash3(world.turn, owner, 0, world.seed) >>> 0) / 4294967296 >= pDeath) return;
+  const priorName = lordName(polity.lineage) ?? '(vacant)';
+  const ev = lordFalls(polity.lineage, year);
+  if (ev.extinct) {
+    polity.lineage = foundHouse(owner, world.seed, year, FOUNDER_AGE);
+    out.push({ polity: owner, kind: 'extinct', priorName, lordName: lordName(polity.lineage)!, inWar: true });
+  } else if (ev.succeeded !== null) {
+    out.push({ polity: owner, kind: 'succeeded', priorName, lordName: lordName(polity.lineage)!, inWar: true });
+  }
 }
 
 /** Take fallen men from a settlement's hands, and its head count. */

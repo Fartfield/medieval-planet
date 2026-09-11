@@ -157,10 +157,11 @@ function handle(msg: ServerMessage): void {
       // and a new house risen in its place.
       for (const s of msg.successions ?? []) {
         const realm = polities.find((p) => p.id === s.polity)?.name ?? `realm ${s.polity}`;
+        const fate = s.inWar ? 'fell in battle' : 'is dead';
         if (s.kind === 'extinct') {
-          log(`turn ${turn}: the line of ${realm} fails — Lord ${s.lordName} founds a new house`, 'warn');
+          log(`turn ${turn}: Lord ${s.priorName} of ${realm} ${fate}; the line fails — Lord ${s.lordName} founds a new house`, 'warn');
         } else {
-          log(`turn ${turn}: Lord ${s.priorName} of ${realm} is dead — Lord ${s.lordName} succeeds`);
+          log(`turn ${turn}: Lord ${s.priorName} of ${realm} ${fate} — Lord ${s.lordName} succeeds`, s.inWar ? 'warn' : '');
         }
       }
       refresh();

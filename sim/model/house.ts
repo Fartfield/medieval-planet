@@ -250,17 +250,55 @@ export function houseYear(house: House, year: number): HouseYear {
   // SUCCESSION. If the seat fell vacant, the senior living male takes it; if
   // none lives, the male line is extinct this year.
   if (out.lordDied) {
-    const heir = seniorLiving(house.members);
-    if (heir === null) {
-      house.lordId = -1;
-      house.extinctYear = year;
-      out.extinct = true;
-    } else {
-      house.lordId = heir.id;
-      house.lordSinceYear = year;
-      out.succeeded = heir.id;
-    }
+    const s = resolveSuccession(house, year);
+    out.succeeded = s.succeeded;
+    out.extinct = s.extinct;
   }
+  return out;
+}
+
+/**
+ * Seat the senior surviving male after the lord has died, or end the line.
+ *
+ * Shared by the yearly course of nature and by a death in war, so both resolve
+ * a succession the same way -- the rightful heir by primogeniture, or, if no
+ * male of the blood lives, extinction.
+ */
+function resolveSuccession(
+  house: House, year: number,
+): { succeeded: number | null; extinct: boolean } {
+  const heir = seniorLiving(house.members);
+  if (heir === null) {
+    house.lordId = -1;
+    house.extinctYear = year;
+    return { succeeded: null, extinct: true };
+  }
+  house.lordId = heir.id;
+  house.lordSinceYear = year;
+  return { succeeded: heir.id, extinct: false };
+}
+
+/**
+ * The lord falls -- in battle, not in bed.
+ *
+ * War reaches the throne: when a realm's levy is broken the man who led it can
+ * be among the dead, and this kills the reigning lord outright (no coin -- the
+ * clash already decided it) and resolves the succession then and there. It is
+ * the other way a reign ends, and the one that pulls the long natural-death
+ * reign down toward the span the warring medieval crowns actually had.
+ */
+export function lordFalls(house: House, year: number): HouseYear {
+  const out: HouseYear = {
+    bornId: null, died: [], lordDied: false, succeeded: null, extinct: false,
+  };
+  if (house.extinctYear !== null || house.lordId < 0) return out;
+  const lordId = house.lordId;
+  house.members = house.members.filter((p) => p.id !== lordId);
+  out.died.push(lordId);
+  out.lordDied = true;
+  const s = resolveSuccession(house, year);
+  out.succeeded = s.succeeded;
+  out.extinct = s.extinct;
   return out;
 }
 

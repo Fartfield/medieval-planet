@@ -62,6 +62,21 @@ export const WARCHEST_IRON_SHARE = 0.8;
 export const PLUNDER_SHARE = 0.5;
 
 /**
+ * How much of his fighting men's fate a lord shares when he leads them.
+ *
+ * A FREE PARAMETER, labelled. A lord led from the front and was the enemy's
+ * prize, so he was more exposed than a levy spearman; but he was the best
+ * armoured and horsed man on the field, and when a fight was lost he could ride
+ * off or be taken for ransom where his men were ridden down -- neither of which
+ * this model has. The two pulls roughly cancel, so a lord is taken to face his
+ * force's own casualty fraction, no more and no less: he is a man in the line.
+ * Calibrated against the record by its consequence -- a realm that fights loses
+ * its lords, and its reigns fall from the long natural-death span toward the
+ * ~20 years the medieval crowns actually averaged. See verify_house.ts.
+ */
+export const LORD_EXPOSURE = 1.0;
+
+/**
  * A settlement's own defensibility, the multiplier on its defenders' weight.
  *
  * THE ONE STAND-IN in this file. A ditch and a palisade doubled the men needed
@@ -96,6 +111,9 @@ export interface Battle {
   /** Men lost, to be taken from each population. */
   attackerDead: number;
   defenderDead: number;
+  /** Men each side put in the field, so a loss can be read as a fraction. */
+  attackerEngaged: number;
+  defenderEngaged: number;
   /** Grain and iron plundered from the loser to the winner. */
   grainTaken: number;
   ironTaken: number;
@@ -195,6 +213,8 @@ export function resolveRaids(
       attackerWon: c.attackerWon,
       attackerDead: c.attackerLost,
       defenderDead: c.defenderLost,
+      attackerEngaged: af.men,
+      defenderEngaged: df.men,
       grainTaken,
       ironTaken,
       conqueredBy,

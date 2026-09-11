@@ -133,14 +133,20 @@ suite('the border', () => {
     });
     let raidsSeen = 0;
     let weakDeadTotal = 0;
+    let lordsFell = 0;
     for (let t = 0; t < Math.round(6 * A.TURNS_PER_YEAR); t++) {
       const res = resolveTurn(world, [], 1);
       raidsSeen += res.battles.length;
       for (const bt of res.battles) if (bt.defender === toKey(weakSeat)) weakDeadTotal += bt.defenderDead;
+      for (const s of res.successions) if (s.inWar) lordsFell++;
     }
     measure('raids over six years on the border', raidsSeen);
     measure('men the weak seat lost to raids', Math.round(weakDeadTotal));
+    measure('lords who fell in battle over six years', lordsFell);
     assert('the border was fought over', raidsSeen > 0);
+    // A seat routed this often loses its lord: war reaches the throne, not just
+    // the levy.
+    assert('a one-sided border war takes a king', lordsFell > 0);
     // The weak seat is either conquered (owner flipped to the strong crown) or
     // bled -- either way the strong House prevailed on the border.
     const weakNow = world.getDelta(weakSeat);
@@ -155,7 +161,13 @@ suite('the border', () => {
     w2.setDelta(strongSeat, { owner: 0, population: 600, populationHealth: 1, grainStock: 600 * 330, ironStock: 3000, farmShare: 1 });
     w2.setDelta(weakSeat, { owner: 1, population: 120, populationHealth: 1, grainStock: 120 * 330, ironStock: 60, farmShare: 1 });
     let raids2 = 0;
-    for (let t = 0; t < Math.round(6 * A.TURNS_PER_YEAR); t++) raids2 += resolveTurn(w2, [], 1).battles.length;
+    let lordsFell2 = 0;
+    for (let t = 0; t < Math.round(6 * A.TURNS_PER_YEAR); t++) {
+      const res = resolveTurn(w2, [], 1);
+      raids2 += res.battles.length;
+      for (const s of res.successions) if (s.inWar) lordsFell2++;
+    }
     check('the same two crowns fight the same war', raids2, raidsSeen, 0);
+    check('and the same kings fall in it', lordsFell2, lordsFell, 0);
   }
 });

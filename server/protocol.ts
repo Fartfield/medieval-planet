@@ -104,6 +104,8 @@ export interface SuccessionReport {
   priorName: string;
   /** The heir, or the founder of the new house when a line failed. */
   lordName: string;
+  /** True when the lord fell in battle rather than died in his bed. */
+  inWar: boolean;
 }
 
 /** End of turn. Carries only what changed. */

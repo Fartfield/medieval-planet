@@ -21,13 +21,14 @@
 // labelled stand-in in house.ts, and the thing verify measures the cost of.
 
 import {
-  foundHouse, houseYear, successionLine, mortalityAt,
+  foundHouse, houseYear, lordFalls, successionLine, mortalityAt,
   SONS_PER_LORD_YEAR, ADULT_AGE, ELDER_AGE,
   type House, type Person,
 } from '../sim/model/house.ts';
 import {
   BIRTHS_PER_MARRIED_WOMAN_YEAR, HAND_MORTALITY, ELDER_MORTALITY,
 } from '../sim/model/hearths.ts';
+import { hash3 } from '../sim/gen/noise.ts';
 import { check, measure, assert, suite } from './harness.ts';
 
 const SEED = 20260911;
@@ -167,4 +168,65 @@ suite('the house', () => {
   let exA = 0; for (const h of houses) if (h.extinctYear !== null) exA++;
   let exB = 0; for (const h of again) if (h.extinctYear !== null) exB++;
   check('the same seed ends the same number of lines', exB, exA, 0);
+
+  // WAR TAKES A LORD. lordFalls kills the reigning lord outright -- the clash
+  // decided it, no coin -- and seats the heir, or ends the line if none lives.
+  const withHeir: House = {
+    id: 0, salt: 0, foundedYear: 0, lordId: 1, lordSinceYear: 0, nextId: 3,
+    extinctYear: null,
+    members: [
+      { id: 1, bornYear: 0, sons: 1, rank: [0] },       // the lord
+      { id: 2, bornYear: 20, sons: 0, rank: [0, 0] },    // his heir
+    ],
+  };
+  const fell = lordFalls(withHeir, 30);
+  assert('a lord who falls in war is dead and his heir takes the seat',
+    fell.lordDied && fell.succeeded === 2 && !fell.extinct && withHeir.lordId === 2);
+  const soleLord: House = {
+    id: 0, salt: 0, foundedYear: 0, lordId: 1, lordSinceYear: 0, nextId: 2,
+    extinctYear: null,
+    members: [{ id: 1, bornYear: 0, sons: 0, rank: [0] }],
+  };
+  const lastStand = lordFalls(soleLord, 30);
+  assert('a lord with no heir who falls ends the line',
+    lastStand.lordDied && lastStand.extinct && soleLord.lordId < 0
+    && soleLord.extinctYear === 30);
+  // lordFalls on an extinct or vacant house does nothing.
+  const none = lordFalls(soleLord, 31);
+  assert('the fallen cannot fall again', !none.lordDied && !none.extinct);
+
+  // WAR SHORTENS THE REIGN. Run houses that, besides the life table, face an
+  // annual chance of losing their lord in battle -- a realm that fights. The
+  // reign falls from the long natural-death span toward the twenty years the
+  // medieval crowns averaged, which is the whole point of letting war reach the
+  // throne. The annual rate is illustrative, standing in for how often a realm
+  // is in a losing fight; the real rate is the battle's own casualty fraction,
+  // measured end to end in verify_war.
+  const meanReignUnderWar = (warYearly: number): number => {
+    const K = 2000; const Y = 300;
+    const hs: House[] = [];
+    for (let i = 0; i < K; i++) hs.push(foundHouse(i, SEED + 1, 0, 25));
+    const reigns: number[] = [];
+    const start = hs.map(() => 0);
+    for (let y = 1; y <= Y; y++) {
+      for (let i = 0; i < K; i++) {
+        const h = hs[i];
+        if (h.extinctYear !== null) continue;
+        if ((hash3(y, i, 9, SEED + 1) >>> 0) / 4294967296 < warYearly) {
+          const ev = lordFalls(h, y);
+          if (ev.lordDied) { reigns.push(y - start[i]); start[i] = y; }
+        }
+        const ev2 = houseYear(h, y);
+        if (ev2.lordDied) { reigns.push(y - start[i]); start[i] = y; }
+      }
+    }
+    return reigns.reduce((s, x) => s + x, 0) / Math.max(1, reigns.length);
+  };
+  const peace = meanReignUnderWar(0);
+  const war = meanReignUnderWar(0.03);
+  measure('mean reign with no war (yr)', peace);
+  measure('mean reign for a realm that fights (yr)', war);
+  assert('war shortens the reign', war < peace);
+  assert('war brings a fighting realm\'s reign into the span a medieval crown had',
+    war > 14 && war < 24);
 });

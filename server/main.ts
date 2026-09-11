@@ -296,7 +296,7 @@ function runTurn(): void {
     successions: result.successions.length > 0
       ? result.successions.map((s) => ({
         polity: s.polity, kind: s.kind,
-        priorName: s.priorName, lordName: s.lordName,
+        priorName: s.priorName, lordName: s.lordName, inWar: s.inWar,
       }))
       : undefined,
   });
