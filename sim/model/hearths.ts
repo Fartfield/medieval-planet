@@ -69,8 +69,8 @@ export const BIRTHS_PER_HAND_YEAR =
   WOMEN_SHARE * MARRIED_SHARE * BIRTHS_PER_MARRIED_WOMAN_YEAR;
 
 /** Fifteen years a child, forty-five a hand: the aging flows. */
-const CHILD_YEARS = 15;
-const HAND_YEARS = 45;
+export const CHILD_YEARS = 15;
+export const HAND_YEARS = 45;
 
 /**
  * What a pair of hands that are not adult hands is worth in the field.
