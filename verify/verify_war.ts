@@ -17,7 +17,7 @@ import { World } from '../sim/world.ts';
 import { resolveTurn } from '../sim/turn.ts';
 import { toKey } from '../sim/geo/address.ts';
 import {
-  RAID_REACH_M, fortification, forceOf, resolveRaids, type Combatant,
+  RAID_REACH_M, forceOf, resolveRaids, type Combatant,
 } from '../sim/model/war.ts';
 import { populationOf } from '../sim/model/hearths.ts';
 import * as A from '../sim/anchors.ts';
@@ -37,24 +37,21 @@ suite('the border', () => {
   assert('a raid is days of march, not the whole realm\'s reach',
     RAID_REACH_M / 1000 > 20 && RAID_REACH_M / 1000 < 90);
 
-  // FORTIFICATION rises with the town and caps.
-  measure('a hamlet\'s works', fortification(80));
-  measure('a market town\'s', fortification(600));
-  measure('a city\'s', fortification(2000));
-  check('a hamlet has no walls worth the name', fortification(80), 0, 0);
-  assert('a town has a palisade', fortification(600) > 0.5 && fortification(600) < 1.5);
-  assert('and the works cap, for even a wall can be starved',
-    fortification(100000) <= 2.01);
+  // FORTIFICATION is no longer a curve on population -- it is derived from what
+  // a settlement has built, and is measured end to end in verify_works.ts. Here
+  // the clash is read from combatants built by hand, so each carries the
+  // defensive multiplier its works would have earned.
 
   // TWO RIVALS, ONE STRONG ONE WEAK, a few km apart on good ground. Built as
-  // combatants directly so the clash is read without the whole turn.
+  // combatants directly so the clash is read without the whole turn. The strong
+  // seat stands behind a palisade, the weak behind a ditch.
   const strong: Combatant = {
     key: 'S', polity: 0, x: 0.30, y: 0.50, z: Math.sqrt(1 - 0.09 - 0.25),
-    population: 800, ironKg: 800, grainKg: 400000, fromCapitalM: 1000,
+    population: 800, ironKg: 800, grainKg: 400000, fortification: 1.4, fromCapitalM: 1000,
   };
   const weak: Combatant = {
     key: 'W', polity: 1, x: 0.3005, y: 0.5004, z: Math.sqrt(1 - 0.30055 ** 2 - 0.5004 ** 2),
-    population: 200, ironKg: 40, grainKg: 60000, fromCapitalM: 1000,
+    population: 200, ironKg: 40, grainKg: 60000, fortification: 0.2, fromCapitalM: 1000,
   };
   measure('the strong House\'s fighting weight', forceOf(strong).power);
   measure('the weak House\'s', forceOf(weak).power);
@@ -85,9 +82,9 @@ suite('the border', () => {
 
   // TWO EQUAL HOUSES do not settle it: neither can beat the other behind its
   // works, so no raid is even launched -- the stalemate a border was.
-  const evenA: Combatant = { ...strong, key: 'A', polity: 0, population: 500, ironKg: 200 };
+  const evenA: Combatant = { ...strong, key: 'A', polity: 0, population: 500, ironKg: 200, fortification: 0.8 };
   const evenB: Combatant = {
-    ...weak, key: 'B', polity: 1, population: 500, ironKg: 200, grainKg: 400000,
+    ...weak, key: 'B', polity: 1, population: 500, ironKg: 200, grainKg: 400000, fortification: 0.8,
   };
   const stalemate = resolveRaids([evenA, evenB], A.EARTH_RADIUS_M);
   measure('raids between two equal Houses', stalemate.length);

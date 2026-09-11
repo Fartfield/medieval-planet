@@ -24,6 +24,8 @@ import { Hasher } from './hash.ts';
 import { runEconomy, GRAIN_PER_PERSON_YEAR, type Report } from './economy.ts';
 import { planExpansion, applyExpansion, type Founding } from './expansion.ts';
 import { resolveRaids, LORD_EXPOSURE, type Combatant, type Battle } from './model/war.ts';
+import { fortificationOf } from './model/works.ts';
+import { Rock } from './model/rock.ts';
 import { houseYear, lordFalls, lordName, foundHouse } from './model/house.ts';
 import { FOUNDER_AGE } from './model/polity.ts';
 import { weekOfYear, isWeek } from './model/season.ts';
@@ -468,7 +470,8 @@ function resolveConflict(world: World): { battles: Battle[]; successions: Succes
     const people = d.population ?? 0;
     if (owner === undefined || owner < 0 || people <= 0) continue;
     const address = fromKey(d.key);
-    const dir = world.tile(address).dir;
+    const tile = world.tile(address);
+    const dir = tile.dir;
     const polity = world.polities.get(owner);
     let fromCapitalM = 0;
     if (polity !== undefined) {
@@ -477,12 +480,20 @@ function resolveConflict(world: World): { battles: Battle[]; successions: Succes
         dir[0] * cap[0] + dir[1] * cap[1] + dir[2] * cap[2]));
       fromCapitalM = Math.acos(dot) * world.radiusM;
     }
+    // The defensive multiplier is what the settlement has BUILT, derived from
+    // its works -- no longer a curve on its size. Timber and stone come from
+    // the tile, the same gates the economy built under.
+    const fortification = fortificationOf(
+      d.worksDays ?? 0, people,
+      tile.flora.timberTPerHa > 0, tile.rock !== Rock.Shale,
+    );
     combatants.push({
       key: d.key, polity: owner,
       x: dir[0], y: dir[1], z: dir[2],
       population: people,
       ironKg: d.ironStock ?? 0,
       grainKg: d.grainStock ?? 0,
+      fortification,
       fromCapitalM,
     });
   }

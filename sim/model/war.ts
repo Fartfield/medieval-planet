@@ -76,19 +76,6 @@ export const PLUNDER_SHARE = 0.5;
  */
 export const LORD_EXPOSURE = 1.0;
 
-/**
- * A settlement's own defensibility, the multiplier on its defenders' weight.
- *
- * THE ONE STAND-IN in this file. A ditch and a palisade doubled the men needed
- * to storm a place and a stone wall did far more, and those works scaled with
- * the burh -- so until a buildings model derives them, fortification rises with
- * population: nothing for a hamlet, a palisade's worth by a market town, a
- * wall's by a city. Capped, because even a great wall could be starved out.
- */
-export function fortification(population: number): number {
-  return Math.min(2.0, Math.max(0, population - 100) / 500);
-}
-
 /** One settlement as a combatant. */
 export interface Combatant {
   key: string;
@@ -99,6 +86,13 @@ export interface Combatant {
   population: number;
   ironKg: number;
   grainKg: number;
+  /**
+   * The multiplier its own defensive works add to its defenders' weight -- the
+   * stand-in that used to rise with population is gone, and this is now derived
+   * from what the settlement has built, in model/works.ts, and handed in by the
+   * turn. Zero for an open settlement, whatever its size.
+   */
+  fortification: number;
   /** Distance in metres from its own polity's capital, for the hold test. */
   fromCapitalM: number;
 }
@@ -178,14 +172,14 @@ export function resolveRaids(
       if (d2 > reach2 || d2 >= best) continue;
       const df = forces.get(b.key)!;
       // Can A win? Weigh the defender's walls, as the clash will.
-      if (af.power <= df.power * (1 + fortification(b.population))) continue;
+      if (af.power <= df.power * (1 + b.fortification)) continue;
       target = b;
       best = d2;
     }
     if (target === null) continue;
 
     const df = forces.get(target.key)!;
-    const c = clash(af, df, fortification(target.population));
+    const c = clash(af, df, target.fortification);
     raidedThisTurn.add(target.key);
     actedThisTurn.add(a.key);
     actedThisTurn.add(target.key);

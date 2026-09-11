@@ -34,6 +34,8 @@ import { SOLDIER_GRAIN_KG_PER_DAY } from './derive.ts';
 import { fromKey, type Address } from './geo/address.ts';
 import { clamp } from './gen/mathx.ts';
 import { Mineral } from './model/resources.ts';
+import { Rock } from './model/rock.ts';
+import { buildWorks } from './model/works.ts';
 import { ironOutputKgPerYear, ironLimit, hectareDays } from './model/labour.ts';
 import { clear, stockTarget, spoil, type Trader, type Flow } from './model/trade.ts';
 import { navigable } from './gen/hydrology.ts';
@@ -86,6 +88,17 @@ const GRAIN_KCAL_PER_KG = foodKcalPerKg(compositionOf(
   harvestPlant(WHEAT, 0.8, 1, 30, A.TURNS_PER_YEAR, 1)
     .find((p) => p.part === Part.Seed)!,
 ));
+
+/**
+ * The share of a settlement's idle (non-farm) hands it will put to raising its
+ * defensive works while any remain unbuilt.
+ *
+ * A FREE PARAMETER, labelled: how hard a place drives its wall-building is a
+ * choice, not a measured rate, and it trades directly against the iron the same
+ * idle hands would forge. A third leaves the forge the greater part and still
+ * finishes a rampart in a season; when the works are done it spends nothing.
+ */
+const CONSTRUCTION_IDLE_SHARE = 0.3;
 
 export interface Report {
   key: string;
@@ -149,6 +162,9 @@ export interface Report {
   ironOut: number;
   ironLimitedBy: 'no ore' | 'hands' | 'wood';
   oreRichness: number;
+
+  /** Labour sunk into defensive works so far, man-days. See model/works.ts. */
+  worksDays: number;
   /** What the woodland in reach GROWS in a year, kg. Not what it stands. */
   timberKgPerYear: number;
   /** What the hearths burn in a year, kg, before any smelting. */
@@ -423,6 +439,23 @@ export function runEconomy(world: World): EconomyResult {
     const idleDays =
       (labourPop * A.WORKERS_PER_FAMILY) / 5 * A.WORKING_DAYS_PER_YEAR * (1 - farmShare);
 
+    // THE WALLS COME OFF THE IDLE HANDS, while there are walls left to raise.
+    // A settlement spares a share of the hands not in the fields to the ditch,
+    // the palisade and the stone -- and the forge gets what is left, so a town
+    // raising its circuit makes less iron while it does, which is the true cost
+    // of a wall. CONSTRUCTION_IDLE_SHARE is a free parameter, labelled: how much
+    // of the idle hands a place will put to building is a choice, not a measured
+    // rate. Once the works its materials allow are finished, the share spends
+    // nothing and the forge has every idle hand back -- so a settled town's iron
+    // is untouched, and only a building one pays.
+    const hasTimber = tile.flora.timberTPerHa > 0;
+    const hasStone = tile.rock !== Rock.Shale;
+    const worksBefore = delta.worksDays ?? 0;
+    const wantBuildThisTurn = idleDays * CONSTRUCTION_IDLE_SHARE * perTurn;
+    const worksDays = buildWorks(worksBefore, wantBuildThisTurn, population, hasTimber, hasStone);
+    const builtThisTurn = worksDays - worksBefore;
+    const idleForIron = Math.max(0, idleDays - builtThisTurn / perTurn);
+
     // THE HEARTHS ARE SERVED BEFORE THE FURNACE, and until now they were not
     // served at all: ironworking had the whole of the woodland's increment to
     // burn while the people living there heated and cooked on nothing.
@@ -440,7 +473,7 @@ export function runEconomy(world: World): EconomyResult {
       : Math.min(1, catchment.timberKgPerYear / woodNeed);
     const woodForIron = Math.max(0, catchment.timberKgPerYear - woodNeed);
     const ironMade =
-      ironOutputKgPerYear(idleDays, oreRichness, woodForIron) * perTurn;
+      ironOutputKgPerYear(idleForIron, oreRichness, woodForIron) * perTurn;
 
     // THE WILD LARDER FIRST. A hungry village sends hands to the woods
     // before it kills the plough ox: when the bin runs short of a month,
@@ -527,8 +560,9 @@ export function runEconomy(world: World): EconomyResult {
       ironStock: ironStock + ironMade,
       ironIn: 0,
       ironOut: 0,
-      ironLimitedBy: ironLimit(idleDays, oreRichness, woodForIron),
+      ironLimitedBy: ironLimit(idleForIron, oreRichness, woodForIron),
       oreRichness,
+      worksDays,
       timberKgPerYear: catchment.timberKgPerYear,
       woodNeedKgPerYear: woodNeed,
       woodSupply: woodSupplyRatio,
@@ -579,6 +613,7 @@ export function runEconomy(world: World): EconomyResult {
     world.setDelta(address, {
       grainStock: round(report.grainStock),
       ironStock: round(report.ironStock),
+      worksDays: Math.round(report.worksDays),
       farmShare: Math.round(nextShare * 100) / 100,
       soldKg: report.grainOut > 0 ? round(report.grainOut) : undefined,
       // The herd, rounded like the population: the fractional part IS the

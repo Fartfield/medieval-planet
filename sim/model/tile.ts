@@ -227,6 +227,13 @@ export interface TileDelta {
   /** Iron in hand, kg. A year's wear is the target. */
   ironStock?: number;
   /**
+   * Labour sunk into the settlement's defensive works, man-days. Earth, then
+   * timber, then stone; the fortification it is worth in a fight is derived
+   * from it in model/works.ts. Grows as the settlement spares hands from the
+   * fields and the forge, up to the walls its materials allow.
+   */
+  worksDays?: number;
+  /**
    * The share of the settlement's hands on the fields rather than in a mine or
    * the woods, 0..1.
    *
