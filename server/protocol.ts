@@ -82,6 +82,18 @@ export interface PlayerInfo {
   house: number;
 }
 
+/** One raid, as the client needs it: who, who won, and what it cost. */
+export interface RaidReport {
+  /** Address key of the raider and the raided. */
+  attacker: string;
+  defender: string;
+  attackerWon: boolean;
+  /** Defender's ground changed hands. */
+  conquered: boolean;
+  /** Men the defender lost, for the chronicle. */
+  defenderDead: number;
+}
+
 /** End of turn. Carries only what changed. */
 export interface TurnMessage {
   t: 'turn';
@@ -91,6 +103,8 @@ export interface TurnMessage {
   changed: TileDelta[];
   players: PlayerInfo[];
   polities: Polity[];
+  /** Raids fought this turn, for the map and the chronicle. Absent if none. */
+  raids?: RaidReport[];
 }
 
 export interface AckMessage {

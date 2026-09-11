@@ -2027,6 +2027,7 @@ export function drawSubMap(
   tint: CellTint | null = null,
   children: ChildLookup | null = null,
   frame: Frame | null = null,
+  raided: Set<number> | null = null,
 ): void {
   const { cx, cy, size } = view;
   // Its own frame unless told otherwise, so a lone map draws exactly as it did.
@@ -2196,10 +2197,21 @@ export function drawSubMap(
     const gr = g.r * size;
     // Area with population, so a hamlet and a city differ by more than a dot.
     const r = Math.max(2, Math.min(gr * 0.8, gr * 0.22 * Math.sqrt(Math.max(1, people))));
+    const px = cx + g.x * size;
+    const py = cy + g.y * size;
     ctx.fillStyle = '#e8e4da';
     ctx.beginPath();
-    ctx.arc(cx + g.x * size, cy + g.y * size, r, 0, Math.PI * 2);
+    ctx.arc(px, py, r, 0, Math.PI * 2);
     ctx.fill();
+    // A RAIDED SETTLEMENT wears a ring of blood, drawn round the dot -- the one
+    // mark on the map that says where the war is this week.
+    if (raided !== null && raided.has(cell)) {
+      ctx.strokeStyle = '#b2331f';
+      ctx.lineWidth = Math.max(1.5, r * 0.4);
+      ctx.beginPath();
+      ctx.arc(px, py, r + ctx.lineWidth, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 
   // Bounded, because a map in this picture may hold fewer cells than the one

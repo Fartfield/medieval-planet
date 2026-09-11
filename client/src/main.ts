@@ -25,6 +25,7 @@ import { ROCK_NAMES } from '../../sim/model/rock.ts';
 import { workedCells, radiusForPopulation } from '../../sim/model/settlement.ts';
 import { harvestWindow, weekOfYear } from '../../sim/model/season.ts';
 import { foundingHerd, foundingFlock } from '../../sim/model/village_herd.ts';
+import { muster } from '../../sim/model/muster.ts';
 import { cattleCarryPerHa, sheepCarryPerHa } from '../../sim/model/herd.ts';
 import { Mineral } from '../../sim/model/resources.ts';
 import { ironOutputKgPerYear, IRON_LABOUR_SAVING } from '../../sim/model/labour.ts';
@@ -141,6 +142,16 @@ function handle(msg: ServerMessage): void {
         applyDeltas(world, msg.changed);
       }
       if (msg.changed.length > 0) log(`turn ${turn}: ${msg.changed.length} tile(s) changed`);
+      // THE CHRONICLE. Remember who was raided and when, so the map can mark
+      // it and the log can tell it.
+      for (const r of msg.raids ?? []) {
+        raidedRecently.set(r.defender, turn);
+        if (r.conquered) {
+          log(`turn ${turn}: ${r.defender} stormed and taken`, 'warn');
+        } else if (r.defenderDead >= 1) {
+          log(`turn ${turn}: ${r.defender} raided, ${Math.round(r.defenderDead)} slain`, 'warn');
+        }
+      }
       refresh();
       break;
 
@@ -370,6 +381,11 @@ let grazerCacheStamp = -1;
 /** The settlements as stead sites, refreshed beside the grazers. */
 let steadCache: SteadSite[] = [];
 
+/** Which settlements were raided, and on what turn, for the map and the log. */
+const raidedRecently = new Map<string, number>();
+/** A raid's mark fades after this many turns. */
+const RAID_MEMORY_TURNS = 4;
+
 function steadsOf(w: World): SteadSite[] {
   grazersOf(w);
   return steadCache;
@@ -503,6 +519,28 @@ function onScreen(w: World): { addrs: number[][]; maps: SubMap[] } {
   return { addrs, maps: addrs.map((a) => w.subMap(a)) };
 }
 
+
+/**
+ * Which cells of the map at `address`-depth hold a settlement raided recently.
+ *
+ * Raids are recorded at the ground address; a map drawn at depth D marks the
+ * cell that is the raided tile's index at D, exactly as the population overlay
+ * resolves a delta to a cell. The mark fades after a few turns.
+ */
+function raidedCellsAt(depth: number): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  for (const [rkey, when] of raidedRecently) {
+    if (turn - when > RAID_MEMORY_TURNS) continue;
+    const addr = fromKey(rkey);
+    if (addr.length <= depth) continue;
+    const mapKey = toKey(addr.slice(0, depth));
+    const cell = addr[depth];
+    let set = out.get(mapKey);
+    if (set === undefined) { set = new Set<number>(); out.set(mapKey, set); }
+    set.add(cell);
+  }
+  return out;
+}
 
 /**
  * The deltas that fall inside the view, grouped by the cell they sit in.
@@ -805,6 +843,7 @@ function draw(): void {
     // Hoisted out of the neighbour block below, because the grazing predicate
     // needs the same settlement index and is built after the maps are drawn.
     const index = overlayIndex(world, path.length);
+    const raidedIdx = raidedCellsAt(path.length);
     const empty = { owned: new Map<number, number>(), populated: new Map<number, number>() };
 
     if (path.length > 1) {
@@ -821,12 +860,14 @@ function draw(): void {
         if (!mapIsVisible(map, frame, view, w, h)) continue;
         const side = index.get(toKey(nb)) ?? empty;
         drawSubMap(ctx, map, view, -1, side.owned, side.populated,
-          null, tintFor(world, nb), childrenFor(world, nb), frame);
+          null, tintFor(world, nb), childrenFor(world, nb), frame,
+          raidedIdx.get(toKey(nb)) ?? null);
       }
     }
 
     drawSubMap(ctx, world.subMap(path), view, selected, owned, populated,
-      workedOverlay(world), tintFor(world, path), childrenFor(world, path), frame);
+      workedOverlay(world), tintFor(world, path), childrenFor(world, path), frame,
+      raidedIdx.get(toKey(path)) ?? null);
 
     // THE PLANTS, ONCE, AFTER EVERY MAP'S GROUND IS FINISHED.
     //
@@ -1289,6 +1330,18 @@ function supplyPanel(w: World, address: number[], population: number): string {
     ${row('herd', herdRow(w, address, population))}
     ${row('fold', flockRow(w, address, population))}
     ${row('cloth', clothRow(w, address))}
+    ${row('it can field', (() => {
+      const d = w.getDelta(address);
+      const force = muster(population, d?.ironStock ?? 0, (d?.grainStock ?? 0) * 0.33);
+      if (force.men < 1) return '<span class="none">no one to spare</span>';
+      const mail = force.mailed >= 1 ? `, ${Math.round(force.mailed)} in mail` : '';
+      return `${Math.round(force.men)} fighting men${mail} &mdash; ${Math.round(force.campaignDays)} days afield`;
+    })())}
+    ${(() => {
+      const when = raidedRecently.get(toKey(address));
+      if (when === undefined || turn - when > RAID_MEMORY_TURNS) return '';
+      return row('the war', `<b style="color:#d0563a">raided turn ${when}</b>`);
+    })()}
     ${row('next harvest', (() => {
       const t = w.tile(address);
       const win = harvestWindow(t.temperatureC, t.dir[1]);

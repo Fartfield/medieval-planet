@@ -281,6 +281,13 @@ function runTurn(): void {
     changed: result.changed,
     players: publicPlayers(),
     polities: world.allPolities(),
+    raids: result.battles.length > 0
+      ? result.battles.map((b) => ({
+        attacker: b.attacker, defender: b.defender,
+        attackerWon: b.attackerWon, conquered: b.conqueredBy !== null,
+        defenderDead: Math.round(b.defenderDead),
+      }))
+      : undefined,
   });
 }
 
