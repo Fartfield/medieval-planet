@@ -24,6 +24,9 @@ import { Hasher } from './hash.ts';
 import { runEconomy, GRAIN_PER_PERSON_YEAR, type Report } from './economy.ts';
 import { planExpansion, applyExpansion, type Founding } from './expansion.ts';
 import { resolveRaids, type Combatant, type Battle } from './model/war.ts';
+import { houseYear, lordName, foundHouse } from './model/house.ts';
+import { FOUNDER_AGE } from './model/polity.ts';
+import { weekOfYear, isWeek } from './model/season.ts';
 import type { World } from './world.ts';
 import type { TileDelta } from './model/tile.ts';
 
@@ -53,6 +56,20 @@ export interface TurnResult {
   blocked: string[];
   /** Raids fought this week, for the chronicle. */
   battles: Battle[];
+  /** Lords who died and were succeeded, or lines that failed, this turn. */
+  successions: Succession[];
+}
+
+/** A change of lord in a realm this turn, for the chronicle. */
+export interface Succession {
+  /** The realm whose seat changed hands. */
+  polity: number;
+  /** A normal succession within the line, or the line itself failing. */
+  kind: 'succeeded' | 'extinct';
+  /** The lord who died. */
+  priorName: string;
+  /** The new lord: the heir, or the founder of the new house on extinction. */
+  lordName: string;
 }
 
 /**
@@ -133,6 +150,13 @@ export function resolveTurn(world: World, orders: Order[], playerCount: number):
   const battles = resolveConflict(world);
   for (const b of battles) { touched.add(b.attacker); touched.add(b.defender); }
 
+  // THE COURT. Once a year, every ruling house lives a year: its lord ages,
+  // and may die, and the seat passes to his heir -- or, if no male of the blood
+  // survives, the line fails and a new house rises to hold the realm. This
+  // touches nothing on the map; a realm outlives its dynasty, keeping its name
+  // and its ground. See house.ts for why a line dies at the rate it does.
+  const successions = stepHouses(world);
+
   // Then people are born, die, arrive or leave, on the ration they got.
   for (const [key, report] of economy.reports) {
     if (stepPopulation(world, report, blocked.has(key))) touched.add(key);
@@ -159,7 +183,39 @@ export function resolveTurn(world: World, orders: Order[], playerCount: number):
     foundings: expansion.foundings,
     blocked: expansion.blocked,
     battles,
+    successions,
   };
+}
+
+/**
+ * Live a year in every ruling house, once a year.
+ *
+ * Fires on the turn that crosses the turn of the year -- one step a year,
+ * whatever the fractional week -- and steps each polity's lineage by that
+ * year. A line that fails is not a realm that falls: a new local house takes
+ * the seat the same year (its salt carries the year, so it is a different line,
+ * not the old one reborn), and only the dynasty changed. A realm left from an
+ * older save without a lineage is given one here, the first year it is seen.
+ */
+function stepHouses(world: World): Succession[] {
+  const out: Succession[] = [];
+  if (!isWeek(weekOfYear(world.turn), 0)) return out;
+  const year = Math.floor(world.turn / A.TURNS_PER_YEAR);
+  for (const p of world.polities.values()) {
+    if (p.lineage === undefined) {
+      p.lineage = foundHouse(p.id, world.seed, year, FOUNDER_AGE);
+      continue;
+    }
+    const priorName = lordName(p.lineage) ?? '(vacant)';
+    const ev = houseYear(p.lineage, year);
+    if (ev.extinct) {
+      p.lineage = foundHouse(p.id, world.seed, year, FOUNDER_AGE);
+      out.push({ polity: p.id, kind: 'extinct', priorName, lordName: lordName(p.lineage)! });
+    } else if (ev.succeeded !== null) {
+      out.push({ polity: p.id, kind: 'succeeded', priorName, lordName: lordName(p.lineage)! });
+    }
+  }
+  return out;
 }
 
 function applyOrder(world: World, order: Order, playerCount: number): string | null {

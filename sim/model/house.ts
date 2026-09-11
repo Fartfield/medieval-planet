@@ -172,13 +172,16 @@ export function successionLine(house: House): number[] {
 /**
  * Found a house with a single living founder already of an age to rule.
  *
- * The salt is mixed from the house id and the world seed so two houses born in
- * the same year live different lives, and so the same world replays identically.
+ * The salt is mixed from the house id, the founding year and the world seed, so
+ * two houses at the same seat -- a line that failed and the new house that
+ * rises after it -- live different lives, and so the same world replays
+ * identically. (A house founded in year zero, as the verify suite's are, keeps
+ * the same salt it always had, the year folding in as a no-op there.)
  */
 export function foundHouse(
   id: number, worldSeed: number, foundedYear: number, founderAge: number,
 ): House {
-  const salt = hash3(id, 0, 0, worldSeed) >>> 0;
+  const salt = hash3(id, foundedYear, 0, worldSeed) >>> 0;
   const founder: Person = {
     id: 0,
     bornYear: foundedYear - Math.round(founderAge),

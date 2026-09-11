@@ -23,6 +23,7 @@
 
 import * as A from '../anchors.ts';
 import { INFANTRY_MARCH_MS } from '../derive.ts';
+import { foundHouse, type House } from './house.ts';
 
 export interface Polity {
   id: number;
@@ -37,7 +38,23 @@ export interface Polity {
   founded: number;
   /** Who it pays tribute to, if anybody. Set by conflict, not by spreading. */
   tributaryTo: number | null;
+  /**
+   * The ruling dynasty: the male line that holds the seat, its lords succeeding
+   * and, when a line fails, a new house rising in its place. See house.ts. The
+   * realm (this polity, its name and colour) outlives any one dynasty.
+   */
+  lineage: House;
 }
+
+/**
+ * The age at which a founder takes his seat.
+ *
+ * A FREE PARAMETER, labelled: the demography gives no age for a man come into
+ * his own, so this is a judgement -- old enough to have proven himself and hold
+ * a following, young enough to sire a line. Thirty is the age a landed man
+ * married and established in the record, near enough.
+ */
+export const FOUNDER_AGE = 30;
 
 /**
  * How far a polity's authority reaches from its capital, in metres.
@@ -95,6 +112,7 @@ export function createPolity(
     player,
     founded: turn,
     tributaryTo: null,
+    lineage: foundHouse(id, seed, Math.floor(turn / A.TURNS_PER_YEAR), FOUNDER_AGE),
   };
 }
 
