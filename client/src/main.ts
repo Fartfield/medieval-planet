@@ -21,7 +21,8 @@ import { SUBCELL_COUNT } from '../../sim/geo/hexgrid.ts';
 import { BIOME_NAMES, BIOME_COLOURS, Biome } from '../../sim/model/biome.ts';
 import { LANDFORM_NAMES } from '../../sim/model/tile.ts';
 import { MINERAL_NAMES } from '../../sim/model/resources.ts';
-import { ROCK_NAMES } from '../../sim/model/rock.ts';
+import { ROCK_NAMES, Rock } from '../../sim/model/rock.ts';
+import { fortificationOf, worksName } from '../../sim/model/works.ts';
 import { workedCells, radiusForPopulation } from '../../sim/model/settlement.ts';
 import { harvestWindow, weekOfYear } from '../../sim/model/season.ts';
 import { foundingHerd, foundingFlock } from '../../sim/model/village_herd.ts';
@@ -1359,6 +1360,17 @@ function supplyPanel(w: World, address: number[], population: number): string {
       if (force.men < 1) return '<span class="none">no one to spare</span>';
       const mail = force.mailed >= 1 ? `, ${Math.round(force.mailed)} in mail` : '';
       return `${Math.round(force.men)} fighting men${mail} &mdash; ${Math.round(force.campaignDays)} days afield`;
+    })())}
+    ${row('defences', (() => {
+      const d = w.getDelta(address);
+      const t = w.tile(address);
+      const hasTimber = t.flora.timberTPerHa > 0;
+      const hasStone = t.rock !== Rock.Shale;
+      const works = d?.worksDays ?? 0;
+      const fort = fortificationOf(works, population, hasTimber, hasStone);
+      const name = worksName(works, population, hasTimber, hasStone);
+      if (fort < 0.01) return '<span class="none">open &mdash; no works</span>';
+      return `${name} &mdash; &times;${(1 + fort).toFixed(1)} to hold`;
     })())}
     ${(() => {
       const when = raidedRecently.get(toKey(address));
