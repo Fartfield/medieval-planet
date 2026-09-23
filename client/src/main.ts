@@ -23,6 +23,7 @@ import { LANDFORM_NAMES } from '../../sim/model/tile.ts';
 import { MINERAL_NAMES } from '../../sim/model/resources.ts';
 import { ROCK_NAMES, Rock } from '../../sim/model/rock.ts';
 import { fortificationOf, worksName } from '../../sim/model/works.ts';
+import { storageCapKg, targetGranaryDays } from '../../sim/model/granary.ts';
 import { workedCells, radiusForPopulation } from '../../sim/model/settlement.ts';
 import { harvestWindow, weekOfYear } from '../../sim/model/season.ts';
 import { foundingHerd, foundingFlock } from '../../sim/model/village_herd.ts';
@@ -1350,7 +1351,10 @@ function supplyPanel(w: World, address: number[], population: number): string {
 
   return `<div class="group">WHAT IT LIVES ON</div><table>
     ${row('condition', `<b style="color:${months >= 3 ? '#7ba05b' : '#d0563a'}">${state}</b>`)}
-    ${row('granary', `${Math.round(grainStock).toLocaleString('en')} kg &mdash; ${months.toFixed(1)} months`)}
+    ${row('granary', (() => {
+      const cap = storageCapKg(targetGranaryDays(population), population);
+      return `${Math.round(grainStock).toLocaleString('en')} of ${Math.round(cap).toLocaleString('en')} kg &mdash; ${months.toFixed(1)} months`;
+    })())}
     ${row('herd', herdRow(w, address, population))}
     ${row('fold', flockRow(w, address, population))}
     ${row('cloth', clothRow(w, address))}

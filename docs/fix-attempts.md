@@ -2877,3 +2877,32 @@ integer, folded into the position hash. Cattle and sheep now scatter into
 different places on the same patch -- a mixed common, which is what a medieval
 village grazed. It moved no baseline (nothing asserts a beast's absolute
 position) and the layer-5 drag held at 13 ms median with both flocks drawn.
+
+## The granary that starved the farmers it was built for
+
+A granary capping how much grain a settlement can hoard, built from spare labour
+like the walls -- the intent being that a place must raise storage before it can
+bridge a bad harvest. Wired and measured against the full suite: 2 failing, 23
+moved. The killing measurement was `the granary saws through the year` going
+1 -> 0, with the year-round fullest dropping 61% and the lean/fat ratio climbing
+to 0.99 -- the seasonal saw-tooth flattened because the granary could no longer
+hold the harvest peak. Population fell 6% at fifty years, founding came 18%
+earlier, and the specialisation town's grain import collapsed to zero.
+
+TWO causes, pulling the same way. First, construction draws from IDLE (non-farm)
+labour, and a pure farming settlement -- exactly the one that most needs a
+granary -- has none, its hands all in the fields (farmShare ~ 1), so it can never
+build enough to hoard its year. Second, and deeper: a GROWING settlement holds
+grain beyond its current population's need -- that surplus is what feeds the
+growth -- and a granary sized to the current population clips the surplus and
+flattens the saw. Even sized to a year plus six weeks, the cap fell below the
+post-harvest peak of a settlement whose land outproduces its present mouths.
+
+The lesson: capping stored grain fights the calibrated economy from both ends --
+the farmers who cannot build, and the surplus that drives growth. A generous
+enough cap never binds (inert); any cap that binds destabilises. So the cap was
+NOT shipped. What shipped is the granary MODELLED (model/granary.ts, its own
+suite) and SHOWN (the panel reads its capacity beside the stock), with no limit
+on the economy. A biting cap awaits an economy that raises essential works from
+farm labour and sizes storage to the land's output, not the current head count
+-- recorded here so the next attempt starts from the measurement, not the idea.
